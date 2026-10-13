@@ -1,0 +1,58 @@
+name: Feature request
+description: Propose something Driverr should do.
+labels: ["type:feature"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before writing: Driverr is deliberately small. It is **not a configuration
+        surface**. The global settings are theme, font, font size, whether a captured
+        pane screen wraps its long lines, and whether Driverr draws Live Activities.
+        It also has **no backend**. A proposal that changes either needs to argue that
+        case, which is fine, but say so up front.
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: Exactly one.
+      options:
+        - "area:ios — the app, its screens, its tests"
+        - "area:ssh — transport, auth, host keys"
+        - "area:herdr — the herdr control surface"
+        - "area:infra — build, release, tooling"
+        - "area:design — product and interaction"
+    validations:
+      required: true
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What
+      description: The deliverable, in a sentence or two. What would exist that does not exist now?
+    validations:
+      required: true
+
+  - type: textarea
+    id: why
+    attributes:
+      label: Why
+      description: >
+        What is hard or impossible today. Concrete beats general — a moment when you
+        wanted this is worth more than a category of user who might.
+    validations:
+      required: true
+
+  - type: textarea
+    id: criteria
+    attributes:
+      label: Acceptance criteria
+      description: >
+        How anyone would know it was done. Write criteria that can *fail*: "works
+        correctly" is not a criterion, "the sidebar shows the pane within one poll" is.
+      value: |
+        - [ ] 
+        - [ ] 
+        - [ ] Build is warning-free
+    validations:
+      required: true

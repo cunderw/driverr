@@ -1,0 +1,52 @@
+name: Design question
+description: A decision to be made, not code to be written.
+labels: ["type:design"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Driverr is deliberately small. It is **not a configuration surface** and it has
+        **no backend**. A question that would change either needs to say so up front.
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: Exactly one.
+      options:
+        - "area:ios — the app, its screens, its tests"
+        - "area:ssh — transport, auth, host keys"
+        - "area:herdr — the herdr control surface"
+        - "area:infra — build, release, tooling"
+        - "area:design — product and interaction"
+    validations:
+      required: true
+
+  - type: textarea
+    id: question
+    attributes:
+      label: The decision
+      description: What has to be decided, and the options you see.
+    validations:
+      required: true
+
+  - type: textarea
+    id: why
+    attributes:
+      label: Why it needs deciding
+      description: What is blocked or unclear until someone decides. Concrete beats general.
+    validations:
+      required: true
+
+  - type: textarea
+    id: criteria
+    attributes:
+      label: Acceptance criteria
+      description: >
+        How anyone would know the question was settled. Write criteria that can *fail*:
+        "we agree" is not one, "the issue names the option chosen and the rule it sets" is.
+      value: |
+        - [ ] 
+        - [ ] 
+    validations:
+      required: true

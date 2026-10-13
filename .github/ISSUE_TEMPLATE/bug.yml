@@ -1,0 +1,66 @@
+name: Bug report
+description: Something in Driverr does not work the way it should.
+labels: ["type:bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. The bar for a good bug is that someone with no context can
+        reproduce it — please pick the `area:` label that fits below.
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: Exactly one. If you are not sure, pick the closest.
+      options:
+        - "area:ios — the app, its screens, its tests"
+        - "area:ssh — transport, auth, host keys"
+        - "area:herdr — the herdr control surface"
+        - "area:infra — build, release, tooling"
+        - "area:design — product and interaction"
+    validations:
+      required: true
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What happens
+      description: What you saw, and what you expected instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: >
+        Numbered, starting from launching the app. If it needs a host, say what kind —
+        Driverr is an SSH client, so "connect to a Linux box running herdr 0.9.1" is the
+        sort of detail that matters.
+      placeholder: |
+        1. Launch Driverr
+        2. ...
+    validations:
+      required: true
+
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      description: Driverr version, iOS version, device or simulator, and herdr version if the bug involves a session.
+      placeholder: "Driverr 1.0, iOS 26.5, iPhone 17 simulator, herdr 0.9.1"
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: >
+        A screenshot, a screen recording, or the failing test output. For a failing test,
+        the log path from the run (`artifacts.buildLogPath` in its JSON result) and the
+        relevant lines are ideal. Remove host names, user names and keys from logs and
+        screenshots before you attach them.
+    validations:
+      required: false

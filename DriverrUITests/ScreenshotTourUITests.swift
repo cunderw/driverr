@@ -1,0 +1,304 @@
+import XCTest
+
+/// The App Store screenshot tour: a deterministic walk through the app, capturing one
+/// full-screen image at each stop. A UI test is the only way to get pixel-accurate output
+/// at the sizes App Store Connect requires.
+///
+/// Everything comes from `FakeControl`'s seeded session, so every run captures the same
+/// content. `scripts/screenshots.sh` runs it on the store sizes and copies the results into
+/// `docs/app-store-assets/`.
+///
+/// Hand-driven on purpose: it types the password and accepts the trust prompt rather than
+/// seeding the connection, so it also fails if the connect path breaks. It is one test on
+/// one launch.
+@MainActor
+final class ScreenshotTourUITests: XCTestCase {
+  override func setUp() {
+    super.setUp()
+    continueAfterFailure = false
+  }
+
+  private func element(_ app: XCUIApplication, _ identifier: String) -> XCUIElement {
+    app.descendants(matching: .any).matching(identifier: identifier).firstMatch
+  }
+
+  @discardableResult
+  private func require(
+    _ app: XCUIApplication,
+    _ identifier: String,
+    _ message: String,
+    timeout: TimeInterval = 20,
+    file: StaticString = #filePath,
+    line: UInt = #line
+  ) -> XCUIElement {
+    let match = element(app, identifier)
+    XCTAssertTrue(
+      match.waitForExistence(timeout: timeout),
+      "\(message)\nLooked for '\(identifier)'. Tree was:\n\(app.debugDescription)",
+      file: file,
+      line: line
+    )
+    return match
+  }
+
+  /// Taps `tap` until `opens` appears, up to three times.
+  ///
+  /// It retries only a tap whose effect is a screen appearing, and still fails if the screen
+  /// never arrives, so the tour cannot capture the wrong screen.
+  ///
+  /// `opening` names a menu to open before each attempt, because a missed tap may have
+  /// dismissed the menu.
+  private func tapUntil(
+    _ app: XCUIApplication,
+    opening menu: String? = nil,
+    tap identifier: String,
+    opens target: String,
+    _ what: String,
+    file: StaticString = #filePath,
+    line: UInt = #line
+  ) {
+    for attempt in 1...3 {
+      if let menu {
+        require(app, menu, "Expected the menu holding \(what)", file: file, line: line).tap()
+      }
+      require(app, identifier, "Expected a way into \(what)", file: file, line: line).tap()
+      if element(app, target).waitForExistence(timeout: attempt == 1 ? 8 : 20) { return }
+    }
+    XCTFail(
+      "\(what) never opened after 3 taps on '\(identifier)'.\nTree was:\n\(app.debugDescription)",
+      file: file,
+      line: line
+    )
+  }
+
+  /// `XCUIScreen`, not `XCUIApplication.screenshot()`, which can render at a stale width.
+  /// The screen capture is what the device shows.
+  private func capture(_ name: String) {
+    let shot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+    shot.name = name
+    shot.lifetime = .keepAlways
+    add(shot)
+  }
+
+  /// Fails unless the screen shows something inside `element`'s frame.
+  ///
+  /// An element can be in the accessibility tree, hittable and at the right frame, and still
+  /// not be in a capture. On `Driverr iPad`, after `typeText` into the password field, the
+  /// terminal's key row is like that until the app has been to the background and back.
+  /// Measured under the Escape key: a drawn key reads 0.92, an undrawn one 0.0.
+  ///
+  /// The number is the gap between the lightest and darkest pixel, as luminance from 0 to 1.
+  private func assertDrawn(
+    _ element: XCUIElement,
+    _ message: String,
+    file: StaticString = #filePath,
+    line: UInt = #line
+  ) {
+    let frame = element.frame
+    let image = XCUIScreen.main.screenshot().image
+    guard let source = image.cgImage else {
+      XCTFail("The screen gave no image to read. \(message)", file: file, line: line)
+      return
+    }
+    let scale = CGFloat(source.width) / image.size.width
+    let rect = CGRect(
+      x: frame.minX * scale, y: frame.minY * scale,
+      width: frame.width * scale, height: frame.height * scale
+    ).integral
+    guard let crop = source.cropping(to: rect), crop.width > 0, crop.height > 0 else {
+      XCTFail("Nothing of \(frame) is on the screen. \(message)", file: file, line: line)
+      return
+    }
+    var pixels = [UInt8](repeating: 0, count: crop.width * crop.height * 4)
+    let context = CGContext(
+      data: &pixels, width: crop.width, height: crop.height, bitsPerComponent: 8,
+      bytesPerRow: crop.width * 4, space: CGColorSpaceCreateDeviceRGB(),
+      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+    context?.draw(crop, in: CGRect(x: 0, y: 0, width: crop.width, height: crop.height))
+    var lowest = 1.0
+    var highest = 0.0
+    for index in stride(from: 0, to: pixels.count, by: 4) {
+      let luminance =
+        (0.2126 * Double(pixels[index]) + 0.7152 * Double(pixels[index + 1])
+          + 0.0722 * Double(pixels[index + 2])) / 255
+      lowest = min(lowest, luminance)
+      highest = max(highest, luminance)
+    }
+    XCTAssertGreaterThan(
+      highest - lowest, 0.25,
+      "\(message)\nThe element is at \(frame) in the accessibility tree, and the screen there is "
+        + "one flat colour (luminance range \(highest - lowest)). It is laid out and not drawn.",
+      file: file,
+      line: line
+    )
+  }
+
+  /// Enters the password by tapping the software keyboard's keys when it has every one of
+  /// them, and with `typeText` when it does not.
+  ///
+  /// `typeText` into a secure field leaves the terminal's key row out of every later capture
+  /// on the iPad: the row stays in the accessibility tree, hittable, and is not drawn. Keys
+  /// tapped one by one do not do that. The iPad keyboard has a number row, so it has every
+  /// key of the password. The phone's first plane has no digit, so the phone still types, and
+  /// its row is drawn either way. `assertDrawn` before the terminal capture checks both.
+  private func enterPassword(_ app: XCUIApplication, _ password: String) {
+    _ = app.keyboards.firstMatch.waitForExistence(timeout: 10)
+    let keys = password.map { app.keyboards.keys[String($0)] }
+    if keys.allSatisfy(\.exists) {
+      for key in keys { key.tap() }
+      print("tour: entered the password by tapping keys")
+    } else {
+      app.typeText(password)
+      print("tour: entered the password with typeText")
+    }
+  }
+
+  /// Lets animations and the terminal's redraw settle, because a store screenshot caught
+  /// mid-transition looks like a rendering bug.
+  private func settle(_ app: XCUIApplication) {
+    _ = app.wait(for: .runningForeground, timeout: 2)
+    usleep(700_000)
+  }
+
+  /// Scrolls forward until `identifier` exists, up to five swipes.
+  ///
+  /// The preview is the form's first section, but a small form sheet or a later layout
+  /// change could put it below the fold.
+  @discardableResult
+  private func scrollTo(_ app: XCUIApplication, _ identifier: String) -> XCUIElement {
+    let match = element(app, identifier)
+    for _ in 0..<5 {
+      if match.exists { return match }
+      app.swipeUp()
+    }
+    return match
+  }
+
+  /// Whether the host list is on screen beside the connected host's screen, which is the
+  /// split view at regular width. Read from the layout, so it follows the app and not the
+  /// device's name.
+  ///
+  /// `isHittable`, not `exists`, because XCUITest sees through a push: on the phone the list
+  /// still exists under the host's screen.
+  private func showsTheHostListBesideTheHost(_ app: XCUIApplication) -> Bool {
+    let row = element(app, "hosts.row")
+    let needsYou = element(app, "session.needsYou")
+    return row.exists && row.isHittable && needsYou.exists && needsYou.isHittable
+  }
+
+  /// Goes back to the host list with the host still connected. For the stack only: in the
+  /// split view the list never went away.
+  private func returnToHostList(_ app: XCUIApplication) {
+    let back = app.navigationBars.buttons.element(boundBy: 0)
+    XCTAssertTrue(
+      back.waitForExistence(timeout: 10),
+      "Expected a back button on the host screen. Tree was:\n\(app.debugDescription)"
+    )
+    back.tap()
+    // The badge arrives with the first poll after the list is back on screen.
+    require(app, "hosts.blocked", "Expected the connected host's badge on the list")
+    XCTAssertTrue(
+      element(app, "hosts.row").isHittable,
+      "Expected the host list on screen. Tree was:\n\(app.debugDescription)"
+    )
+  }
+
+  /// Opens the connected host again after `returnToHostList`.
+  private func returnToTheHost(_ app: XCUIApplication) {
+    require(app, "hosts.row", "Expected the seeded host").tap()
+    let needsYou = element(app, "session.needsYou")
+    XCTAssertTrue(
+      needsYou.waitForExistence(timeout: 20) && needsYou.isHittable,
+      "Expected the connected host's screen. Tree was:\n\(app.debugDescription)"
+    )
+  }
+
+  func testTheTour() {
+    XCUIDevice.shared.orientation = .portrait
+    let app = XCUIApplication()
+    app.launchArguments += ["-uiTesting", "-uiTestingSeedHost", "-uiTestingDemoTranscript"]
+    app.launch()
+
+    // Seeded, because an empty list shows nothing.
+    require(app, "hosts.row", "Expected the seeded host")
+
+    // Settings is captured first, because it opens from the host list. The filename sets the
+    // store order. Through a retry, because this tap sometimes fails to open the sheet, and a
+    // failed tour costs a full slow re-run.
+    tapUntil(
+      app,
+      opening: "hosts.overflow",
+      tap: "settings.open",
+      opens: "settings.preview",
+      "settings"
+    )
+    // The shot shows the preview beside the theme rows, so make sure it is on screen.
+    scrollTo(app, "settings.preview")
+
+    settle(app)
+    capture("06-settings")
+    require(app, "settings.done", "Expected a way out of settings").tap()
+
+    // 2: the session, with a blocked agent lifted to the top. Connected by hand.
+    require(app, "hosts.row", "Expected the seeded host").tap()
+    require(app, "connect.password", "Expected a password field").tap()
+    // By tapping keys where the keyboard has them, because `typeText` into the secure field
+    // leaves the terminal's key row out of every later capture on the iPad.
+    enterPassword(app, "hunter2")
+    require(app, "connect.connect", "Expected a connect button").tap()
+    tapTrustPrompt(app, "Expected the trust prompt", timeout: 20)
+    require(app, "session.needsYou", "Expected the Needs you section")
+    require(app, "session.workspace", "Expected the session tree")
+    // Both, because the second blocked pane can arrive a poll after the first, and the shot
+    // would then say "Needs You · 1" beside a badge that says 2.
+    waitForBothBlockedPanes(app)
+    settle(app)
+    capture("02-needs-you")
+
+    // 1: the host list, captured after 2 so it shows a connected host and its badge. The
+    // filename sets the store order.
+    //
+    // Not in the split view. The list is the sidebar there and is already in 2, so the shot
+    // would be 2 again, pixel for pixel. The iPad set therefore starts at 02.
+    if !showsTheHostListBesideTheHost(app) {
+      returnToHostList(app)
+      settle(app)
+      capture("01-hosts")
+      returnToTheHost(app)
+    }
+
+    // 3: the chat, with the composer under it. The Needs-you row opens the pane on its chat
+    // with the composer focused. Named, not by position, because the section re-sorts and
+    // store art of the wrong pane would ship.
+    waitForBothBlockedPanes(app)
+    blockedPaneRow(app, titled: "needs a decision").tap()
+    require(app, "composer.text", "Expected the composer")
+    settle(app)
+    capture("03-chat")
+    leavePaneScene(app, "Expected a way out of the pane screen")
+
+    // 4: the terminal, attached to the same pane, named for the same reason. An agent pane
+    // opens on its chat, so the tour asks for the terminal.
+    waitForBothBlockedPanes(app)
+    blockedPaneRow(app, titled: "needs a decision").tap()
+    require(app, "pane.surface.terminal", "Expected the Terminal segment").tap()
+    require(app, "terminal.view", "Expected the terminal")
+    settle(app)
+    // The key row is in the listing's copy, and it can be in the tree without being in the
+    // picture. See `assertDrawn`.
+    assertDrawn(
+      require(app, "terminal.key.esc", "Expected the terminal's key row"),
+      "The terminal capture would ship without the key row."
+    )
+    capture("04-terminal")
+
+    // 5: the pane's controls, open.
+    require(app, "pane.actions", "Expected the pane actions menu").tap()
+    require(app, "pane.rename", "Expected the menu to be open")
+    settle(app)
+    capture("05-pane-actions")
+    // Dismiss the menu without choosing anything, and leave the terminal tidy.
+    app.tap()
+    leavePaneScene(app, "Expected a way out of the terminal")
+  }
+}

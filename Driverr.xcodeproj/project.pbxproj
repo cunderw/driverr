@@ -1,0 +1,192 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {};
+	objectVersion = 77;
+	objects = {
+/* Synchronized folder groups */
+		AA01 /* Driverr */ = {isa = PBXFileSystemSynchronizedRootGroup; exceptions = (AE01 /* PBXFileSystemSynchronizedBuildFileExceptionSet */); explicitFileTypes = {}; explicitFolders = (); path = Driverr; sourceTree = "<group>"; };
+		AA02 /* DriverrTests */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = DriverrTests; sourceTree = "<group>"; };
+		AA03 /* DriverrUITests */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = DriverrUITests; sourceTree = "<group>"; };
+		AA04 /* DriverrWatch */ = {isa = PBXFileSystemSynchronizedRootGroup; exceptions = (AE04); explicitFileTypes = {}; explicitFolders = (); path = DriverrWatch; sourceTree = "<group>"; };
+
+/* Synchronized folder exceptions — Driverr/Info.plist is consumed via
+   INFOPLIST_FILE + GENERATE_INFOPLIST_FILE, not copied as a bundle
+   resource; without this exception the synchronized group also puts it in
+   the Copy Bundle Resources phase, colliding with the generated Info.plist
+   at the same output path.
+
+   The `.entitlements` files are listed for the same reason: a synchronized group
+   treats an unrecognised plist as a bundle resource, and an entitlements file copied into
+   the product is both wrong and invisible — it does not collide, so the build stays green.
+   Their real consumer is CODE_SIGN_ENTITLEMENTS on EB01/EB02 and EB09/EB10. */
+		AE01 /* PBXFileSystemSynchronizedBuildFileExceptionSet */ = {isa = PBXFileSystemSynchronizedBuildFileExceptionSet; membershipExceptions = (Info.plist, Driverr.entitlements); target = DB01 /* Driverr */; };
+		AE04 = {isa = PBXFileSystemSynchronizedBuildFileExceptionSet; membershipExceptions = (Info.plist, DriverrWatch.entitlements); target = DB04; };
+
+/* Products */
+		AB01 /* Driverr.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Driverr.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		AB02 /* DriverrTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = DriverrTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		AB03 /* DriverrUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = DriverrUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		AB04 /* DriverrWatch.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = DriverrWatch.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+
+/* The third-party notices, the one file outside the synchronized groups. It sits at the
+   repository root, so it needs its own file reference and its own entry in the app's
+   Resources phase (BA03). The app does not show it. `ThirdPartyNoticesTests` reads it back
+   from the built app. */
+		AB05 /* THIRD-PARTY-NOTICES.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "THIRD-PARTY-NOTICES.md"; sourceTree = "<group>"; };
+		AD08 /* THIRD-PARTY-NOTICES.md in Resources */ = {isa = PBXBuildFile; fileRef = AB05; };
+
+/* Local package reference and product dependencies */
+		AC01 /* XCLocalSwiftPackageReference "DriverrKit" */ = {isa = XCLocalSwiftPackageReference; relativePath = DriverrKit; };
+		AC02 /* DriverrCore */ = {isa = XCSwiftPackageProductDependency; productName = DriverrCore; };
+		AD01 /* DriverrCore in Frameworks */ = {isa = PBXBuildFile; productRef = AC02; };
+		AC03 /* DriverrSSH */ = {isa = XCSwiftPackageProductDependency; productName = DriverrSSH; };
+		AD02 /* DriverrSSH in Frameworks */ = {isa = PBXBuildFile; productRef = AC03; };
+		AC04 /* DriverrTerm */ = {isa = XCSwiftPackageProductDependency; productName = DriverrTerm; };
+		AD03 /* DriverrTerm in Frameworks */ = {isa = PBXBuildFile; productRef = AC04; };
+		AC05 /* DriverrHerdr */ = {isa = XCSwiftPackageProductDependency; productName = DriverrHerdr; };
+		AD04 /* DriverrHerdr in Frameworks */ = {isa = PBXBuildFile; productRef = AC05; };
+		AC06 /* DriverrTranscript */ = {isa = XCSwiftPackageProductDependency; productName = DriverrTranscript; };
+		AD05 /* DriverrTranscript in Frameworks */ = {isa = PBXBuildFile; productRef = AC06; };
+		AC07 /* DriverrCore (widget) */ = {isa = XCSwiftPackageProductDependency; productName = DriverrCore; };
+		AD06 /* DriverrCore in widget Frameworks */ = {isa = PBXBuildFile; productRef = AC07; };
+		AD07 /* DriverrWatch in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = AB04; settings = {ATTRIBUTES = (RemoveHeadersOnCopy); }; };
+/* DriverrTests (DB02) deliberately does NOT carry its own DriverrCore product
+   dependency. Its EB03/EB04 build configs set BUNDLE_LOADER/TEST_HOST to
+   Driverr.app's executable, so the test bundle is loaded directly into the
+   running Driverr.app process by the test host mechanism, not by linking the
+   package itself. DriverrTests.swift reaches DriverrCore through a plain
+   `import DriverrCore` for exactly that reason. (Separately,
+   KeychainIdentityStoreTests.swift does `@testable import Driverr` to reach
+   app-target code — that needs ENABLE_TESTABILITY = YES on EB01, and is
+   unrelated to package product dependencies.) The app process already links
+   DriverrCore, and because
+   DB01 is left as SwiftPM's only consumer of the product, its "automatic"
+   library type resolves DriverrCore to a static library merged directly into
+   Driverr.debug.dylib (no separate .framework at all); the test bundle picks
+   up DriverrCore's compiled code and module interface by running inside that
+   host process, and at runtime nothing is loaded twice. If DriverrTests also
+   declared its own packageProductDependencies on DriverrCore,
+   DriverrCore.framework would be built and physically embedded twice — once
+   under Driverr.app/Frameworks/ and again under
+   Driverr.app/PlugIns/DriverrTests.xctest/Frameworks/ — which Apple's docs warn
+   "may cause spurious casting failures and mysterious crashes". Do not re-add a
+   packageProductDependency
+   to DB02 without re-checking for duplicate framework embeds under
+   Driverr.app/PlugIns/DriverrTests.xctest in the DerivedData build products
+   (that directory should have no .framework bundles). */
+
+/* Build phases — app */
+		BA01 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		BA02 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (AD01, AD02, AD03, AD04, AD05); runOnlyForDeploymentPostprocessing = 0; };
+		BA03 = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (AD08); runOnlyForDeploymentPostprocessing = 0; };
+		BA04 /* Embed Foundation Extensions */ = {isa = PBXCopyFilesBuildPhase; buildActionMask = 2147483647; dstPath = ""; dstSubfolderSpec = 13; files = (AD07); name = "Embed Foundation Extensions"; runOnlyForDeploymentPostprocessing = 0; };
+		BD01 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		BD02 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (AD06); runOnlyForDeploymentPostprocessing = 0; };
+		BD03 = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+/* Build phases — unit tests */
+		BB01 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		BB02 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		BB03 = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+/* Build phases — UI tests */
+		BC01 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		BC02 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		BC03 = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+
+/* Target dependencies */
+		CA01 = {isa = PBXContainerItemProxy; containerPortal = DA01; proxyType = 1; remoteGlobalIDString = DB01; remoteInfo = Driverr; };
+		CA02 = {isa = PBXTargetDependency; target = DB01; targetProxy = CA01; };
+		CA03 = {isa = PBXContainerItemProxy; containerPortal = DA01; proxyType = 1; remoteGlobalIDString = DB01; remoteInfo = Driverr; };
+		CA04 = {isa = PBXTargetDependency; target = DB01; targetProxy = CA03; };
+		CA05 = {isa = PBXContainerItemProxy; containerPortal = DA01; proxyType = 1; remoteGlobalIDString = DB04; remoteInfo = DriverrWatch; };
+		CA06 = {isa = PBXTargetDependency; target = DB04; targetProxy = CA05; };
+
+/* Targets */
+		DB01 /* Driverr */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = EA01;
+			buildPhases = (BA01, BA02, BA03, BA04);
+			buildRules = ();
+			dependencies = (CA06);
+			fileSystemSynchronizedGroups = (AA01);
+			name = Driverr;
+			packageProductDependencies = (AC02, AC03, AC04, AC05, AC06);
+			productName = Driverr;
+			productReference = AB01;
+			productType = "com.apple.product-type.application";
+		};
+		DB02 /* DriverrTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = EA02;
+			buildPhases = (BB01, BB02, BB03);
+			buildRules = ();
+			dependencies = (CA02);
+			fileSystemSynchronizedGroups = (AA02);
+			name = DriverrTests;
+			productName = DriverrTests;
+			productReference = AB02;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		DB03 /* DriverrUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = EA03;
+			buildPhases = (BC01, BC02, BC03);
+			buildRules = ();
+			dependencies = (CA04);
+			fileSystemSynchronizedGroups = (AA03);
+			name = DriverrUITests;
+			productName = DriverrUITests;
+			productReference = AB03;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+
+		DB04 /* DriverrWatch */ = {isa = PBXNativeTarget; buildConfigurationList = EA05; buildPhases = (BD01, BD02, BD03); buildRules = (); dependencies = (); fileSystemSynchronizedGroups = (AA04); name = DriverrWatch; packageProductDependencies = (AC07); productName = DriverrWatch; productReference = AB04; productType = "com.apple.product-type.app-extension"; };
+
+/* Project */
+		DA01 = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2700;
+				LastUpgradeCheck = 2700;
+				TargetAttributes = {
+					DB02 = {TestTargetID = DB01; };
+					DB03 = {TestTargetID = DB01; };
+				};
+			};
+			buildConfigurationList = EA04;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (en, Base);
+			mainGroup = FA01;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (AC01);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = FA02;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (DB01, DB02, DB03, DB04);
+		};
+		FA01 = {isa = PBXGroup; children = (AA01, AA02, AA03, AA04, AB05, FA02); sourceTree = "<group>"; };
+		FA02 /* Products */ = {isa = PBXGroup; children = (AB01, AB02, AB03, AB04); name = Products; sourceTree = "<group>"; };
+
+/* Configuration lists */
+		EA01 = {isa = XCConfigurationList; buildConfigurations = (EB01, EB02); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		EA02 = {isa = XCConfigurationList; buildConfigurations = (EB03, EB04); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		EA03 = {isa = XCConfigurationList; buildConfigurations = (EB05, EB06); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		EA04 = {isa = XCConfigurationList; buildConfigurations = (EB07, EB08); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		EA05 = {isa = XCConfigurationList; buildConfigurations = (EB09, EB10); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		EB09 /* Widget Debug */ = {isa = XCBuildConfiguration; buildSettings = { APPLICATION_EXTENSION_API_ONLY = YES; CODE_SIGN_ENTITLEMENTS = DriverrWatch/DriverrWatch.entitlements; CODE_SIGN_IDENTITY = "-"; "CODE_SIGN_IDENTITY[sdk=iphoneos*]" = "Apple Development"; CODE_SIGN_STYLE = Manual; "CODE_SIGN_STYLE[sdk=iphoneos*]" = Automatic; CODE_SIGNING_ALLOWED = YES; CODE_SIGNING_REQUIRED = NO; DEVELOPMENT_TEAM = 447FMVD577; CURRENT_PROJECT_VERSION = 1; GENERATE_INFOPLIST_FILE = YES; INFOPLIST_FILE = DriverrWatch/Info.plist; IPHONEOS_DEPLOYMENT_TARGET = 26.0; PRODUCT_BUNDLE_IDENTIFIER = com.cunderw.driverr.watch; PRODUCT_NAME = "$(TARGET_NAME)"; SKIP_INSTALL = YES; SWIFT_VERSION = 6.0; SWIFT_STRICT_CONCURRENCY = complete; TARGETED_DEVICE_FAMILY = "1,2"; }; name = Debug; };
+		EB10 /* Widget Release */ = {isa = XCBuildConfiguration; buildSettings = { APPLICATION_EXTENSION_API_ONLY = YES; CODE_SIGN_ENTITLEMENTS = DriverrWatch/DriverrWatch.entitlements; CODE_SIGN_IDENTITY = "-"; "CODE_SIGN_IDENTITY[sdk=iphoneos*]" = "Apple Development"; CODE_SIGN_STYLE = Manual; "CODE_SIGN_STYLE[sdk=iphoneos*]" = Automatic; CODE_SIGNING_ALLOWED = YES; CODE_SIGNING_REQUIRED = NO; DEVELOPMENT_TEAM = 447FMVD577; CURRENT_PROJECT_VERSION = 1; GENERATE_INFOPLIST_FILE = YES; INFOPLIST_FILE = DriverrWatch/Info.plist; IPHONEOS_DEPLOYMENT_TARGET = 26.0; PRODUCT_BUNDLE_IDENTIFIER = com.cunderw.driverr.watch; PRODUCT_NAME = "$(TARGET_NAME)"; SKIP_INSTALL = YES; SWIFT_VERSION = 6.0; SWIFT_STRICT_CONCURRENCY = complete; TARGETED_DEVICE_FAMILY = "1,2"; }; name = Release; };
+
+		EB01 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = { ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon; CODE_SIGN_ENTITLEMENTS = Driverr/Driverr.entitlements; COPY_PHASE_STRIP = NO; ENABLE_TESTABILITY = YES; CODE_SIGN_IDENTITY = "-"; "CODE_SIGN_IDENTITY[sdk=iphoneos*]" = "Apple Development"; CODE_SIGN_STYLE = Manual; "CODE_SIGN_STYLE[sdk=iphoneos*]" = Automatic; CODE_SIGNING_ALLOWED = YES; CODE_SIGNING_REQUIRED = NO; DEVELOPMENT_TEAM = 447FMVD577; CURRENT_PROJECT_VERSION = 1; GENERATE_INFOPLIST_FILE = YES; INFOPLIST_FILE = Driverr/Info.plist; INFOPLIST_KEY_UIApplicationSceneManifest_Generation = NO; INFOPLIST_KEY_UILaunchScreen_Generation = YES; IPHONEOS_DEPLOYMENT_TARGET = 26.0; PRODUCT_BUNDLE_IDENTIFIER = com.cunderw.driverr; PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_VERSION = 6.0; SWIFT_STRICT_CONCURRENCY = complete; TARGETED_DEVICE_FAMILY = "1,2"; }; name = Debug; };
+		EB02 /* Release */ = {isa = XCBuildConfiguration; buildSettings = { ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon; CODE_SIGN_ENTITLEMENTS = Driverr/Driverr.entitlements; COPY_PHASE_STRIP = NO; CODE_SIGN_IDENTITY = "-"; "CODE_SIGN_IDENTITY[sdk=iphoneos*]" = "Apple Development"; CODE_SIGN_STYLE = Manual; "CODE_SIGN_STYLE[sdk=iphoneos*]" = Automatic; CODE_SIGNING_ALLOWED = YES; CODE_SIGNING_REQUIRED = NO; DEVELOPMENT_TEAM = 447FMVD577; CURRENT_PROJECT_VERSION = 1; GENERATE_INFOPLIST_FILE = YES; INFOPLIST_FILE = Driverr/Info.plist; INFOPLIST_KEY_UIApplicationSceneManifest_Generation = NO; INFOPLIST_KEY_UILaunchScreen_Generation = YES; IPHONEOS_DEPLOYMENT_TARGET = 26.0; PRODUCT_BUNDLE_IDENTIFIER = com.cunderw.driverr; PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_VERSION = 6.0; SWIFT_STRICT_CONCURRENCY = complete; TARGETED_DEVICE_FAMILY = "1,2"; }; name = Release; };
+		EB03 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = { BUNDLE_LOADER = "$(TEST_HOST)"; CODE_SIGNING_ALLOWED = NO; GENERATE_INFOPLIST_FILE = YES; IPHONEOS_DEPLOYMENT_TARGET = 26.0; PRODUCT_BUNDLE_IDENTIFIER = com.cunderw.driverr.tests; PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_VERSION = 6.0; SWIFT_STRICT_CONCURRENCY = complete; TARGETED_DEVICE_FAMILY = "1,2"; TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Driverr.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Driverr"; }; name = Debug; };
+		EB04 /* Release */ = {isa = XCBuildConfiguration; buildSettings = { BUNDLE_LOADER = "$(TEST_HOST)"; CODE_SIGNING_ALLOWED = NO; GENERATE_INFOPLIST_FILE = YES; IPHONEOS_DEPLOYMENT_TARGET = 26.0; PRODUCT_BUNDLE_IDENTIFIER = com.cunderw.driverr.tests; PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_VERSION = 6.0; SWIFT_STRICT_CONCURRENCY = complete; TARGETED_DEVICE_FAMILY = "1,2"; TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Driverr.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Driverr"; }; name = Release; };
+		EB05 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = { CODE_SIGNING_ALLOWED = NO; GENERATE_INFOPLIST_FILE = YES; IPHONEOS_DEPLOYMENT_TARGET = 26.0; PRODUCT_BUNDLE_IDENTIFIER = com.cunderw.driverr.uitests; PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_VERSION = 6.0; SWIFT_STRICT_CONCURRENCY = complete; TARGETED_DEVICE_FAMILY = "1,2"; TEST_TARGET_NAME = Driverr; }; name = Debug; };
+		EB06 /* Release */ = {isa = XCBuildConfiguration; buildSettings = { CODE_SIGNING_ALLOWED = NO; GENERATE_INFOPLIST_FILE = YES; IPHONEOS_DEPLOYMENT_TARGET = 26.0; PRODUCT_BUNDLE_IDENTIFIER = com.cunderw.driverr.uitests; PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_VERSION = 6.0; SWIFT_STRICT_CONCURRENCY = complete; TARGETED_DEVICE_FAMILY = "1,2"; TEST_TARGET_NAME = Driverr; }; name = Release; };
+		EB07 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = { ALWAYS_SEARCH_USER_PATHS = NO; CLANG_ENABLE_OBJC_WEAK = YES; ENABLE_STRICT_OBJC_MSGSEND = YES; ENABLE_TESTABILITY = YES; GCC_C_LANGUAGE_STANDARD = gnu17; MARKETING_VERSION = 1.0.0; IPHONEOS_DEPLOYMENT_TARGET = 26.0; ONLY_ACTIVE_ARCH = YES; SDKROOT = iphoneos; SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)"; SWIFT_OPTIMIZATION_LEVEL = "-Onone"; SWIFT_VERSION = 6.0; SWIFT_STRICT_CONCURRENCY = complete; }; name = Debug; };
+		EB08 /* Release */ = {isa = XCBuildConfiguration; buildSettings = { ALWAYS_SEARCH_USER_PATHS = NO; CLANG_ENABLE_OBJC_WEAK = YES; ENABLE_STRICT_OBJC_MSGSEND = YES; GCC_C_LANGUAGE_STANDARD = gnu17; MARKETING_VERSION = 1.0.0; IPHONEOS_DEPLOYMENT_TARGET = 26.0; SDKROOT = iphoneos; SWIFT_COMPILATION_MODE = wholemodule; SWIFT_VERSION = 6.0; SWIFT_STRICT_CONCURRENCY = complete; VALIDATE_PRODUCT = YES; }; name = Release; };
+	};
+	rootObject = DA01;
+}

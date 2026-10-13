@@ -1,0 +1,107 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>NSSupportsLiveActivities</key>
+  <true/>
+  <!-- `ITSAppUsesNonExemptEncryption` is absent on purpose. Driverr is not export-exempt:
+       it ships `swift-nio-ssh`, a complete encrypted transport, and generates Ed25519 keys
+       with `swift-crypto`, so `false` would be untrue. `true` needs an approved App
+       Encryption Declaration and its code in `ITSEncryptionExportComplianceCode`. Without
+       one, upload validation fails with ITMS-90592, and a declaration cannot be edited or
+       deleted once it exists. With the key absent the build uploads as "Missing
+       Compliance" and the questionnaire is answered in App Store Connect, which can be
+       changed later. -->
+
+  <!-- Required. Most hosts are on the user's own network, and iOS puts the first connection
+       to a local address behind a system alert. Without this string the alert gives no
+       reason, or the connection is refused with nothing for the user to correct. The text
+       is written for the person who reads the alert. -->
+  <key>NSLocalNetworkUsageDescription</key>
+  <string>Driverr connects over SSH to the machines you add, including ones on your own network.</string>
+
+  <!-- Required. `TARGETED_DEVICE_FAMILY = "1,2"` makes this an iPad app, and App Store
+       Connect rejects an iPad app that declares no orientations. The iPad list has all
+       four so multitasking can resize the window in any of them. The iPhone list omits
+       upside-down because no Face ID iPhone supports it. -->
+  <key>UISupportedInterfaceOrientations</key>
+  <array>
+    <string>UIInterfaceOrientationPortrait</string>
+    <string>UIInterfaceOrientationLandscapeLeft</string>
+    <string>UIInterfaceOrientationLandscapeRight</string>
+  </array>
+  <key>UISupportedInterfaceOrientations~ipad</key>
+  <array>
+    <string>UIInterfaceOrientationPortrait</string>
+    <string>UIInterfaceOrientationPortraitUpsideDown</string>
+    <string>UIInterfaceOrientationLandscapeLeft</string>
+    <string>UIInterfaceOrientationLandscapeRight</string>
+  </array>
+
+  <!-- `fetch` and nothing else. `BGAppRefreshTask` requires it, and
+       `Driverr/BackgroundRefresh.swift` uses it. A `BGContinuedProcessingTask` needs no
+       mode, and a declared mode the app does not use is an App Review rejection cause. -->
+  <key>UIBackgroundModes</key>
+  <array>
+    <string>fetch</string>
+  </array>
+  <!-- Must list every identifier the app registers a handler for. A registration whose
+       identifier is missing here throws at launch. The strings are
+       `BackgroundRefresh.taskIdentifier`, `BackgroundWatch.taskIdentifier` and
+       `BackgroundWatch.wildcardTaskIdentifier`, and `DriverrTests` reads this array back
+       so the two sides cannot drift. The `.watch.*` entry is reserved and nothing
+       registers it. An entry with no handler is never launched, and this list is a local
+       allowlist, not a capability claim. See `BackgroundWatch.wildcardTaskIdentifier`
+       before you remove it. -->
+  <key>BGTaskSchedulerPermittedIdentifiers</key>
+  <array>
+    <string>com.cunderw.driverr.refresh</string>
+    <string>com.cunderw.driverr.watch</string>
+    <string>com.cunderw.driverr.watch.*</string>
+  </array>
+
+  <!-- The `driverr` scheme carries a tap on the blocked-pane Live Activity to a destination
+       in the app. The widget is a separate process, so the URL on the card is the only
+       thing a tap can carry. The routes are in `DriverrCore.BlockedPaneActivityRoute`.
+       Change the scheme here and `BlockedPaneActivityRoute.scheme` together. The role is
+       `Viewer` because Driverr displays what a URL names and does not edit it. -->
+  <key>CFBundleURLTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleURLName</key>
+      <string>com.cunderw.driverr.deeplink</string>
+      <key>CFBundleTypeRole</key>
+      <string>Viewer</string>
+      <key>CFBundleURLSchemes</key>
+      <array>
+        <string>driverr</string>
+      </array>
+    </dict>
+  </array>
+
+  <!-- The terminal's default face, JetBrains Mono NL Nerd Font Mono (OFL 1.1, the licence
+       is Fonts/OFL.txt). The files sit in Driverr/Fonts, and the synchronized group copies
+       them to the bundle root, so the names here carry no folder. `DriverrTests` checks
+       every entry is in the bundle and that the faces load by PostScript name. -->
+  <key>UIAppFonts</key>
+  <array>
+    <string>JetBrainsMonoNLNerdFontMono-Regular.ttf</string>
+    <string>JetBrainsMonoNLNerdFontMono-Bold.ttf</string>
+    <string>JetBrainsMonoNLNerdFontMono-Italic.ttf</string>
+    <string>JetBrainsMonoNLNerdFontMono-BoldItalic.ttf</string>
+  </array>
+  <!-- Multiple windows are off on iPad. `ConnectionRegistry` is per-window state, so a
+       second window would open a second SSH session to the same host, and the two would
+       fight over one pane's "Take over" prompt. The dict is written by hand because no
+       build setting can set `UIApplicationSupportsMultipleScenes` to false:
+       `INFOPLIST_KEY_UIApplicationSceneManifest_Generation` either omits the manifest or
+       generates it with the value `true`. That setting is `NO` in project.pbxproj. -->
+  <key>UIApplicationSceneManifest</key>
+  <dict>
+    <key>UIApplicationSupportsMultipleScenes</key>
+    <false/>
+    <key>UISceneConfigurations</key>
+    <dict/>
+  </dict>
+</dict>
+</plist>

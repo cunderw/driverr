@@ -1,0 +1,17 @@
+.DS_Store
+.build/
+.build-logs/
+DerivedData/
+xcuserdata/
+*.xcresult
+.swiftpm/
+.claude/
+
+# `scripts/look.sh` generates this class and deletes it. A killed run can leave it behind.
+DriverrUITests/LookUITests.swift
+
+# Design docs, specs and plans are kept out of this repo.
+docs/adr/
+docs/specs/
+docs/plans/
+docs/design/

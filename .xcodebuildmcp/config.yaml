@@ -1,0 +1,34 @@
+# XcodeBuildMCP defaults for Driverr. Committed so a fresh clone runs the right gate
+# with no arguments and no setup step: it supplies the project, the scheme, the default
+# simulator and the app's bundle identifier. That "no setup step" claim holds for a clone;
+# from a linked worktree the relative projectPath below can resolve to a different
+# checkout. See the CONTRIBUTING.md bullet next to the empty -only-testing filter trap.
+#
+# These are DEFAULTS, not version constraints. Nothing here names an Xcode or an iOS
+# runtime, deliberately: gates use whatever Xcode is active and whatever runtime the named
+# device sits on. `README.md` states the toolchain a fresh clone needs; do not restate it
+# here as a pin.
+#
+# The one thing worth stating is the DEVICE. Driverr owns a distinctly named simulator
+# rather than sharing the machine's stock "iPhone 17". Other projects may run simulators on
+# the same machine, so a dedicated name is what stops another project's boot, erase or
+# wedge landing on Driverr's gate, and what makes a stray CoreSimulator process
+# attributable.
+#
+# `simulatorName`, not `simulatorId`: a UDID changes whenever the device is recreated
+# (an erase, a runtime reinstall, a fresh machine); the name does not.
+#
+# Create it if missing:
+#   xcrun simctl list devices available | grep -q '    Driverr iPhone 17 (' ||
+#     xcrun simctl create "Driverr iPhone 17" com.apple.CoreSimulator.SimDeviceType.iPhone-17
+schemaVersion: 1
+# The tool sends error reports and usage metrics to Sentry unless this is true. See
+# README.md, "Building it".
+sentryDisabled: true
+enabledWorkflows: ['simulator', 'simulator-management', 'swift-package', 'ui-automation']
+sessionDefaults:
+  projectPath: ./Driverr.xcodeproj
+  scheme: Driverr
+  simulatorName: Driverr iPhone 17
+  platform: iOS Simulator
+  bundleId: com.cunderw.driverr

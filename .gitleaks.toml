@@ -1,0 +1,23 @@
+title = "Driverr"
+
+[extend]
+useDefault = true
+
+# Each allowlist needs the path and the exact text, so a second key in the same file still
+# fails the scan. Do not add a path-only exemption and do not widen these.
+
+[[allowlists]]
+description = "The passphrase-protected key literal in KeyManagementUITests. The test types it into an in-memory import field and expects a passphrase error."
+targetRules = ["private-key"]
+condition = "AND"
+paths = ['''(^|/)DriverrUITests/KeyManagementUITests\.swift$''']
+regexes = ['''b3BlbnNzaC1rZXktdjEAAAAACmFlczI1Ni1jdHIAAAAGYmNyeXB0AAAAGAAAABC9AGhnbM''']
+regexTarget = "match"
+
+[[allowlists]]
+description = "An RSA PEM frame around the word 'nonsense' in OpenSSHPrivateKeyTests. It is not a key."
+targetRules = ["private-key"]
+condition = "AND"
+paths = ['''(^|/)DriverrKit/Tests/DriverrSSHTests/OpenSSHPrivateKeyTests\.swift$''']
+regexes = ['''Data\("nonsense"\.utf8\)\.base64EncodedString\(\)''']
+regexTarget = "match"
