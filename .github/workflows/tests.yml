@@ -1,0 +1,48 @@
+# The kit tier on every pull request. CONTRIBUTING.md, "Tests, and where they belong",
+# says what each tier covers.
+#
+# `DriverrTests` and the Release build are in weekly.yml, because a simulator run on a
+# hosted runner takes too long to wait for on a pull request. The UI tier runs nowhere
+# hosted. A pull request still says which of those its author ran.
+#
+# A pull request from a fork runs this with a read-only token and no secrets.
+name: Tests
+
+on:
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    # Names bash so every step runs with `-o pipefail`. Without it a failing xcodebuild
+    # piped into `tee` reports the pipe's status, which is tee's.
+    shell: bash
+
+jobs:
+  kit:
+    name: DriverrKit
+    runs-on: xcode-27
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Metal toolchain
+        run: xcodebuild -downloadComponent MetalToolchain
+
+      - name: swift test
+        run: swift test --package-path DriverrKit 2>&1 | tee "$RUNNER_TEMP/kit.log"
+
+      # A run that executed nothing also exits 0.
+      - name: Check that tests ran
+        run: grep -E 'Test run with [1-9][0-9]* tests? in [0-9]+ suites? passed' "$RUNNER_TEMP/kit.log"
+
+      - name: Report warnings
+        if: always()
+        run: scripts/ci-warnings.sh "$RUNNER_TEMP/kit.log"
