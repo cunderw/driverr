@@ -8,8 +8,9 @@
 # The secrets live in the `testflight` environment, which only this workflow names:
 #   ASC_KEY_ID, ASC_ISSUER_ID   an App Store Connect API key and its issuer
 #   ASC_KEY_P8                  the text of that key's .p8 file
-#   SIGNING_P12_BASE64          a .p12 holding the Apple Development and Apple Distribution
-#                               identities, base64 encoded
+#   SIGNING_P12_BASE64          a .p12 holding an Apple Development identity, base64
+#                               encoded. The archive signs with it. The export signs with
+#                               the distribution certificate Apple holds for the team.
 #   SIGNING_P12_PASSWORD        the password of that .p12
 #
 # No log is kept as an artifact. The archive log holds the key's identifiers, and an
@@ -96,9 +97,9 @@ jobs:
           cp "$ASC_KEY_PATH" ~/.appstoreconnect/private_keys/
           chmod 600 "$ASC_KEY_PATH" ~/.appstoreconnect/private_keys/*.p8
 
-      # The identities are imported so that Xcode signs with the ones that exist. A runner
-      # with none asks Apple for a new development certificate on every run.
-      - name: Import the signing identities
+      # The identity is imported so that Xcode signs with one that exists. A runner with
+      # none asks Apple for a new development certificate on every run.
+      - name: Import the signing identity
         env:
           SIGNING_P12_BASE64: ${{ secrets.SIGNING_P12_BASE64 }}
           SIGNING_P12_PASSWORD: ${{ secrets.SIGNING_P12_PASSWORD }}
@@ -116,11 +117,8 @@ jobs:
           security list-keychains -d user -s "$KEYCHAIN"
           rm "$RUNNER_TEMP/signing.p12"
           IDENTITIES="$(security find-identity -v -p codesigning "$KEYCHAIN")"
-          # Only the distribution identity carries the team in its name.
           grep -q '"Apple Development: ' <<< "$IDENTITIES" ||
             { echo "::error::the .p12 has no Apple Development identity"; exit 1; }
-          grep -q "\"Apple Distribution: .*($DEVELOPMENT_TEAM)\"" <<< "$IDENTITIES" ||
-            { echo "::error::the .p12 has no Apple Distribution identity for team $DEVELOPMENT_TEAM"; exit 1; }
 
       # The committed CURRENT_PROJECT_VERSION is a placeholder. The number comes from the
       # newest build App Store Connect holds.
