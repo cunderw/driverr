@@ -109,9 +109,11 @@ most often gets wrong:
   beside a good filter runs only the good one. Check what ran before calling a run green.
 - **One run per checkout and per simulator.** A second run can execute a bundle the first
   is rebuilding, and the failure's line number will not match the source.
-- **Hosted CI runs the kit tier, `DriverrTests` and the Release build on every pull
-  request** (`.github/workflows/tests.yml`). It runs no UI class, so the UI classes a diff
-  reaches are still a local run. A green claim must come from output you read.
+- **Hosted CI runs the kit tier on every pull request** (`.github/workflows/tests.yml`),
+  and `DriverrTests` and the Release build once a week on `main`
+  (`.github/workflows/weekly.yml`). It runs no UI class. So `DriverrTests` and the UI
+  classes a diff reaches are still a local run before a pull request. A green claim must
+  come from output you read.
 
 **Three named simulators.** `Driverr iPhone 17` (device type `iPhone-17`) is the default.
 `Driverr iPad` (`iPad-Pro-13-inch-M4-8GB`) is the iPad pass. `Driverr iPhone 17 Pro Max`
