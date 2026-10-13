@@ -50,7 +50,7 @@ jobs:
   app:
     name: DriverrTests and Release build
     runs-on: xcode-27
-    timeout-minutes: 60
+    timeout-minutes: 90
     env:
       DESTINATION: platform=iOS Simulator,name=Driverr iPhone 17
     steps:
@@ -59,10 +59,15 @@ jobs:
       - name: Metal toolchain
         run: xcodebuild -downloadComponent MetalToolchain
 
+      # The image carries more than one runtime, and a beta can be the newest. The device
+      # takes the runtime of the active Xcode's own SDK.
       - name: Create the named simulator
         run: |
+          RUNTIME="com.apple.CoreSimulator.SimRuntime.iOS-$(xcrun --sdk iphonesimulator --show-sdk-version | tr . -)"
           xcrun simctl list devices available | grep -q '    Driverr iPhone 17 (' ||
-            xcrun simctl create "Driverr iPhone 17" com.apple.CoreSimulator.SimDeviceType.iPhone-17
+            xcrun simctl create "Driverr iPhone 17" \
+              com.apple.CoreSimulator.SimDeviceType.iPhone-17 "$RUNTIME"
+          xcrun simctl list devices available | grep -B3 'Driverr iPhone 17 ('
 
       - name: DriverrTests
         run: |
