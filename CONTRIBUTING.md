@@ -293,9 +293,8 @@ want a fact, not a reassurance:
 
 Write "Not applicable" where a line genuinely does not apply, rather than leaving it blank.
 
-Hosted CI runs the kit tier on every pull request, and `DriverrTests` and the Release build
-once a week on `main`. It runs no UI test. So `DriverrTests` and the UI classes your diff
-reaches are still yours to run, and a green claim about them is only as good as the output
+Hosted CI runs the kit tier on every pull request and nothing else. So `DriverrTests` and
+the UI classes your diff reaches are still yours to run, and a green claim about them is only as good as the output
 you actually read. Please don't open a pull
 request you already know is red.
 
