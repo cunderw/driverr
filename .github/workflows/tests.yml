@@ -1,9 +1,9 @@
 # The kit tier on every pull request. CONTRIBUTING.md, "Tests, and where they belong",
 # says what each tier covers.
 #
-# `DriverrTests` and the Release build are in weekly.yml, because a simulator run on a
-# hosted runner takes too long to wait for on a pull request. The UI tier runs nowhere
-# hosted. A pull request still says which of those its author ran.
+# `DriverrTests` and the UI tier run nowhere hosted. A simulator run on a hosted runner
+# took too long to wait for, and `DriverrTests` failed there on time limits unrelated to
+# the commit. A pull request still says which of those its author ran.
 #
 # A pull request from a fork runs this with a read-only token and no secrets.
 name: Tests

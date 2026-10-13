@@ -222,7 +222,8 @@ jobs:
         env:
           EXPORT_COMPLIANCE_EXEMPT: ${{ vars.EXPORT_COMPLIANCE_EXEMPT }}
           TESTFLIGHT_EXTERNAL_GROUPS: ${{ vars.TESTFLIGHT_EXTERNAL_GROUPS }}
-          NOTES: ${{ github.event.head_commit.message }}
+          # A manual run has no commit message.
+          NOTES: ${{ github.event.head_commit.message || 'A build of main, started by hand.' }}
         run: |
           node scripts/testflight.mjs release "$PRODUCT_BUNDLE_IDENTIFIER" "$NEXT" \
             --notes "$(head -1 <<< "$NOTES")"
