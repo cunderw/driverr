@@ -121,7 +121,8 @@ does not need it.
 Add `--output json` to any of them and the result carries the counts, the tests that
 actually ran, and paths to the full log and result bundle.
 
-There is no hosted CI. Every gate runs locally, and a green claim is expected to come from
+Hosted CI runs the kit suites, `DriverrTests` and a Release build on every pull request, and
+no UI test. Every other gate runs locally, and a green claim is expected to come from
 output you actually read — including a check that the tests you asked for are the ones that
 ran, since xcodebuild exits 0 when a filter matches nothing.
 [`CONTRIBUTING.md`](CONTRIBUTING.md#tests-and-where-they-belong) says which of these to run

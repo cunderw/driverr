@@ -1,0 +1,112 @@
+# The two cheap tiers and the Release build, on every pull request. CONTRIBUTING.md,
+# "Tests, and where they belong", says what each tier covers.
+#
+# The UI tier is not here on purpose. It is the most expensive thing in this repo, and the
+# rule is to run only the classes a diff can reach, which a workflow cannot name. A pull
+# request still says which UI classes its author ran.
+#
+# A pull request from a fork runs this with a read-only token and no secrets.
+name: Tests
+
+on:
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    # Names bash so every step runs with `-o pipefail`. Without it a failing xcodebuild
+    # piped into `tee` reports the pipe's status, which is tee's.
+    shell: bash
+
+jobs:
+  kit:
+    name: DriverrKit
+    runs-on: xcode-27
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Metal toolchain
+        run: xcodebuild -downloadComponent MetalToolchain
+
+      - name: swift test
+        run: swift test --package-path DriverrKit 2>&1 | tee "$RUNNER_TEMP/kit.log"
+
+      # A run that executed nothing also exits 0.
+      - name: Check that tests ran
+        run: grep -E 'Test run with [1-9][0-9]* tests? in [0-9]+ suites? passed' "$RUNNER_TEMP/kit.log"
+
+      - name: Report warnings
+        if: always()
+        run: scripts/ci-warnings.sh "$RUNNER_TEMP/kit.log"
+
+  app:
+    name: DriverrTests and Release build
+    runs-on: xcode-27
+    timeout-minutes: 60
+    env:
+      DESTINATION: platform=iOS Simulator,name=Driverr iPhone 17
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Metal toolchain
+        run: xcodebuild -downloadComponent MetalToolchain
+
+      - name: Create the named simulator
+        run: |
+          xcrun simctl list devices available | grep -q '    Driverr iPhone 17 (' ||
+            xcrun simctl create "Driverr iPhone 17" com.apple.CoreSimulator.SimDeviceType.iPhone-17
+
+      - name: DriverrTests
+        run: |
+          xcodebuild test \
+            -project Driverr.xcodeproj -scheme Driverr \
+            -destination "$DESTINATION" \
+            -only-testing:DriverrTests \
+            -resultBundlePath "$RUNNER_TEMP/DriverrTests.xcresult" \
+            > "$RUNNER_TEMP/tests.log" 2>&1 || { tail -80 "$RUNNER_TEMP/tests.log"; exit 1; }
+
+      # xcodebuild exits 0 when the filter matches nothing, so the count is the result.
+      - name: Check that tests ran
+        run: |
+          xcrun xcresulttool get test-results summary \
+            --path "$RUNNER_TEMP/DriverrTests.xcresult" > "$RUNNER_TEMP/summary.json"
+          python3 - "$RUNNER_TEMP/summary.json" <<'PY'
+          import json, sys
+          s = json.load(open(sys.argv[1]))
+          passed, failed = s.get("passedTests", 0), s.get("failedTests", 0)
+          print(f"result {s.get('result')}: {passed} passed, {failed} failed, "
+                f"{s.get('skippedTests', 0)} skipped of {s.get('totalTestCount', 0)}")
+          sys.exit(0 if passed > 0 and failed == 0 else 1)
+          PY
+
+      # The three tiers build Debug only. A DEBUG-only symbol used from Release code
+      # passes all of them and fails at the archive.
+      - name: Release build
+        run: |
+          xcodebuild build \
+            -project Driverr.xcodeproj -scheme Driverr \
+            -configuration Release \
+            -destination "$DESTINATION" \
+            > "$RUNNER_TEMP/release.log" 2>&1 || { tail -80 "$RUNNER_TEMP/release.log"; exit 1; }
+
+      - name: Report warnings
+        if: always()
+        run: scripts/ci-warnings.sh "$RUNNER_TEMP/tests.log" "$RUNNER_TEMP/release.log"
+
+      - name: Keep the logs of a failed run
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-logs
+          path: |
+            ${{ runner.temp }}/*.log
+            ${{ runner.temp }}/DriverrTests.xcresult
+          retention-days: 7

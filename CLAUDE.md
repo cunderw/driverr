@@ -109,7 +109,9 @@ most often gets wrong:
   beside a good filter runs only the good one. Check what ran before calling a run green.
 - **One run per checkout and per simulator.** A second run can execute a bundle the first
   is rebuilding, and the failure's line number will not match the source.
-- There is **no hosted CI**. A green claim must come from output you read.
+- **Hosted CI runs the kit tier, `DriverrTests` and the Release build on every pull
+  request** (`.github/workflows/tests.yml`). It runs no UI class, so the UI classes a diff
+  reaches are still a local run. A green claim must come from output you read.
 
 **Three named simulators.** `Driverr iPhone 17` (device type `iPhone-17`) is the default.
 `Driverr iPad` (`iPad-Pro-13-inch-M4-8GB`) is the iPad pass. `Driverr iPhone 17 Pro Max`
@@ -326,6 +328,9 @@ The sources are `Driverr.xcodeproj/project.pbxproj`, the two `.entitlements` fil
 
 The release procedure lives outside this repo. These are only the facts about the tree.
 
+- **A push to `main` that changes the app uploads a TestFlight build**
+  (`.github/workflows/testflight.yml`). A manual run of that workflow validates only,
+  unless it is told to upload. `scripts/testflight.mjs` holds its App Store Connect calls.
 - **`MARKETING_VERSION` appears twice** in `project.pbxproj`, Debug and Release. Change
   both; nothing warns about a mismatch.
 - **Never commit a `CURRENT_PROJECT_VERSION` bump.** The build number is supplied on the
