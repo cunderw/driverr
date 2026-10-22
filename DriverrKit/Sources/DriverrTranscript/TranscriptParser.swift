@@ -37,6 +37,9 @@ enum TranscriptParser {
     /// Each `Agent` call's `name` to its description, so a later `TaskStop` can say what it
     /// stopped. A stop whose spawn fell off the front of the page keeps the bare id.
     var spawns: [String: String] = [:]
+    /// Each spawn answer's `agentId` to the name it was spawned under. A `TaskStop` names
+    /// either, depending on the Claude Code version; see `agentTraffic`.
+    var agentNames: [String: String] = [:]
     /// The run this session's own agent traffic closed, while it is still the last run. See
     /// `closeRun`.
     var pendingCandidate: Int?
@@ -228,7 +231,12 @@ enum TranscriptParser {
             if let spawned = spawn(of: block) {
               spawns[spawned.id] = spawned.description
             }
-            if var event = agentTraffic(of: block, spawns: spawns) {
+            if block.name == "Agent", let name = nonEmpty(block.input?["name"]),
+              let agentID = block.id.flatMap({ answers.launches[$0]?.agentID }), !agentID.isEmpty
+            {
+              agentNames[agentID] = name
+            }
+            if var event = agentTraffic(of: block, spawns: spawns, agentNames: agentNames) {
               closeRun()
               if event.kind == .spawned {
                 switch spawnProgress(of: block.id, at: at, answers: answers, ends: ends) {
@@ -1173,7 +1181,8 @@ enum TranscriptParser {
   /// carry.
   static func agentTraffic(
     of block: ClaudeBlock,
-    spawns: [String: String]
+    spawns: [String: String],
+    agentNames: [String: String] = [:]
   ) -> TranscriptTurn.AgentEvent? {
     guard let name = block.name, let input = block.input else { return nil }
     switch name {
@@ -1188,10 +1197,15 @@ enum TranscriptParser {
       )
     case "TaskStop":
       guard let id = nonEmpty(input["task_id"]) else { return nil }
+      // **`task_id` has two shapes.** Claude Code wrote the teammate's name until about
+      // 2026-10-13; by 2026-10-22 it writes the spawn answer's `agentId`
+      // (`"a" + name + "-" + hex`). Either resolves to the name, which is what the spawn line
+      // and `settleSpawns` key on.
+      let stopped = agentNames[id] ?? id
       // The spawn's description when this page carried the spawn. **Never a guess**: a
       // stop whose spawn fell off the front of the page shows the bare id.
       return TranscriptTurn.AgentEvent(
-        sender: id, summary: spawns[id], body: "", kind: .stopped
+        sender: stopped, summary: spawns[stopped], body: "", kind: .stopped
       )
     case "SendMessage":
       let to = nonEmpty(input["to"]) ?? nonEmpty(input["recipient"])
