@@ -101,6 +101,8 @@ struct SubagentListBar: View {
       }
       .padding(.horizontal, 12)
       .padding(.vertical, 10)
+      // The platform's minimum target; one footnote line and its padding come to about 39.
+      .frame(minHeight: 44)
       .contentShape(Rectangle())
     }
     .buttonStyle(.plain)

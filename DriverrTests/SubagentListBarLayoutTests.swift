@@ -46,8 +46,10 @@ struct SubagentListBarLayoutTests {
           list: list, turns: [], isExpanded: .constant(isExpanded), horizontalInset: gutter,
           onOpen: { _ in }, onHeaderFrame: { measured.header = $0 },
           onListFrame: { measured.list = $0 })
-        // What comes next in the chat: its top is where the list ends.
-        Color.clear.frame(height: 1).measuredFrame(into: { measured.below = $0 })
+        // What comes next in the chat: its top is where the list ends. Read on every change,
+        // not once, because the open list settles its height a pass after it appears.
+        Color.clear.frame(height: 1)
+          .onGeometryChange(for: CGRect.self, of: { $0.frame(in: .global) }) { measured.below = $0 }
         Spacer(minLength: 0)
       }
       .frame(maxWidth: column)
@@ -87,7 +89,9 @@ struct SubagentListBarLayoutTests {
   func shortListAtItsHeight() {
     for (device, size, column) in Self.devices {
       let measured = measure(window: size, column: column, count: 2, isExpanded: true)
-      print("[sub-agent list] \(device) two rows: header \(measured.header), list \(measured.list)")
+      print(
+        "[sub-agent list] \(device) two rows: header \(measured.header), list \(measured.list), "
+          + "below \(measured.below)")
       #expect(measured.list.height > 60, "\(device): two rows measure \(measured.list.height) pt")
       #expect(measured.list.height < 200, "\(device): two rows took the long list's cap")
       #expect(measured.list.minY >= measured.header.maxY, "\(device): the rows start under the header")

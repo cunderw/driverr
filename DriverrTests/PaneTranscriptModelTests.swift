@@ -23,7 +23,9 @@ struct PaneTranscriptModelTests {
     endsMidRecord: Bool = false,
     fileSize: Int? = nil,
     onCommand: (@Sendable (String) -> Void)? = nil,
-    refusals: Switch? = nil
+    refusals: Switch? = nil,
+    subagentMetas: [String] = [],
+    subagentListFails: Bool = false
   ) -> @Sendable (String) async throws -> CommandResult {
     let directory = "/Users/x/.claude/projects/-Users-x-Dev-driverr"
     let body = records.joined(separator: "\n") + (records.isEmpty ? "" : "\n")
@@ -37,6 +39,18 @@ struct PaneTranscriptModelTests {
       onCommand?(command)
       if refusals?.isOn == true {
         return CommandResult(standardOutput: "", standardError: "boom", exitStatus: 1)
+      }
+      // The sub-agent list, before the listing, because it also asks for `date +%s`.
+      if command.contains("*.meta.json") {
+        guard !subagentListFails else {
+          return CommandResult(standardOutput: "", standardError: "boom", exitStatus: 1)
+        }
+        let lines = subagentMetas.enumerated().map { index, meta in
+          "999999000\t999999990\t100\tagent-a\(index).jsonl\t\(meta)"
+        }
+        let answer = (["1000000000", "\(directory)/a1b2/subagents", "#\(subagentMetas.count)"] + lines)
+          .joined(separator: "\n") + "\n"
+        return CommandResult(standardOutput: answer, standardError: "", exitStatus: 0)
       }
       if command.contains("date +%s") {
         return CommandResult(standardOutput: listing, standardError: "", exitStatus: 0)
@@ -66,8 +80,11 @@ struct PaneTranscriptModelTests {
     )
   }
 
+  /// The page, and the sub-agent list a landed page starts, so a count at the runner
+  /// includes both.
   private func settled(_ model: PaneTranscriptModel) async {
     await model.currentLoad?.value
+    await model.subagentListLoad?.value
   }
 
   // MARK: - What the reader opened
@@ -232,6 +249,72 @@ struct PaneTranscriptModelTests {
     await settled(model)
 
     #expect(commands.value == afterFirst * 2)
+  }
+
+  // MARK: - Every sub-agent the session spawned
+
+  private static let explore =
+    #"{"agentType":"Explore","description":"Find the callers","toolUseId":"toolu_1","finished":true}"#
+
+  @Test("the session's sub-agents are listed after its page lands, from its own directory")
+  func theListFollowsThePage() async {
+    let log = SubagentCommandLog()
+    let model = PaneTranscriptModel(
+      pane: pane(),
+      reader: TranscriptReader(
+        run: host(onCommand: { log.record($0) }, subagentMetas: [Self.explore])))
+    model.loadIfNeeded()
+    await settled(model)
+
+    #expect(model.transcript != nil)
+    #expect(model.subagentList.total == 1)
+    #expect(model.subagentList.summaries.first?.link == .toolUse(id: "toolu_1"))
+    let asked = log.commands.filter { $0.contains("*.meta.json") }
+    #expect(asked.count == 1)
+    #expect(asked.first?.contains("-Users-x-Dev-driverr/a1b2/subagents") == true)
+  }
+
+  /// The growth probe re-reads the page every few seconds while the agent writes. The list
+  /// must not ride along on each one.
+  @Test("a re-read inside the list's staleness does not ask for the list again")
+  func theListIsNotReaskedOnEveryRead() async {
+    let log = SubagentCommandLog()
+    let model = PaneTranscriptModel(
+      pane: pane(),
+      reader: TranscriptReader(
+        run: host(onCommand: { log.record($0) }, subagentMetas: [Self.explore])))
+    model.loadIfNeeded()
+    await settled(model)
+    model.refresh()
+    await settled(model)
+    model.refresh()
+    await settled(model)
+
+    #expect(log.commands.filter { $0.contains("*.meta.json") }.count == 1)
+  }
+
+  @Test("a list the host refuses leaves the page on screen and no list")
+  func aFailedListKeepsThePage() async {
+    let model = PaneTranscriptModel(
+      pane: pane(),
+      reader: TranscriptReader(run: host(subagentMetas: [Self.explore], subagentListFails: true)))
+    model.loadIfNeeded()
+    await settled(model)
+
+    #expect(model.transcript?.turns.count == 2)
+    #expect(model.subagentList.isEmpty)
+  }
+
+  @Test("invalidating drops the list with the page")
+  func invalidateDropsTheList() async {
+    let model = PaneTranscriptModel(
+      pane: pane(), reader: TranscriptReader(run: host(subagentMetas: [Self.explore])))
+    model.loadIfNeeded()
+    await settled(model)
+    #expect(!model.subagentList.isEmpty)
+
+    model.invalidate()
+    #expect(model.subagentList.isEmpty)
   }
 
   // MARK: - Everything that is not a conversation
