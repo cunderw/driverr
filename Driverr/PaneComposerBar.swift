@@ -31,13 +31,20 @@ struct PaneComposerBar: View {
   /// `PanePromptBar`'s shape.
   @State private var isConfirmingInterrupt = false
 
-  /// The typed query the reader last dismissed the `/` list against. Compared with
-  /// `model.text`, so the list returns as soon as the query changes.
+  /// The whole field's text when the reader last dismissed the `/` list. Compared with
+  /// `model.text`, so the list returns as soon as the text changes.
+  ///
+  /// The whole text, not the `/word`: a dismissal at one `/word` also hides the list at
+  /// another `/word` in the same text, until the text changes.
   @State private var dismissedSuggestionsQuery: String?
 
   /// Which suggestion row an arrow key has highlighted. The arithmetic is
   /// `DriverrCore.SlashSuggestionSelection`.
   @State private var suggestionSelection = SlashSuggestionSelection()
+
+  /// The field's caret, so the `/` list completes the word the caret is at the end of, not
+  /// only a leading one. `nil` until the field reports a caret; see `caretOffset`.
+  @State private var textSelection: TextSelection?
 
   @Bindable var model: PaneComposerModel
 
@@ -162,6 +169,8 @@ struct PaneComposerBar: View {
       dismissedSuggestionsQuery = nil
       // The same for the highlight: row 2 of one pane's list is a different command on another.
       suggestionSelection.reset()
+      // And the caret: one pane's offset means nothing in another pane's draft.
+      textSelection = nil
     }
     // Its own task, keyed on the gate as well as the pane, so a request held by `.wait` is
     // acted on when the chat's read finishes. A request is used up once, so a later change
@@ -186,6 +195,9 @@ struct PaneComposerBar: View {
       // model also refuses a stale index; this keeps the highlight from appearing to survive.
       suggestionSelection.reset()
     }
+    // A caret moved by a tap or a selection can point at another `/word`, or none, so the
+    // highlight starts again for the same reason as a keystroke.
+    .onChange(of: textSelection) { suggestionSelection.reset() }
     // Reports the bar's own frame for `debug.keyboardMetrics`. Nothing lays out from it; see
     // `onLayoutProbe`.
     .modifier(ComposerLayoutProbe(report: onLayoutProbe))
@@ -215,14 +227,45 @@ struct PaneComposerBar: View {
   /// Nothing is offered while collapsed. The bar is already one row, and a list would cover
   /// the turn being answered. It uses the same condition as the composer
   /// (`TerminalScreen.isComposerCollapsed`), so the two agree about what fits.
+  ///
+  /// The query is the `/word` at the caret (`slashToken`), so it can follow prose. Built-ins
+  /// are offered only for a word that opens the message, because Claude Code sends one
+  /// mid-sentence as prose (`SlashCommandMatcher.withoutBuiltIns`).
   private var slashSuggestions: [SlashCommand] {
-    guard !isCollapsed, model.text != dismissedSuggestionsQuery else { return [] }
+    guard !isCollapsed, model.text != dismissedSuggestionsQuery, let token = slashToken else {
+      return []
+    }
     // No transcript is needed: recents need one, but the catalogue does not, so a pane whose
     // conversation has not arrived still offers what the host has installed. Only agent panes
     // get a composer.
     let recents = transcript.map(SlashCommandMatcher.recentCommands(in:)) ?? []
     let offered = SlashCommandMatcher.offerings(recents: recents, catalog: catalog)
-    return SlashCommandMatcher.matches(offered, typed: model.text, limit: suggestionLimit)
+    let runnable =
+      token.opensTheMessage ? offered : SlashCommandMatcher.withoutBuiltIns(offered, catalog: catalog)
+    return SlashCommandMatcher.matches(runnable, typed: token.typed, limit: suggestionLimit)
+  }
+
+  /// The `/word` the caret is at the end of, or `nil`.
+  private var slashToken: SlashToken? {
+    SlashCommandMatcher.activeToken(in: model.text, caret: caretOffset)
+  }
+
+  /// The caret as a `Character` offset into `model.text`.
+  ///
+  /// The end of the text when the field has reported nothing, or when the selection is
+  /// stale: a send clears the text and leaves the old selection past its end. A range
+  /// selection uses its end, so selecting a typed `/co` keeps the list.
+  private var caretOffset: Int {
+    let text = model.text
+    let index: String.Index?
+    switch textSelection?.indices {
+    case .selection(let range): index = range.upperBound
+    case .multiSelection(let ranges): index = ranges.ranges.last?.upperBound
+    case nil: index = nil
+    @unknown default: index = nil
+    }
+    guard let index, index <= text.endIndex else { return text.count }
+    return text.distance(from: text.startIndex, to: index)
   }
 
   /// Whether a suggestion row carries its description. Dropped at accessibility sizes, where
@@ -360,10 +403,16 @@ struct PaneComposerBar: View {
     }
   }
 
-  /// Completes `command` into the field, never with a guessed argument. The trailing space
-  /// leaves the cursor where an argument would go.
+  /// Completes `command` into the field in place of the `/word` at the caret, never with a
+  /// guessed argument. The rest of the text is kept, and the caret goes after the trailing
+  /// space, where an argument would go.
   private func choose(_ command: SlashCommand) {
-    model.text = command.name + " "
+    guard let token = slashToken else { return }
+    let completion = SlashCommandMatcher.complete(model.text, token: token, with: command)
+    model.text = completion.text
+    textSelection = TextSelection(
+      insertionPoint: completion.text.index(
+        completion.text.startIndex, offsetBy: completion.caret))
     suggestionSelection.reset()
   }
 
@@ -380,9 +429,9 @@ struct PaneComposerBar: View {
   /// Up and Down are verified under XCUITest. Return and Escape are not: XCUITest delivers them
   /// to no handler at all, including Send's shipped ⌘↩. `PaneComposerUITests` records the probe.
   ///
-  /// Up and Down work only because the field is one line while the list is up:
-  /// `SlashCommandMatcher.matches` offers nothing once the text has whitespace. Offering
-  /// suggestions over multi-line text would let the field take these keys.
+  /// The list can be up over wrapped text, because the `/word` can follow prose. Up and Down
+  /// still reach these handlers there, not the field's caret: measured under XCUITest by
+  /// `testArrowKeysMoveTheHighlightWhenTheFieldHasWrapped`.
   private func withSlashKeyHandling(_ content: some View) -> some View {
     content
       .onKeyPress(.downArrow) {
@@ -482,7 +531,7 @@ struct PaneComposerBar: View {
   /// `lineLimit` do it; swapping the initialiser would change the field's identity and drop
   /// the keyboard.
   private var field: some View {
-    TextField(PaneComposerCopy.field, text: $model.text, axis: .vertical)
+    TextField(PaneComposerCopy.field, text: $model.text, selection: $textSelection, axis: .vertical)
       .textFieldStyle(.plain)
       .lineLimit(isCollapsed ? 1...1 : 1...5)
       // A terminal reply is not prose: an autocapitalised "Yes" or autocorrected flag is a
