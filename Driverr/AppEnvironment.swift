@@ -1215,6 +1215,7 @@ struct AppEnvironment {
     if isTranscriptAgentEvents { return agentEventTranscript }
     if isTranscriptOrchestrator { return orchestratorTranscript }
     if isTranscriptTaskState { return taskStateTranscript }
+    if isTranscriptManySubagents { return manySubagentTranscript }
     if isTranscriptSubagents { return subagentTranscript }
     if isTranscriptUsageLimited { return usageLimitedTranscript }
     if isTranscriptUsageLimitReset { return usageLimitResetTranscript }
@@ -2296,6 +2297,28 @@ struct AppEnvironment {
       spawnedSecondsAgo: 9400
     ),
   ])
+
+  /// `subagentTranscript` with 57 more finished lookups behind it, 60 in all, so the open
+  /// list reaches its height cap, scrolls inside it, and ends on the host's cap of 50.
+  static let manySubagentTranscript = subagentTranscript.serving(
+    subagentTranscript.subagents
+      + (1...57).map { index in
+        FakeTranscriptHost.SubagentFixture(
+          agentID: "a0many\(index)",
+          toolUseID: "toolu_many_\(index)",
+          secondsAgo: 10_000 + Double(index) * 60,
+          prompt: "Survey module \(index) and report its public types.",
+          description: "Survey module \(index)",
+          agentType: "Explore",
+          isFinished: true,
+          spawnedSecondsAgo: 10_100 + Double(index) * 60
+        )
+      })
+
+  /// Whether this launch should serve the session with sixty sub-agents.
+  static var isTranscriptManySubagents: Bool {
+    ProcessInfo.processInfo.arguments.contains("-uiTestingManySubagents")
+  }
 
   /// Whether this launch should serve the session whose spawn lines open sub-agents.
   static var isTranscriptSubagents: Bool {

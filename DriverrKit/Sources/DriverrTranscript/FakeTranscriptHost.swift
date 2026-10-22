@@ -640,8 +640,9 @@ public struct FakeTranscriptHost: Sendable {
     return ([String(epoch), dir] + lines).joined(separator: "\n") + "\n"
   }
 
-  /// `subagentListCommand`'s shape: every fixture, newest spawned first, whichever session
-  /// asked. Empty `subagents` answers a directory with no meta files.
+  /// `subagentListCommand`'s shape: the newest spawned fixtures up to the command's cap,
+  /// whichever session asked, and the count of all of them. Empty `subagents` answers a
+  /// directory with no meta files.
   private func subagentListAnswer(asOf now: Date) -> String {
     let epoch = Int(now.timeIntervalSince1970)
     let dir = "\(directory)/subagents"
@@ -649,7 +650,7 @@ public struct FakeTranscriptHost: Sendable {
     let ordered = subagents.sorted {
       ($0.spawnedSecondsAgo ?? $0.secondsAgo) < ($1.spawnedSecondsAgo ?? $1.secondsAgo)
     }
-    let lines = ordered.map { fixture -> String in
+    let lines = ordered.prefix(TranscriptCommands.subagentListLimit).map { fixture -> String in
       let spawned = epoch - Int(fixture.spawnedSecondsAgo ?? fixture.secondsAgo)
       let written = epoch - Int(fixture.secondsAgo)
       let size = fixture.fileSizeInBytes ?? subagentRecords(of: fixture, asOf: now).utf8.count

@@ -61,6 +61,7 @@ struct SubagentListBar: View {
             .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { rowsHeight = $0 }
           }
           .scrollBounceBehavior(.basedOnSize)
+          .accessibilityIdentifier("pane.chat.subagents.list")
           // Bounded: the rows' height does not depend on this frame, so the two cannot chase.
           .frame(height: min(rowsHeight, maxListHeight))
           .background(measurement(onListFrame))

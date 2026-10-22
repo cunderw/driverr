@@ -117,6 +117,21 @@ struct SubagentListReaderTests {
     #expect(list.summaries.last?.isFinished == true)
   }
 
+  @Test("the fake host prints the newest spawns up to the command's cap and counts them all")
+  func fakeHostCaps() async throws {
+    let fixtures = (0..<60).map { index in
+      FakeTranscriptHost.SubagentFixture(
+        agentID: "a\(index)", toolUseID: "toolu_\(index)", secondsAgo: Double(index) * 60,
+        prompt: "p", agentType: "Explore")
+    }
+    let host = FakeTranscriptHost(sessionID: "sess1", turns: []).serving(fixtures)
+    let list = try await TranscriptReader(run: host.run)
+      .subagentList(directory: host.directory, sessionID: "sess1")
+    #expect(list.total == 60)
+    #expect(list.summaries.count == TranscriptCommands.subagentListLimit)
+    #expect(list.summaries.first?.id == "a0")
+  }
+
   @Test("a fake host with no sub-agents lists none")
   func fakeHostWithNone() async throws {
     let host = FakeTranscriptHost(sessionID: "sess1", turns: [])

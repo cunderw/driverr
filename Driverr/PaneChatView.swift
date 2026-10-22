@@ -370,6 +370,11 @@ struct PaneChatView: View {
       autoLoadFailed = false
       readerState = ChatReaderState()
     }
+    // The list is hidden while the composer is collapsed, and comes back closed, so the
+    // keyboard going down does not open it over the conversation.
+    .onChange(of: isComposerCollapsed) { _, collapsed in
+      if collapsed { isSubagentListOpen = false }
+    }
     .onChange(of: model.pane.id) {
       isShowingScreen = false
       isChoosingFile = false
