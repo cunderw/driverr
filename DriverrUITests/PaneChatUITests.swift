@@ -688,6 +688,58 @@ final class PaneChatUITests: XCTestCase {
     add(closed)
   }
 
+  /// The list under the provenance row names every sub-agent the session's meta files hold,
+  /// including one whose spawn line is not on the page, and a row opens that sub-agent.
+  ///
+  /// The claim is wiring: the list command through the model to the bar, and a row's tap to
+  /// `openSubagent`. The mapping and the state merge are kit tests (`SubagentListTests`,
+  /// `SubagentListReaderTests`). The slow transcript makes the page, and so the list, arrive
+  /// after the chat is up, as on a phone.
+  func testTheSubagentListNamesEverySubagentAndARowOpensOne() {
+    let app = connectedHost(slowTranscript: true, subagents: true)
+
+    tapPane(app, titled: "needs a decision")
+    require(app, "pane.chat", "Expected the pane to open on its chat")
+    let bar = require(
+      app, "pane.chat.subagents", "Expected the sub-agent list under the provenance row",
+      timeout: 20)
+    XCTAssertEqual(bar.label, "3 sub-agents · 1 running")
+    XCTAssertEqual(bar.value as? String, "Collapsed")
+    bar.tap()
+
+    let rows = app.descendants(matching: .any).matching(identifier: "pane.chat.subagents.row")
+    // Spawned before the page's first turn, so only the meta files know it.
+    let lookup = rows.element(
+      matching: NSPredicate(format: "label CONTAINS %@", "Find the config loader's callers"))
+    XCTAssertTrue(
+      lookup.waitForExistence(timeout: 10),
+      "Expected the off-page sub-agent's row.\nTree was:\n\(app.debugDescription)")
+    XCTAssertEqual(rows.count, 3, "Expected one row per meta file")
+    XCTAssertTrue(
+      rows.element(matching: NSPredicate(format: "label CONTAINS %@", "verifier-7")).exists,
+      "Expected the teammate's row")
+    let expanded = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+    expanded.name = "subagent-list-expanded"
+    expanded.lifetime = .keepAlways
+    add(expanded)
+    lookup.tap()
+
+    let back = require(app, "pane.chat.subagent.back", "Expected the back bar over the sub-agent")
+    XCTAssertEqual(
+      require(app, "pane.chat.subagent.title", "Expected the sub-agent's name").label, "Explore")
+    let prompt = app.descendants(matching: .any).matching(identifier: "pane.chat.turn.human")
+      .element(matching: NSPredicate(format: "label CONTAINS %@", "Find every caller of load_config"))
+    XCTAssertTrue(
+      prompt.waitForExistence(timeout: 20),
+      "Expected the off-page sub-agent's own prompt.\nTree was:\n\(app.debugDescription)")
+    requireGone(app, "pane.chat.subagents", "The list is not drawn over a sub-agent's chat")
+
+    back.tap()
+    requireGone(app, "pane.chat.subagent.back", "Back must return to the pane's chat")
+    let returned = require(app, "pane.chat.subagents", "The list must come back with the pane's chat")
+    XCTAssertEqual(returned.value as? String, "Collapsed", "Opening a row closes the list")
+  }
+
   /// Leaving the pane scene closes a sub-agent opened in it, so coming back finds the pane's
   /// own chat and composer. The claim is about `TerminalScreen` going away, which no cheaper
   /// tier hosts.

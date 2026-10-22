@@ -21,8 +21,8 @@ struct SubagentListBar: View {
   var horizontalInset: CGFloat = ChatColumn.inset
   let onOpen: (SubagentRow) -> Void
 
-  /// Where a hosted layout test reads the header's and the list's frames. The contract is
-  /// `ProvenanceRow.onCaptionFrame`'s: nothing is installed when nobody is measuring.
+  /// Where a hosted layout test reads the header's and the open list's frames. Nothing is
+  /// installed when nobody is measuring, as with `ProvenanceRow.onCaptionFrame`.
   var onHeaderFrame: (@MainActor (CGRect) -> Void)?
   var onListFrame: (@MainActor (CGRect) -> Void)?
 
@@ -130,9 +130,11 @@ struct SubagentListBar: View {
           }
         }
         Spacer(minLength: 8)
+        // The spawn line's styling (`TranscriptTurnView.taskText`), so one state reads the
+        // same in both places.
         Text(row.statusLine(asOf: now))
-          .font(.caption.monospacedDigit())
-          .foregroundStyle(row.state == .running ? accent : Color.secondary)
+          .font(.caption.weight(row.state == .running ? .semibold : .regular).monospacedDigit())
+          .foregroundStyle(Self.statusColor(row.state))
           .lineLimit(1)
           .layoutPriority(1)
         Image(systemName: "chevron.right")
@@ -152,12 +154,20 @@ struct SubagentListBar: View {
     .accessibilityIdentifier("pane.chat.subagents.row")
   }
 
+  private static func statusColor(_ state: TaskProgress.State?) -> Color {
+    switch state {
+    case .running: Color.primary
+    case .failed: Color.red
+    default: Color.secondary
+    }
+  }
+
+  /// Reports every change, not only the first frame, because the open list settles its
+  /// height a pass after it appears.
   @ViewBuilder
   private func measurement(_ report: (@MainActor (CGRect) -> Void)?) -> some View {
     if let report {
-      GeometryReader { proxy in
-        Color.clear.onAppear { report(proxy.frame(in: .global)) }
-      }
+      Color.clear.onGeometryChange(for: CGRect.self, of: { $0.frame(in: .global) }) { report($0) }
     }
   }
 }
