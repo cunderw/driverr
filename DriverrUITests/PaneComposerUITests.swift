@@ -573,6 +573,41 @@ final class PaneComposerUITests: XCTestCase {
     )
   }
 
+  /// With text after the `/word`, choosing keeps that text and leaves the caret after the
+  /// command, not at the end of the field. The next keystroke shows where the caret is.
+  func testChoosingBeforeLaterTextLeavesTheCaretAfterTheCommand() {
+    let app = composerOnACommandTranscript()
+
+    let field = require(app, "composer.text", "Expected the composer field")
+    field.tap()
+    app.typeText("fix /co more")
+    // Back over " more", to the end of "/co".
+    for _ in 0..<5 { app.typeKey(.leftArrow, modifierFlags: []) }
+
+    let row = require(
+      app, "composer.suggestions.row.0", "A caret at the end of /co must offer commands")
+    XCTAssertEqual(row.label, "/code-review", "Expected /code-review first for /co")
+    row.tap()
+
+    XCTAssertEqual(
+      field.value as? String,
+      "fix /code-review more",
+      """
+      Choosing must replace only /co and reuse the space after it.
+      Field held: \(String(describing: field.value))
+      """
+    )
+    app.typeText("X")
+    XCTAssertEqual(
+      field.value as? String,
+      "fix /code-review Xmore",
+      """
+      The caret must sit after the command and its space, where an argument goes.
+      Field held: \(String(describing: field.value))
+      """
+    )
+  }
+
   /// The list dismisses without choosing. The dismiss control is its own row
   /// (`PaneComposerBar.suggestionsHeader`), so this also proves it is a separate target from
   /// the top suggestion.
