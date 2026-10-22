@@ -31,8 +31,11 @@ struct PaneComposerBar: View {
   /// `PanePromptBar`'s shape.
   @State private var isConfirmingInterrupt = false
 
-  /// The typed query the reader last dismissed the `/` list against. Compared with
-  /// `model.text`, so the list returns as soon as the query changes.
+  /// The whole field's text when the reader last dismissed the `/` list. Compared with
+  /// `model.text`, so the list returns as soon as the text changes.
+  ///
+  /// The whole text, not the `/word`: a dismissal at one `/word` also hides the list at
+  /// another `/word` in the same text, until the text changes.
   @State private var dismissedSuggestionsQuery: String?
 
   /// Which suggestion row an arrow key has highlighted. The arithmetic is
@@ -166,6 +169,8 @@ struct PaneComposerBar: View {
       dismissedSuggestionsQuery = nil
       // The same for the highlight: row 2 of one pane's list is a different command on another.
       suggestionSelection.reset()
+      // And the caret: one pane's offset means nothing in another pane's draft.
+      textSelection = nil
     }
     // Its own task, keyed on the gate as well as the pane, so a request held by `.wait` is
     // acted on when the chat's read finishes. A request is used up once, so a later change
