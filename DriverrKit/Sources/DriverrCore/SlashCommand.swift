@@ -52,9 +52,94 @@ public struct SlashCommand: Identifiable, Hashable, Sendable {
   }
 }
 
+/// The `/word` the caret is at the end of: the part of the field the `/` list completes.
+public struct SlashToken: Equatable, Sendable {
+  /// Where the token is in the text, in `Character` offsets, slash included.
+  public let range: Range<Int>
+
+  /// The token as typed, slash included. What `SlashCommandMatcher.matches` filters by.
+  public let typed: String
+
+  public init(range: Range<Int>, typed: String) {
+    self.range = range
+    self.typed = typed
+  }
+
+  /// Whether the token is the first thing in the message, at offset 0 with nothing before it.
+  ///
+  /// Claude Code runs a command only as the first word. Mid-sentence it sends the whole
+  /// message as prose: a skill still runs, because the model reads the name and calls it, but
+  /// a built-in such as `/compact` does not. Leading whitespace counts as "something before",
+  /// because whether Claude Code trims it is not established.
+  public var opensTheMessage: Bool { range.lowerBound == 0 }
+}
+
+/// The field after a suggestion is chosen, and where its caret goes.
+public struct SlashCompletion: Equatable, Sendable {
+  public let text: String
+  /// A `Character` offset into `text`.
+  public let caret: Int
+
+  public init(text: String, caret: Int) {
+    self.text = text
+    self.caret = caret
+  }
+}
+
 /// Turns a transcript into a most-recently-used, typed-prefix-filtered list of slash
 /// commands — the composer's `/` autocomplete.
 public enum SlashCommandMatcher {
+  /// The `/word` being typed at `caret`, or `nil` when the caret is not at the end of one.
+  ///
+  /// The word runs back from the caret to whitespace or the start of the text, so it can sit
+  /// mid-sentence. It must start with `/` and contain no second `/`, so a path (`src/foo`,
+  /// `/usr/bin`) or a URL never opens the list. The caret must also end the word: inside
+  /// one, completing would strand the rest of it.
+  public static func activeToken(in text: String, caret: Int) -> SlashToken? {
+    guard caret >= 0, caret <= text.count else { return nil }
+    let end = text.index(text.startIndex, offsetBy: caret)
+    if end < text.endIndex, !text[end].isWhitespace { return nil }
+    let start =
+      text[..<end].lastIndex(where: \.isWhitespace).map { text.index(after: $0) }
+      ?? text.startIndex
+    let word = text[start..<end]
+    guard word.first == "/", !word.dropFirst().contains("/") else { return nil }
+    let lower = text.distance(from: text.startIndex, to: start)
+    return SlashToken(range: lower..<caret, typed: String(word))
+  }
+
+  /// `text` with `token` replaced by `command`'s name and one space, and the caret after
+  /// that space, where an argument would go. Everything else in `text` is kept.
+  ///
+  /// A space already after the token is reused rather than doubled.
+  public static func complete(
+    _ text: String,
+    token: SlashToken,
+    with command: SlashCommand
+  ) -> SlashCompletion {
+    let lower = text.index(text.startIndex, offsetBy: token.range.lowerBound)
+    let upper = text.index(text.startIndex, offsetBy: token.range.upperBound)
+    let hasSpace = upper < text.endIndex && text[upper] == " "
+    let inserted = hasSpace ? command.name : command.name + " "
+    let completed = text.replacingCharacters(in: lower..<upper, with: inserted)
+    return SlashCompletion(text: completed, caret: token.range.lowerBound + command.name.count + 1)
+  }
+
+  /// `commands` without Claude Code's built-ins, for a token that does not open the message.
+  ///
+  /// Claude Code runs a built-in only as the first word; mid-sentence it sends `/compact` as
+  /// prose (seen live on 2.1.308). Matched by name against `SlashCommandCatalog.builtIns`,
+  /// not by `source`, because a recent keeps `.recent` whatever it is. A name the host
+  /// overrides (`installed` lets the host win) is a host command and stays.
+  public static func withoutBuiltIns(
+    _ commands: [SlashCommand],
+    catalog: SlashCommandCatalog
+  ) -> [SlashCommand] {
+    let overridden = Set(catalog.commands.filter { $0.source != .builtIn }.map(\.name))
+    let builtIns = Set(SlashCommandCatalog.builtIns.map(\.name)).subtracting(overridden)
+    return commands.filter { !builtIns.contains($0.name) }
+  }
+
   /// How many rows the composer offers at once.
   ///
   /// A cap, not a page. The list sits above the composer with the keyboard up and must not
@@ -117,9 +202,10 @@ public enum SlashCommandMatcher {
   /// `commands` filtered to those `typed` could still be spelling (a case-insensitive
   /// prefix match), truncated to `limit`.
   ///
-  /// Empty once `typed` is not a bare command word: it must start with `/` and contain no
-  /// whitespace. After a space the person is typing an argument, and completing then would
-  /// replace what they typed.
+  /// `typed` is the token at the caret (`activeToken(in:caret:)`), not the whole field, so
+  /// it can come from mid-sentence. Empty once `typed` is not a bare command word: it must
+  /// start with `/` and contain no whitespace. After a space the person is typing an
+  /// argument, and completing then would replace what they typed.
   public static func matches(
     _ commands: [SlashCommand],
     typed: String,

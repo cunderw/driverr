@@ -123,6 +123,148 @@ struct SlashCommandMatcherTests {
   }
 }
 
+/// Which part of the field the `/` list is completing. Offsets are `Character` offsets.
+@Suite("Slash token at the caret")
+struct SlashTokenTests {
+  private func token(_ text: String, caret: Int? = nil) -> SlashToken? {
+    SlashCommandMatcher.activeToken(in: text, caret: caret ?? text.count)
+  }
+
+  @Test("A slash word at the end of a sentence is the token")
+  func midSentence() {
+    #expect(token("fix this /co") == SlashToken(range: 9..<12, typed: "/co"))
+    #expect(token("fix this /co")?.opensTheMessage == false)
+  }
+
+  @Test("A leading slash word is the token, and opens the message")
+  func leading() {
+    #expect(token("/co") == SlashToken(range: 0..<3, typed: "/co"))
+    #expect(token("/") == SlashToken(range: 0..<1, typed: "/"))
+    #expect(token("/co")?.opensTheMessage == true)
+  }
+
+  @Test("Leading whitespace does not open the message")
+  func leadingWhitespace() {
+    #expect(token("  /co") == SlashToken(range: 2..<5, typed: "/co"))
+    #expect(token("  /co")?.opensTheMessage == false)
+  }
+
+  @Test("A path, a URL and an absolute path offer nothing")
+  func pathsAndURLs() {
+    #expect(token("look at src/foo") == nil)
+    #expect(token("see https://x") == nil)
+    // A second slash in the word: a path, not a command.
+    #expect(token("run /usr/bin") == nil)
+    #expect(token("/usr/") == nil)
+  }
+
+  @Test("A slash after a newline is a token")
+  func afterANewline() {
+    #expect(token("first line\n/co") == SlashToken(range: 11..<14, typed: "/co"))
+  }
+
+  @Test("A caret back in earlier text finds the word it is at the end of")
+  func caretInEarlierText() {
+    // "/co" ends at offset 7; the caret is there, with prose after it.
+    #expect(token("fix /co and more", caret: 7) == SlashToken(range: 4..<7, typed: "/co"))
+    // The caret at the end of a plain word.
+    #expect(token("fix /co and more", caret: 11) == nil)
+    // The caret inside a word: completing it would strand the rest of the word.
+    #expect(token("fix /code more", caret: 7) == nil)
+  }
+
+  @Test("A caret after a space offers nothing")
+  func caretAfterASpace() {
+    #expect(token("fix /co ") == nil)
+    #expect(token("/code-review ") == nil)
+    #expect(token("") == nil)
+  }
+
+  @Test("A caret outside the text offers nothing")
+  func caretOutOfRange() {
+    #expect(token("/co", caret: 4) == nil)
+    #expect(token("/co", caret: -1) == nil)
+  }
+
+  @Test("Offsets count characters, not UTF-16 units")
+  func characterOffsets() {
+    #expect(token("👍🏽 /co") == SlashToken(range: 2..<5, typed: "/co"))
+  }
+}
+
+/// Choosing a row replaces only the token, and keeps everything else.
+@Suite("Slash completion")
+struct SlashCompletionTests {
+  private let review = SlashCommand(name: "/code-review")
+
+  private func complete(_ text: String, caret: Int? = nil) -> SlashCompletion? {
+    guard let token = SlashCommandMatcher.activeToken(in: text, caret: caret ?? text.count)
+    else { return nil }
+    return SlashCommandMatcher.complete(text, token: token, with: review)
+  }
+
+  @Test("A mid-sentence token is replaced and the sentence kept")
+  func midSentence() {
+    #expect(
+      complete("fix this /co") == SlashCompletion(text: "fix this /code-review ", caret: 22))
+  }
+
+  @Test("A leading token completes as it always did")
+  func leading() {
+    #expect(complete("/co") == SlashCompletion(text: "/code-review ", caret: 13))
+  }
+
+  @Test("Text after the token is kept, and the caret lands after the command")
+  func textAfterTheToken() {
+    #expect(
+      complete("fix /co\nmore", caret: 7)
+        == SlashCompletion(text: "fix /code-review \nmore", caret: 17))
+  }
+
+  /// An existing space is reused rather than doubled.
+  @Test("A space already after the token is not doubled")
+  func existingSpace() {
+    #expect(
+      complete("fix /co and more", caret: 7)
+        == SlashCompletion(text: "fix /code-review and more", caret: 17))
+  }
+}
+
+/// Mid-sentence, Claude Code sends a built-in as prose, so the list must not offer one there.
+@Suite("Built-ins hidden mid-sentence")
+struct SlashBuiltInFilterTests {
+  @Test("A catalogue built-in is removed and a skill is kept")
+  func builtInRemoved() {
+    let catalog = SlashCommandCatalog.installed([
+      SlashCommand(name: "/code-review", source: .userSkill)
+    ])
+    let offered = SlashCommandMatcher.offerings(recents: [], catalog: catalog)
+    let kept = SlashCommandMatcher.withoutBuiltIns(offered, catalog: catalog)
+    #expect(kept.map(\.name) == ["/code-review"])
+  }
+
+  /// A recent keeps `.recent` as its source, so the source alone cannot say it is a built-in.
+  @Test("A recent built-in is removed too, before the catalogue arrives")
+  func recentBuiltInRemoved() {
+    let recents = [SlashCommand(name: "/compact"), SlashCommand(name: "/run-tests")]
+    let offered = SlashCommandMatcher.offerings(recents: recents, catalog: .empty)
+    let kept = SlashCommandMatcher.withoutBuiltIns(offered, catalog: .empty)
+    #expect(kept.map(\.name) == ["/run-tests"])
+  }
+
+  /// `installed` lets the host win a name collision, so `/review` here is a project command.
+  @Test("A host command that overrides a built-in's name is kept")
+  func overrideKept() {
+    let catalog = SlashCommandCatalog.installed([
+      SlashCommand(name: "/review", source: .projectCommand)
+    ])
+    let recents = [SlashCommand(name: "/review")]
+    let offered = SlashCommandMatcher.offerings(recents: recents, catalog: catalog)
+    let kept = SlashCommandMatcher.withoutBuiltIns(offered, catalog: catalog)
+    #expect(kept.map(\.name) == ["/review"])
+  }
+}
+
 /// The arrow-key highlight over the suggestion list. Only an external keyboard reaches
 /// these cases; touch never sets a highlight.
 @Suite("Slash suggestion selection")

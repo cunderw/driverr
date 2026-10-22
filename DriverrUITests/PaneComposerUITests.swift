@@ -533,6 +533,46 @@ final class PaneComposerUITests: XCTestCase {
     )
   }
 
+  /// A `/word` after prose offers commands, and choosing one replaces only that word.
+  ///
+  /// Mid-sentence, Claude Code sends a built-in as prose, so the fixture's built-in
+  /// `/compact`, offered for a leading `/co`, must be missing here. The token and splice
+  /// rules are `SlashTokenTests` and `SlashCompletionTests`.
+  func testAMidSentenceSlashOffersCommandsAndChoosingKeepsTheSentence() {
+    let app = composerOnACommandTranscript()
+
+    let field = require(app, "composer.text", "Expected the composer field")
+    field.tap()
+    app.typeText("fix this /co")
+
+    require(app, "composer.suggestions.row.0", "A /word after prose must offer commands")
+    let offered = offeredCommands(app)
+    XCTAssertEqual(
+      offered,
+      ["/code-review", "/commit"],
+      "Mid-sentence /co must offer the session's own commands and no built-in: \(offered)"
+    )
+
+    app.typeText("de")
+    let row = require(app, "composer.suggestions.row.0", "Expected /code to offer a command")
+    let chosen = row.label
+    row.tap()
+
+    XCTAssertEqual(
+      field.value as? String,
+      "fix this " + chosen + " ",
+      """
+      Choosing a suggestion mid-sentence must replace only the /word and keep the sentence.
+      Field held: \(String(describing: field.value))
+      """
+    )
+    requireGone(
+      app,
+      "composer.suggestions.row.0",
+      "The list must close once a command has been chosen"
+    )
+  }
+
   /// The list dismisses without choosing. The dismiss control is its own row
   /// (`PaneComposerBar.suggestionsHeader`), so this also proves it is a separate target from
   /// the top suggestion.
@@ -670,6 +710,46 @@ final class PaneComposerUITests: XCTestCase {
     XCTAssertEqual(
       element(app, "composer.text").value as? String,
       "/",
+      "Arrow keys must move the highlight, never type into the field."
+    )
+  }
+
+  /// Up and Down still reach the list when the field has wrapped onto a second line.
+  ///
+  /// A mid-sentence token can sit at the end of wrapped text, where the field could take Up
+  /// to move its caret a line up. That would move the caret off the token and close the list,
+  /// so the check is that the highlight moved, the list is still up, and the text is unchanged.
+  func testArrowKeysMoveTheHighlightWhenTheFieldHasWrapped() {
+    let app = composerOnACommandTranscript()
+
+    let field = require(app, "composer.text", "Expected the composer field")
+    field.tap()
+    let oneLine = field.frame.height
+    let text = "please look at the retry path again and when that is done run /"
+    app.typeText(text)
+    require(app, "composer.suggestions.row.0", "A trailing / must offer commands")
+    XCTAssertGreaterThan(
+      field.frame.height,
+      oneLine * 1.5,
+      "The text must wrap, or this test measures the one-line case. Height \(field.frame.height)"
+    )
+
+    app.typeKey(.downArrow, modifierFlags: [])
+    XCTAssertEqual(highlightedRows(app), [0], "Down must highlight the first row.")
+
+    app.typeKey(.upArrow, modifierFlags: [])
+    XCTAssertEqual(
+      highlightedRows(app),
+      [SlashCommandRowLimit.maximum - 1],
+      """
+      Up from the first row must wrap to the last, not move the field's caret up a line.
+      Tree was:
+      \(app.debugDescription)
+      """
+    )
+    XCTAssertEqual(
+      field.value as? String,
+      text,
       "Arrow keys must move the highlight, never type into the field."
     )
   }
