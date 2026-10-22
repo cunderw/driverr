@@ -493,6 +493,8 @@ struct PaneChatView: View {
         // bar's height arrives through `chatSlotHeight`.
         .ignoresSafeArea(.container, edges: .bottom)
       }
+      // Above the collection view, so rows fade out under the rows above the slot.
+      .overlay(alignment: .top) { ChatTopFade() }
       // A new turn while the reader is up in the history shows a control instead of moving
       // them. `ChatEndProximity.showsJumpToLatest` is the rule; the tail marker can only hide
       // the control.
@@ -570,7 +572,8 @@ struct PaneChatView: View {
   ///
   /// The column cap is the row's and the gutter is the section's, because a cell inset by the
   /// layout cannot be overflowed by its content. Every row gets `.padding(.vertical, 9)`, so
-  /// rows sit 18 apart, and `ChatCollectionView.endMargin` adds the ends' extra.
+  /// rows sit 18 apart, and `ChatCollectionView.endMargin` and `ChatTopFade.height` add the
+  /// ends' extra.
   @ViewBuilder
   private func chatRow(_ item: ChatItem, in transcript: Transcript) -> some View {
     switch item {

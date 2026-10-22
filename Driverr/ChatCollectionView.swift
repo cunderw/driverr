@@ -104,6 +104,32 @@ struct ChatRowInputs: Equatable {
   var activity: ChatActivity?
 }
 
+/// Fades the conversation out as it scrolls under the rows above it, instead of cutting it
+/// square.
+///
+/// Drawn by hand because the system cannot draw it here. `topEdgeEffect.style = .soft` shows
+/// nothing, with or without a top inset: a scroll edge effect takes its shape from views that
+/// overlay the scroll view's edge, such as a bar or a `UIScrollEdgeElementContainerInteraction`,
+/// and the provenance row and sub-agent card stand above the collection view, not over it.
+/// An overlay on the slot, not a mask over the conversation; see the bottom edge's comment in
+/// `makeCollection`. The collection view's `contentInset.top` is this height, so at the top of
+/// the conversation the first row rests below the band.
+struct ChatTopFade: View {
+  static let height: CGFloat = 16
+
+  var body: some View {
+    // To the ground at zero opacity, not to `.clear`, which is black at zero opacity and greys
+    // the midpoint.
+    LinearGradient(
+      colors: [Color(.secondarySystemBackground), Color(.secondarySystemBackground).opacity(0)],
+      startPoint: .top, endPoint: .bottom
+    )
+    .frame(height: Self.height)
+    .allowsHitTesting(false)
+    .accessibilityHidden(true)
+  }
+}
+
 /// The chat's scroll position, with one writer and one reader.
 ///
 /// Neither SwiftUI scroller can own it. `proxy.scrollTo` resolves only against targets that
@@ -168,9 +194,11 @@ struct ChatCollectionView<Row: View>: UIViewRepresentable {
   /// owns them for the composer.
   @ViewBuilder var row: (ChatItem) -> Row
 
-  /// The extra margin the first and last rows get beyond their own 9 points.
+  /// The extra margin the last row gets beyond its own 9 points.
   ///
-  /// Rows carry `.padding(.vertical, 9)`, giving 18 between rows, and the ends get 14 in all.
+  /// Rows carry `.padding(.vertical, 9)`, giving 18 between rows, and the end gets 14 in all.
+  /// The start gets `ChatTopFade.height` instead, as `contentInset.top`, so the first row rests
+  /// below the fade.
   /// It goes on the section, because `contentInset.bottom` belongs to the composer. It shows at
   /// rest with the keyboard down, which is the posture a reader meets first. Do not make it
   /// depend on the keyboard.
@@ -212,8 +240,8 @@ struct ChatCollectionView<Row: View>: UIViewRepresentable {
     // total.
     //
     // The list's unwanted features are turned off here, and the column inset is `ChatColumn`'s.
-    // A section provider, because only the first and last sections carry `endMargin`, and
-    // which is last depends on whether the working row is present.
+    // A section provider, because only the last section carries `endMargin`, and which is last
+    // depends on whether the working row is present.
     let layout = UICollectionViewCompositionalLayout { [weak coordinator] index, environment in
       var configuration = UICollectionLayoutListConfiguration(appearance: .plain)
       // The chat draws its own separation, and `PaneChatView` paints one ground behind the
@@ -232,7 +260,7 @@ struct ChatCollectionView<Row: View>: UIViewRepresentable {
         forColumnWidth: environment.container.effectiveContentSize.width)
       let sections = coordinator?.sectionCount ?? 1
       section.contentInsets = NSDirectionalEdgeInsets(
-        top: index == 0 ? Self.endMargin : 0,
+        top: 0,
         leading: gutter,
         bottom: index == sections - 1 ? Self.endMargin : 0,
         trailing: gutter
@@ -255,6 +283,9 @@ struct ChatCollectionView<Row: View>: UIViewRepresentable {
     // composer's material loses its backdrop. A per-row `.scrollTransition` cannot do it
     // either, because its phase is relative to each row's own height.
     view.bottomEdgeEffect.style = .soft
+    // The band `ChatTopFade` draws over. `contentInset.bottom` belongs to the composer and is
+    // set on every update; this one is fixed.
+    view.contentInset.top = ChatTopFade.height
     // UIKit, unlike SwiftUI, does not propagate an identifier to children, so the rows keep
     // their own `pane.chat.turn.*` identifiers.
     view.accessibilityIdentifier = "pane.chat"
