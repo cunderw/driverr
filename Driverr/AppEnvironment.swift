@@ -1215,6 +1215,7 @@ struct AppEnvironment {
     if isTranscriptAgentEvents { return agentEventTranscript }
     if isTranscriptOrchestrator { return orchestratorTranscript }
     if isTranscriptTaskState { return taskStateTranscript }
+    if isTranscriptManySubagents { return manySubagentTranscript }
     if isTranscriptSubagents { return subagentTranscript }
     if isTranscriptUsageLimited { return usageLimitedTranscript }
     if isTranscriptUsageLimitReset { return usageLimitResetTranscript }
@@ -2193,11 +2194,15 @@ struct AppEnvironment {
     ]
   )
 
-  /// A session with two spawn lines that open their sub-agent's own chat.
+  /// A session with two spawn lines that open their sub-agent's own chat, and a third
+  /// sub-agent whose spawn is not on the page.
   ///
   /// A finished spawn linked by its `tool_use` id, and a running teammate linked by name. Each
   /// has a `SubagentFixture`, so a tap runs the real link command, read and sub-agent parse.
   /// The analyst's `toolUseID` is the fake's id for turn 1's first block, `toolu_1_0`.
+  ///
+  /// The lookup was spawned hours before the page starts, so only the chat's sub-agent list,
+  /// which reads meta files, can show it. The list reads `3 sub-agents · 1 running`.
   static let subagentTranscript = FakeTranscriptHost(
     sessionID: "3f8c1d20-0000-4000-8000-000000000002",
     turns: [
@@ -2247,7 +2252,10 @@ struct AppEnvironment {
           text: "The plan: parse into one typed struct and report every missing key at once.",
           secondsAgo: 1250
         ),
-      ]
+      ],
+      description: "Plan the config loader",
+      agentType: "analyst",
+      spawnedSecondsAgo: 1700
     ),
     FakeTranscriptHost.SubagentFixture(
       agentID: "averifier7",
@@ -2261,9 +2269,56 @@ struct AppEnvironment {
           speaker: .tools([ToolCall(name: "Bash", target: "Read the diff")]),
           secondsAgo: 60
         ),
-      ]
+      ],
+      description: "Review the config loader",
+      agentType: "verifier",
+      spawnedSecondsAgo: 1000
+    ),
+    // Spawned before the page's first turn, so no spawn line opens it.
+    FakeTranscriptHost.SubagentFixture(
+      agentID: "a0lookup0000000001",
+      toolUseID: "toolu_earlier_lookup",
+      secondsAgo: 9000,
+      prompt: "Find every caller of load_config and list the file and line of each.",
+      turns: [
+        .init(
+          speaker: .tools([ToolCall(name: "Grep", target: "load_config")]),
+          secondsAgo: 8950
+        ),
+        .init(
+          speaker: .assistant,
+          text: "Four callers: main.rs, cli.rs, server.rs and the loader's own tests.",
+          secondsAgo: 8900
+        ),
+      ],
+      description: "Find the config loader's callers",
+      agentType: "Explore",
+      isFinished: true,
+      spawnedSecondsAgo: 9400
     ),
   ])
+
+  /// `subagentTranscript` with 57 more finished lookups behind it, 60 in all, so the open
+  /// list reaches its height cap, scrolls inside it, and ends on the host's cap of 50.
+  static let manySubagentTranscript = subagentTranscript.serving(
+    subagentTranscript.subagents
+      + (1...57).map { index in
+        FakeTranscriptHost.SubagentFixture(
+          agentID: "a0many\(index)",
+          toolUseID: "toolu_many_\(index)",
+          secondsAgo: 10_000 + Double(index) * 60,
+          prompt: "Survey module \(index) and report its public types.",
+          description: "Survey module \(index)",
+          agentType: "Explore",
+          isFinished: true,
+          spawnedSecondsAgo: 10_100 + Double(index) * 60
+        )
+      })
+
+  /// Whether this launch should serve the session with sixty sub-agents.
+  static var isTranscriptManySubagents: Bool {
+    ProcessInfo.processInfo.arguments.contains("-uiTestingManySubagents")
+  }
 
   /// Whether this launch should serve the session whose spawn lines open sub-agents.
   static var isTranscriptSubagents: Bool {

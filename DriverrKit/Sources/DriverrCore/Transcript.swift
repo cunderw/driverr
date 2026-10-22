@@ -247,6 +247,10 @@ public enum SubagentLink: Hashable, Sendable {
   case toolUse(id: String)
   /// A teammate's `name`, from the call's `input["name"]`.
   case teammate(name: String)
+  /// The sub-agent's own `agentId`, which names its file, `agent-<agentId>.jsonl`. Exact, so
+  /// the chat's sub-agent list links by it: a teammate respawned under one name has a file
+  /// per spawn, and a name would open only the newest.
+  case agent(id: String)
 }
 
 /// One turn in a conversation: something a person said, something the agent said, or a
@@ -322,10 +326,14 @@ public struct TranscriptTurn: Identifiable, Hashable, Sendable {
     /// conversation carries one, when the record gave something to link by. `nil` is not
     /// tappable.
     public let link: SubagentLink?
+    /// The spawned agent's `agentId`, from the spawn's answer, when the page carried it. Only a
+    /// `.spawned` event carries one. It names the agent's file, so the chat's sub-agent list
+    /// joins a row to its own spawn line by it; see `SubagentList.rows(merging:asOf:)`.
+    public let agentID: String?
 
     public init(
       sender: String, summary: String?, body: String, kind: Kind, task: TaskProgress? = nil,
-      link: SubagentLink? = nil
+      link: SubagentLink? = nil, agentID: String? = nil
     ) {
       self.sender = sender
       self.summary = summary
@@ -333,12 +341,22 @@ public struct TranscriptTurn: Identifiable, Hashable, Sendable {
       self.kind = kind
       self.task = task
       self.link = link
+      self.agentID = agentID
     }
 
-    /// The same event, with `task` replaced. Keeps the link, because `settleSpawns` rebuilds
-    /// every teammate through here.
+    /// The same event, with `task` replaced. Keeps the link and the agent id, because
+    /// `settleSpawns` rebuilds every teammate through here.
     public func with(task: TaskProgress?) -> AgentEvent {
-      AgentEvent(sender: sender, summary: summary, body: body, kind: kind, task: task, link: link)
+      AgentEvent(
+        sender: sender, summary: summary, body: body, kind: kind, task: task, link: link,
+        agentID: agentID)
+    }
+
+    /// The same event, with `agentID` replaced.
+    public func with(agentID: String?) -> AgentEvent {
+      AgentEvent(
+        sender: sender, summary: summary, body: body, kind: kind, task: task, link: link,
+        agentID: agentID)
     }
 
     /// The back bar's title for this spawn's sub-agent: the spawn's name, or its description
@@ -349,7 +367,9 @@ public struct TranscriptTurn: Identifiable, Hashable, Sendable {
 
     /// The same event, with `link` replaced.
     public func with(link: SubagentLink?) -> AgentEvent {
-      AgentEvent(sender: sender, summary: summary, body: body, kind: kind, task: task, link: link)
+      AgentEvent(
+        sender: sender, summary: summary, body: body, kind: kind, task: task, link: link,
+        agentID: agentID)
     }
 
     /// Whether there is anything to reveal, so a view knows whether the line is tappable.

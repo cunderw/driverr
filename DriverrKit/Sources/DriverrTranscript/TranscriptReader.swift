@@ -615,6 +615,92 @@ public struct TranscriptReader: Sendable {
       }
   }
 
+  /// The sub-agent file named by its `agentId`, under `sessionID`, or `nil`. The returned
+  /// file has `isSubagentFile` set. See `SubagentLink.agent(id:)`.
+  public func subagentFile(
+    agentID: String, directory: String, sessionID: String
+  ) async throws -> TranscriptFile? {
+    guard Self.isSafeAgentID(agentID) else { return nil }
+    let command = TranscriptCommands.subagentFileCommand(
+      directory: directory, sessionID: sessionID, agentID: agentID)
+    let result = try await execute(command)
+    return Self.listing(from: result.standardOutput).files.first.map {
+      TranscriptFile(path: $0.path, sizeInBytes: $0.sizeInBytes, age: $0.age, isSubagentFile: true)
+    }
+  }
+
+  /// Whether an `agentId` is safe to put in a file name on the host: ASCII letters, digits,
+  /// `-` and `_` only. Real ids are `a` and hex, or `a<name>-<hex>`. A `/` or `..` would
+  /// leave the `subagents` directory.
+  static func isSafeAgentID(_ value: String) -> Bool {
+    !value.isEmpty
+      && value.unicodeScalars.allSatisfy { scalar in
+        scalar.isASCII
+          && (CharacterSet.alphanumerics.contains(scalar) || scalar == "-" || scalar == "_")
+      }
+  }
+
+  // MARK: - Every sub-agent a session spawned
+
+  /// The sub-agents one session's meta files list. `directory` is the expanded project
+  /// directory, as for `subagentFile`; `sessionID` is the session file's name without
+  /// `.jsonl`.
+  ///
+  /// Only the session's own `subagents` directory: a spawn made before a `continued-in`
+  /// handover is listed under the session that made it.
+  public func subagentList(directory: String, sessionID: String) async throws -> SubagentList {
+    let command = TranscriptCommands.subagentListCommand(directory: directory, sessionID: sessionID)
+    let result = try await execute(command)
+    return Self.subagentList(from: result.standardOutput, readAt: now())
+  }
+
+  /// `date`, the directory, `#<count>`, then one line per sub-agent; see
+  /// `TranscriptCommands.subagentListCommand`. Every time is placed on `readAt`'s clock by the
+  /// host's own subtraction: the spawn time is a host timestamp and the write time a host
+  /// mtime, so each is moved by `readAt` minus the host's clock. A line whose meta does not
+  /// decode is dropped and still counted, because the count is the host's.
+  static func subagentList(from output: String, readAt: Date) -> SubagentList {
+    var lines = output.split(separator: "\n", omittingEmptySubsequences: true).map(String.init)
+    let hostNow = lines.first.flatMap { epoch(trimmed($0)) }
+    if !lines.isEmpty { lines.removeFirst() }
+    // The directory line. Nothing here needs it: rows open by link, not by path.
+    if !lines.isEmpty { lines.removeFirst() }
+    var total = 0
+    if let first = lines.first, first.hasPrefix(TranscriptCommands.subagentCountMark) {
+      total = Int(trimmed(String(first.dropFirst(TranscriptCommands.subagentCountMark.count)))) ?? 0
+      lines.removeFirst()
+    }
+
+    func date(_ field: Substring) -> Date? {
+      guard let hostNow, let modified = epoch(trimmed(String(field))), modified > 0 else {
+        return nil
+      }
+      return readAt.addingTimeInterval(-max(0, hostNow - modified))
+    }
+
+    /// An ISO 8601 spawn time from the host. Without the host's clock it stands as written.
+    func spawned(_ field: Substring) -> Date? {
+      guard let stamp = TranscriptParser.timestamp(trimmed(String(field))) else { return nil }
+      guard let hostNow else { return stamp }
+      return readAt.addingTimeInterval(-max(0, hostNow - stamp.timeIntervalSince1970))
+    }
+
+    let summaries: [SubagentSummary] = lines.compactMap { line in
+      let fields = line.split(
+        separator: TranscriptCommands.fieldSeparator, maxSplits: 4,
+        omittingEmptySubsequences: false)
+      guard fields.count == 5 else { return nil }
+      let file = trimmed(String(fields[3]))
+      guard file.hasPrefix("agent-"), file.hasSuffix(".jsonl"),
+        let meta = try? JSONDecoder().decode(SubagentMeta.self, from: Data(fields[4].utf8))
+      else { return nil }
+      let id = String(file.dropFirst("agent-".count).dropLast(".jsonl".count))
+      guard !id.isEmpty else { return nil }
+      return meta.summary(id: id, spawnedAt: spawned(fields[0]), writtenAt: date(fields[1]))
+    }
+    return SubagentList(total: total, summaries: summaries)
+  }
+
   // MARK: - Reading it
 
   /// How many turns a first page aims for.
