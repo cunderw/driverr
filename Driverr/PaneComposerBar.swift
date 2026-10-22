@@ -424,9 +424,9 @@ struct PaneComposerBar: View {
   /// Up and Down are verified under XCUITest. Return and Escape are not: XCUITest delivers them
   /// to no handler at all, including Send's shipped ⌘↩. `PaneComposerUITests` records the probe.
   ///
-  /// Up and Down work only because the field is one line while the list is up:
-  /// `SlashCommandMatcher.matches` offers nothing once the text has whitespace. Offering
-  /// suggestions over multi-line text would let the field take these keys.
+  /// The list can be up over wrapped text, because the `/word` can follow prose. Up and Down
+  /// still reach these handlers there, not the field's caret: measured under XCUITest by
+  /// `testArrowKeysMoveTheHighlightWhenTheFieldHasWrapped`.
   private func withSlashKeyHandling(_ content: some View) -> some View {
     content
       .onKeyPress(.downArrow) {
