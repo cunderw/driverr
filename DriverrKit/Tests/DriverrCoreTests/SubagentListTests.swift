@@ -129,6 +129,7 @@ struct SubagentListTests {
     #expect(TranscriptChatCopy.subagentCount(total: 3, running: 1) == "3 sub-agents · 1 running")
     #expect(TranscriptChatCopy.subagentCount(total: 1, running: 0) == "1 sub-agent")
     #expect(TranscriptChatCopy.subagentCount(total: 2, running: 2) == "2 sub-agents · 2 running")
+    #expect(TranscriptChatCopy.subagentListCapped(shown: 50, of: 243) == "The newest 50 of 243")
   }
 
   @Test("a row reads as one statement")

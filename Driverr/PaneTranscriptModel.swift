@@ -239,25 +239,98 @@ final class PaneTranscriptModel {
 
   var isShowingSubagent: Bool { !subagents.isEmpty }
 
-  /// Opens the sub-agent a spawn line links to, on top of this conversation. Needs a page on
-  /// screen, because the directory and session come from the file holding the spawn.
+  /// Opens the sub-agent a spawn line or a list row links to, on top of this conversation.
+  /// Needs a page on screen, because the directory and session come from the file holding
+  /// the spawn.
   func openSubagent(link: SubagentLink, title: String) {
     guard subagent == nil, case .ready(let source, _) = state else { return }
-    // A Claude session file is `<projectDir>/<sessionId>.jsonl`. The project directory comes
-    // from the file's path, not `source.directory`, which is the pane's working directory.
-    let path = source.file.path as NSString
-    let name = path.lastPathComponent
-    let sessionID = name.hasSuffix(".jsonl") ? String(name.dropLast(".jsonl".count)) : name
+    let session = Self.session(of: source.file)
     let child = PaneTranscriptModel(
       pane: pane,
       reader: reader,
       now: now,
       subagent: SubagentTarget(
-        link: link, title: title, directory: path.deletingLastPathComponent,
-        sessionID: sessionID)
+        link: link, title: title, directory: session.directory, sessionID: session.id)
     )
     subagents.push(child)
     child.loadIfNeeded()
+  }
+
+  /// The project directory and session id a Claude session file is named by:
+  /// `<projectDir>/<sessionId>.jsonl`. The directory comes from the file's path, not
+  /// `TranscriptSource.directory`, which is the pane's working directory.
+  private static func session(of file: TranscriptFile) -> (directory: String, id: String) {
+    let path = file.path as NSString
+    let name = path.lastPathComponent
+    let id = name.hasSuffix(".jsonl") ? String(name.dropLast(".jsonl".count)) : name
+    return (path.deletingLastPathComponent, id)
+  }
+
+  // MARK: - Every sub-agent the session spawned
+
+  /// The session's sub-agents, read off their meta files, so one whose spawn line is not on
+  /// the page is still listed. Empty on a sub-agent's own model, for a Codex pane, and until
+  /// the first page lands.
+  private(set) var subagentList = SubagentList.empty
+
+  /// How old a list may be before a page refresh asks again. A page refresh comes from the
+  /// growth probe, every few seconds while the agent writes, so without this every write
+  /// would cost a second round trip.
+  static let subagentListStaleness: TimeInterval = 15
+
+  @ObservationIgnored private(set) var subagentListLoad: Task<Void, Never>?
+  @ObservationIgnored private var subagentListFetchedAt: Date?
+  /// The session file the list belongs to. A different file is a different session.
+  @ObservationIgnored private var subagentListPath: String?
+  /// How many spawn lines the page had when the list was asked for. A new spawn asks again
+  /// at once, whatever the list's age.
+  @ObservationIgnored private var subagentListSpawns = 0
+
+  /// Asks the host for the list, after a page has settled. **Driven only by a page landing**,
+  /// which the growth probe bounds; one request at a time, and none sooner than
+  /// `subagentListStaleness` unless the page gained a spawn or changed session.
+  ///
+  /// A failure keeps the list on screen. It never reaches `settle`, so the page cannot drop
+  /// because the list did.
+  private func loadSubagentListIfNeeded() {
+    guard subagent == nil, subagentListLoad == nil, case .ready(let source, let transcript) = state
+    else { return }
+    guard source.file.agent == .claude else {
+      if !subagentList.isEmpty { subagentList = .empty }
+      return
+    }
+    let spawns = transcript.turns.filter { $0.agentEvent?.kind == .spawned }.count
+    if subagentListPath != source.file.path {
+      if !subagentList.isEmpty { subagentList = .empty }
+      subagentListFetchedAt = nil
+    } else if spawns == subagentListSpawns, let subagentListFetchedAt,
+      now().timeIntervalSince(subagentListFetchedAt) < Self.subagentListStaleness
+    {
+      return
+    }
+    let path = source.file.path
+    let session = Self.session(of: source.file)
+    let reader = reader
+    subagentListPath = path
+    subagentListSpawns = spawns
+    subagentListFetchedAt = now()
+    subagentListLoad = Task { [weak self] in
+      let list = try? await reader.subagentList(directory: session.directory, sessionID: session.id)
+      guard let self, !Task.isCancelled else { return }
+      self.subagentListLoad = nil
+      // The page may have moved to another session while this ran.
+      guard let list, self.subagentListPath == path else { return }
+      if self.subagentList != list { self.subagentList = list }
+    }
+  }
+
+  private func dropSubagentList() {
+    subagentListLoad?.cancel()
+    subagentListLoad = nil
+    subagentListFetchedAt = nil
+    subagentListPath = nil
+    subagentListSpawns = 0
+    if !subagentList.isEmpty { subagentList = .empty }
   }
 
   /// Back to the conversation under the top one.
@@ -531,6 +604,10 @@ final class PaneTranscriptModel {
     // The stamp came from the old link. The `refresh()` below re-reads, and settles a new
     // baseline.
     lastProbe = nil
+    // The list stays on screen, and the `refresh()` below asks again through the new link.
+    subagentListLoad?.cancel()
+    subagentListLoad = nil
+    subagentListFetchedAt = nil
     self.reader = reader
     // A sub-agent on screen reads through the same link, so it moves with it.
     for open in subagents.entries { open.relink(to: reader) }
@@ -578,6 +655,7 @@ final class PaneTranscriptModel {
     // searches for its file again.
     closeAllSubagents()
     subagentFile = nil
+    dropSubagentList()
     state = .idle
   }
 
@@ -701,6 +779,8 @@ final class PaneTranscriptModel {
       // it is asked, so a smaller page saves nothing.
       let transcript = try await reader.read(source.file, turns: turnsWanted)
       settle(.ready(source, transcript), resolvedFrom: asked, keepingPick: honoured)
+      // After the page, so the list never delays it. `settle` dropped a cancelled load.
+      if !Task.isCancelled { loadSubagentListIfNeeded() }
     } catch let error as AppError {
       settle(.failed(error), resolvedFrom: asked, quietly: quietly)
     } catch {

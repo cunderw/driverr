@@ -177,6 +177,11 @@ extension TranscriptChatCopy {
   /// The list's header button, for VoiceOver's hint.
   public static let subagentListHint = "Shows the agents this session started"
 
+  /// The open list's foot when the host capped it.
+  public static func subagentListCapped(shown: Int, of total: Int) -> String {
+    "The newest \(shown) of \(total)"
+  }
+
   /// `3 sub-agents · 1 running`, or `1 sub-agent` when none is running.
   public static func subagentCount(total: Int, running: Int) -> String {
     let count = total == 1 ? "1 sub-agent" : "\(total) sub-agents"

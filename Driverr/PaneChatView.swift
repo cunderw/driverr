@@ -223,6 +223,9 @@ struct PaneChatView: View {
   /// keeps `@State` when a different model arrives in the same place, and the picker would
   /// offer another pane's files.
   @State private var isChoosingFile = false
+  /// Whether the sub-agent list under the provenance row is open. Closed on a pane switch
+  /// and when a row opens its sub-agent.
+  @State private var isSubagentListOpen = false
 
   /// This view's outer width, passed to each `TranscriptTurnView` as `estimatedContentWidth`.
   /// A row corrects it to its exact width a frame later; this keeps a bounded turn from
@@ -370,6 +373,7 @@ struct PaneChatView: View {
     .onChange(of: model.pane.id) {
       isShowingScreen = false
       isChoosingFile = false
+      isSubagentListOpen = false
       // SwiftUI keeps the coordinator across a pane switch, so without this the new pane's chat
       // would hold an anchor from the previous pane's transcript instead of opening at the
       // newest turn.
@@ -402,6 +406,19 @@ struct PaneChatView: View {
     // A sub-agent's chat draws `SubagentBackBar` in this row's place.
     if !isShowingSubagent {
       provenanceHeader(source: source, contextUsage: transcript.contextUsage)
+    }
+    // Every sub-agent the session spawned, from its meta files. Not over a sub-agent's chat,
+    // where the back bar holds this place, and not while the composer is collapsed, for the
+    // stop row's reason below.
+    if !isShowingSubagent, !isComposerCollapsed, !model.subagentList.isEmpty {
+      SubagentListBar(
+        list: model.subagentList, turns: transcript.turns, isExpanded: $isSubagentListOpen,
+        horizontalInset: chatGutter
+      ) { row in
+        guard let link = row.summary.link else { return }
+        isSubagentListOpen = false
+        model.openSubagent(link: link, title: row.summary.title)
+      }
     }
     // The agent stopped on a failed API request. Hidden while the composer is collapsed, like
     // the row below, and over a sub-agent's chat, whose stop is not the pane's.
