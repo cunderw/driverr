@@ -112,16 +112,19 @@ struct ChatRowInputs: Equatable {
 /// overlay the scroll view's edge, such as a bar or a `UIScrollEdgeElementContainerInteraction`,
 /// and the provenance row and sub-agent card stand above the collection view, not over it.
 /// An overlay on the slot, not a mask over the conversation; see the bottom edge's comment in
-/// `makeCollection`. The collection view's `contentInset.top` is this height, so at the top of
-/// the conversation the first row rests below the band.
+/// `makeCollection`.
 struct ChatTopFade: View {
   static let height: CGFloat = 16
+  /// The collection view's `contentInset.top`: the fade's height less the first row's own
+  /// `ChatColumn.rowPadding`, so at the top of the conversation the first row's content starts
+  /// where the fade ends.
+  static var contentInset: CGFloat { height - ChatColumn.rowPadding }
 
   var body: some View {
     // To the ground at zero opacity, not to `.clear`, which is black at zero opacity and greys
     // the midpoint.
     LinearGradient(
-      colors: [Color(.secondarySystemBackground), Color(.secondarySystemBackground).opacity(0)],
+      colors: [ChatColumn.ground, ChatColumn.ground.opacity(0)],
       startPoint: .top, endPoint: .bottom
     )
     .frame(height: Self.height)
@@ -194,11 +197,11 @@ struct ChatCollectionView<Row: View>: UIViewRepresentable {
   /// owns them for the composer.
   @ViewBuilder var row: (ChatItem) -> Row
 
-  /// The extra margin the last row gets beyond its own 9 points.
+  /// The extra margin the last row gets beyond its own `ChatColumn.rowPadding`.
   ///
-  /// Rows carry `.padding(.vertical, 9)`, giving 18 between rows, and the end gets 14 in all.
-  /// The start gets `ChatTopFade.height` instead, as `contentInset.top`, so the first row rests
-  /// below the fade.
+  /// Rows carry 9 points above and below, giving 18 between rows, and the end gets 14 in all.
+  /// The start gets `ChatTopFade.contentInset` instead, as `contentInset.top`: the fade's height
+  /// less the row padding, so the first row's content starts where the fade ends.
   /// It goes on the section, because `contentInset.bottom` belongs to the composer. It shows at
   /// rest with the keyboard down, which is the posture a reader meets first. Do not make it
   /// depend on the keyboard.

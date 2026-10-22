@@ -1110,6 +1110,50 @@ struct ChatCollectionViewTests {
     withExtendedLifetime(window) {}
   }
 
+  /// `ChatTopFade` is drawn over the slot's top, so the collection view's top inset decides
+  /// whether the first row's content starts under the fade or where it ends.
+  @Test("at the top of the conversation the first row starts where the top fade ends")
+  func theFirstRowStartsWhereTheTopFadeEnds() {
+    let (_, window) = measure(
+      size: HostedProbe.phone, theme: SpikeTheme(accent: handedAccent, foreground: .white),
+      sink: AccentSink())
+    guard let collection = ScrollViewProbe.first(in: window) as? UICollectionView,
+      let first = collection.layoutAttributesForItem(at: IndexPath(item: 0, section: 0))
+    else {
+      Issue.record("No UICollectionView, or no first item, under the fixture.")
+      withExtendedLifetime(window) {}
+      return
+    }
+    settle(collection)
+
+    let inset = """
+      contentInset.top is \(collection.contentInset.top), against the fade's \
+      \(ChatTopFade.height) less the rows' own \(ChatColumn.rowPadding). More puts an empty \
+      band above the first row; less starts its content inside the fade.
+      """
+    #expect(abs(collection.contentInset.top - ChatTopFade.contentInset) < 0.5, "\(inset)")
+
+    let indicator = """
+      verticalScrollIndicatorInsets.top is \(collection.verticalScrollIndicatorInsets.top), \
+      against the fade's \(ChatTopFade.height). Less lets the indicator run into the fade.
+      """
+    #expect(
+      abs(collection.verticalScrollIndicatorInsets.top - ChatTopFade.height) < 0.5,
+      "\(indicator)")
+
+    // At the top rest the offset is -contentInset.top, so the first item's top in the viewport
+    // is its content y plus the inset, and its content starts a row padding below that.
+    let contentTop = first.frame.minY + collection.contentInset.top + ChatColumn.rowPadding
+    let below = """
+      At the top of the conversation the first row's content starts \(contentTop) pt below the \
+      slot's top, against the fade's \(ChatTopFade.height). The first item is at content y \
+      \(first.frame.minY), so the first section carries a top margin of its own.
+      """
+    #expect(abs(contentTop - ChatTopFade.height) < 0.5, "\(below)")
+
+    withExtendedLifetime(window) {}
+  }
+
   /// `ChatCollectionView` hands `\.themeAccent` in per cell, and a theme change has to reach
   /// cells that already exist. One case for both claims; see `pump(until:)`.
   @Test("the theme accent crosses into a cell, and a change reaches it")

@@ -10,6 +10,10 @@ import UIKit
 enum ChatColumn {
   static let width: CGFloat = 680
   static let inset: CGFloat = 16
+  /// Every row's padding above and below, so rows sit twice this apart.
+  static let rowPadding: CGFloat = 9
+  /// The colour the chat side is painted. `ChatTopFade` fades to it, so the two must not differ.
+  static let ground = Color(.secondarySystemBackground)
 
   /// The gutter for a conversation of `columnWidth`: 0 where the readable column's cap binds,
   /// `inset` where it does not.
@@ -308,7 +312,7 @@ struct PaneChatView: View {
     .onGeometryChange(for: CGFloat.self, of: \.size.width) { contentWidthEstimate = $0 }
     // Not `systemBackground`, which is pure black in dark, where a translucent card reads as a
     // grey box. `TerminalScreen` paints the same colour behind the whole chat side.
-    .background(Color(.secondarySystemBackground))
+    .background(ChatColumn.ground)
     // Load when the chat appears, so a pane whose chat is never opened is never read.
     // `loadIfNeeded()` is not `async`: the model owns the load task, so cancelling this task
     // cannot strand it.
@@ -571,9 +575,9 @@ struct PaneChatView: View {
   /// One row of the conversation, whichever kind it is.
   ///
   /// The column cap is the row's and the gutter is the section's, because a cell inset by the
-  /// layout cannot be overflowed by its content. Every row gets `.padding(.vertical, 9)`, so
-  /// rows sit 18 apart, and `ChatCollectionView.endMargin` and `ChatTopFade.height` add the
-  /// ends' extra.
+  /// layout cannot be overflowed by its content. Every row gets `ChatColumn.rowPadding` above
+  /// and below, so rows sit 18 apart. `ChatCollectionView.endMargin` adds the end's extra, and
+  /// the collection view's top inset sets the start's.
   @ViewBuilder
   private func chatRow(_ item: ChatItem, in transcript: Transcript) -> some View {
     switch item {
@@ -601,7 +605,7 @@ struct PaneChatView: View {
       // turn's own 9, give the usual 18 pt gap.
       Color.clear
         .frame(height: 1)
-        .padding(.vertical, 9)
+        .padding(.vertical, ChatColumn.rowPadding)
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityHidden(true)
     }
@@ -624,7 +628,7 @@ struct PaneChatView: View {
       // 32 pt wider than its cell and overflow it. See `ChatCollectionView.makeCollection`.
       .frame(maxWidth: ChatColumn.width, alignment: .leading)
       .frame(maxWidth: .infinity, alignment: .leading)
-      .padding(.vertical, 9)
+      .padding(.vertical, ChatColumn.rowPadding)
   }
 
   /// The chips that answer the pending call, as their own item after the turn that carries

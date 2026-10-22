@@ -378,7 +378,7 @@ struct TerminalScreen: View {
     // translucent chrome blends with what is behind it.
     .background {
       (isShowingChat
-        ? Color(.secondarySystemBackground)
+        ? ChatColumn.ground
         : settings.theme.surfaceColor(for: colorScheme == .dark ? .dark : .light))
         .ignoresSafeArea()
     }
