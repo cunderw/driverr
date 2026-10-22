@@ -615,6 +615,59 @@ public struct TranscriptReader: Sendable {
       }
   }
 
+  // MARK: - Every sub-agent a session spawned
+
+  /// The sub-agents one session's meta files list. `directory` is the expanded project
+  /// directory, as for `subagentFile`; `sessionID` is the session file's name without
+  /// `.jsonl`.
+  ///
+  /// Only the session's own `subagents` directory: a spawn made before a `continued-in`
+  /// handover is listed under the session that made it.
+  public func subagentList(directory: String, sessionID: String) async throws -> SubagentList {
+    let command = TranscriptCommands.subagentListCommand(directory: directory, sessionID: sessionID)
+    let result = try await execute(command)
+    return Self.subagentList(from: result.standardOutput, readAt: now())
+  }
+
+  /// `date`, the directory, `#<count>`, then one line per meta file; see
+  /// `TranscriptCommands.subagentListCommand`. Ages are the host's clock minus the host's
+  /// mtimes, placed on `readAt`'s clock. A line whose meta does not decode is dropped and
+  /// still counted, because the count is the host's.
+  static func subagentList(from output: String, readAt: Date) -> SubagentList {
+    var lines = output.split(separator: "\n", omittingEmptySubsequences: true).map(String.init)
+    let hostNow = lines.first.flatMap { epoch(trimmed($0)) }
+    if !lines.isEmpty { lines.removeFirst() }
+    // The directory line. Nothing here needs it: rows open by link, not by path.
+    if !lines.isEmpty { lines.removeFirst() }
+    var total = 0
+    if let first = lines.first, first.hasPrefix(TranscriptCommands.subagentCountMark) {
+      total = Int(trimmed(String(first.dropFirst(TranscriptCommands.subagentCountMark.count)))) ?? 0
+      lines.removeFirst()
+    }
+
+    func date(_ field: Substring) -> Date? {
+      guard let hostNow, let modified = epoch(trimmed(String(field))), modified > 0 else {
+        return nil
+      }
+      return readAt.addingTimeInterval(-max(0, hostNow - modified))
+    }
+
+    let summaries: [SubagentSummary] = lines.compactMap { line in
+      let fields = line.split(
+        separator: TranscriptCommands.fieldSeparator, maxSplits: 4,
+        omittingEmptySubsequences: false)
+      guard fields.count == 5 else { return nil }
+      let file = trimmed(String(fields[3]))
+      guard file.hasPrefix("agent-"), file.hasSuffix(".jsonl"),
+        let meta = try? JSONDecoder().decode(SubagentMeta.self, from: Data(fields[4].utf8))
+      else { return nil }
+      let id = String(file.dropFirst("agent-".count).dropLast(".jsonl".count))
+      guard !id.isEmpty else { return nil }
+      return meta.summary(id: id, spawnedAt: date(fields[0]), writtenAt: date(fields[1]))
+    }
+    return SubagentList(total: total, summaries: summaries)
+  }
+
   // MARK: - Reading it
 
   /// How many turns a first page aims for.

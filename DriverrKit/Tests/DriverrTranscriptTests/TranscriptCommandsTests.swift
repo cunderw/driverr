@@ -573,6 +573,79 @@ struct EmptyGlobCommandTests {
     #expect(TranscriptReader.listing(from: result.standardOutput).files.isEmpty)
   }
 
+  @Test("the sub-agent list of a session with no subagents directory is empty", arguments: shells)
+  func subagentListOfNothing(shell: String) async throws {
+    let scratch = Scratch()
+    defer { scratch.remove() }
+    let project = try scratch.directory(".claude/projects/-Users-x-dev")
+    let command = TranscriptCommands.subagentListCommand(directory: project.path, sessionID: "sess1")
+    let result = try await scratch.run(command, shell: shell)
+    #expect(result.exitStatus == 0)
+    #expect(result.standardError == "")
+    #expect(TranscriptReader.subagentList(from: result.standardOutput, readAt: Date()).isEmpty)
+  }
+
+  @Test("the sub-agent list of an empty subagents directory is empty", arguments: shells)
+  func subagentListOfAnEmptyDirectory(shell: String) async throws {
+    let scratch = Scratch()
+    defer { scratch.remove() }
+    let project = try scratch.directory(".claude/projects/-Users-x-dev")
+    _ = try scratch.directory(".claude/projects/-Users-x-dev/sess1/subagents")
+    let command = TranscriptCommands.subagentListCommand(directory: project.path, sessionID: "sess1")
+    let result = try await scratch.run(command, shell: shell)
+    #expect(result.exitStatus == 0)
+    #expect(result.standardError == "")
+    let list = TranscriptReader.subagentList(from: result.standardOutput, readAt: Date())
+    #expect(list.total == 0)
+    #expect(list.summaries.isEmpty)
+  }
+
+  /// Real meta files in both shapes, one with an escaped quote in its description and one
+  /// whose `.jsonl` is not written yet, read back through `subagentList(from:readAt:)`.
+  @Test("the sub-agent list reads every meta file in the session", arguments: shells)
+  func subagentListForReal(shell: String) async throws {
+    let scratch = Scratch()
+    defer { scratch.remove() }
+    let project = try scratch.directory(".claude/projects/-Users-x-dev")
+    let dir = ".claude/projects/-Users-x-dev/sess1/subagents"
+    try scratch.file(
+      "\(dir)/agent-ascout-0123456789abcdef.meta.json",
+      #"{"agentType":"scout","description":"Survey the \"old\" pool","name":"scout","#
+        + #""taskKind":"in_process_teammate","customAgentType":"scout-type"}"#)
+    try scratch.file("\(dir)/agent-ascout-0123456789abcdef.jsonl", "{}\n")
+    try scratch.file(
+      "\(dir)/agent-a0000000000000004.meta.json",
+      #"{"agentType":"Explore","description":"Find the callers","toolUseId":"toolu_1","finished":true}"#)
+    try scratch.file("\(dir)/agent-a0000000000000004.jsonl", "{}\n{}\n")
+    try scratch.file(
+      "\(dir)/agent-a0000000000000005.meta.json",
+      #"{"agentType":"Plan","description":"Starting up","toolUseId":"toolu_2"}"#)
+    // Another session's sub-agent, which this session's list must not carry.
+    try scratch.file(
+      ".claude/projects/-Users-x-dev/sess2/subagents/agent-aother.meta.json",
+      #"{"agentType":"Explore","toolUseId":"toolu_9"}"#)
+    let command = TranscriptCommands.subagentListCommand(directory: project.path, sessionID: "sess1")
+    let result = try await scratch.run(command, shell: shell)
+    #expect(result.exitStatus == 0)
+    #expect(result.standardError == "")
+    let list = TranscriptReader.subagentList(from: result.standardOutput, readAt: Date())
+    #expect(list.total == 3)
+    let byID = Dictionary(uniqueKeysWithValues: list.summaries.map { ($0.id, $0) })
+    #expect(Set(byID.keys) == ["ascout-0123456789abcdef", "a0000000000000004", "a0000000000000005"])
+    let scout = try #require(byID["ascout-0123456789abcdef"])
+    #expect(scout.name == "scout")
+    #expect(scout.description == #"Survey the "old" pool"#)
+    #expect(scout.agentType == "scout-type")
+    #expect(scout.link == .teammate(name: "scout"))
+    #expect(scout.writtenAt != nil)
+    let explore = try #require(byID["a0000000000000004"])
+    #expect(explore.isFinished)
+    #expect(explore.link == .toolUse(id: "toolu_1"))
+    let starting = try #require(byID["a0000000000000005"])
+    #expect(starting.writtenAt == nil, "No .jsonl yet, so nothing was written")
+    #expect(starting.spawnedAt != nil)
+  }
+
   /// A real `agent-<id>.jsonl` beside its `.meta.json`, linked by the literal a `toolUseId`
   /// search passes, and read back through `TranscriptReader.listing(from:)`.
   @Test("the sub-agent link command finds the file whose meta carries the literal", arguments: shells)

@@ -186,6 +186,67 @@ enum TranscriptCommands {
     ].joined(separator: "; ")
   }
 
+  /// What opens the line that counts a session's meta files. Neither a path nor an epoch.
+  static let subagentCountMark = "#"
+
+  /// How many meta files `subagentListCommand` prints. A session has been seen with 243;
+  /// at about 500 bytes a line this keeps the answer under 30 KB.
+  static let subagentListLimit = 50
+
+  /// The part of `subagentListCommand` no other command carries, so `FakeTranscriptHost`
+  /// can key on it.
+  static let subagentListSelector = "ls -t -- *.meta.json"
+
+  /// Every sub-agent one session spawned, newest spawned first, in one round trip.
+  ///
+  /// The host's clock, the directory, the count of meta files, then one line per meta file,
+  /// at most `subagentListLimit`:
+  ///
+  /// ```
+  /// 1787780603
+  /// /home/me/.claude/projects/-home-me-dev-driverr/<sessionId>/subagents
+  /// #3
+  /// 1787780001<TAB>1787780590<TAB>48211<TAB>agent-ascout-23ad….jsonl<TAB>{"agentType":…}
+  /// ```
+  ///
+  /// The meta file's mtime (when it was spawned; the file is written once), the `.jsonl`'s
+  /// mtime and size, the `.jsonl`'s name, and **the meta file's one line, as written**. The
+  /// meta is about 400 bytes of JSON whose `description` can carry an escaped quote, which
+  /// an `awk` field match would cut short. JSON cannot hold a raw tab or newline, so it
+  /// travels last and whole, and `TranscriptReader` decodes it. The `.jsonl` is only
+  /// `stat`ed and measured, never read.
+  ///
+  /// `ls -t` orders by the meta's mtime, so the cap keeps the newest spawns. A `.jsonl` not
+  /// written yet prints `?` for its mtime and size.
+  ///
+  /// Always exits 0: a missing directory or no meta files is a session with no sub-agents.
+  static func subagentListCommand(directory: String, sessionID: String) -> String {
+    let d = "\(directory)/\(sessionID)/subagents"
+    return [
+      literalEmptyGlobs,
+      "date +%s",
+      "d=\(shellQuoted(d))",
+      "printf '%s\\n' \"$d\"",
+      "if [ -d \"$d\" ]; then cd \"$d\" || exit 0",
+      // `wc -l` pads its count on BSD; the reader trims it.
+      "printf '\(subagentCountMark)%s\\n' \"$(ls -- *.meta.json 2>/dev/null | wc -l)\"",
+      // `do` carries its first statement on the same element, as in `subagentLinkCommand`.
+      "for m in $(\(subagentListSelector) 2>/dev/null | head -n \(subagentListLimit)); do"
+        + " [ -f \"$m\" ] || continue",
+      "f=\"${m%.meta.json}.jsonl\"",
+      "ms=$(\(statModified) \"$m\" 2>/dev/null || stat -f %m \"$m\" 2>/dev/null)",
+      "mt=$(\(statModified) \"$f\" 2>/dev/null || stat -f %m \"$f\" 2>/dev/null)",
+      // Guarded, because zsh reports a failed `<` on its own stderr, whatever the command
+      // itself redirects.
+      "s=; [ -f \"$f\" ] && s=$(wc -c < \"$f\" 2>/dev/null)",
+      "printf '%s\\t%s\\t%s\\t%s\\t' \"${ms:-?}\" \"${mt:-?}\" \"${s:-?}\" \"$f\"",
+      "tr -d '\\n' < \"$m\"",
+      "printf '\\n'",
+      "done",
+      "fi",
+    ].joined(separator: "; ")
+  }
+
   /// Everything the resolver needs about one project directory, in one round trip.
   ///
   /// The **host's** clock comes first, then one line per session file. Ages are the host's
