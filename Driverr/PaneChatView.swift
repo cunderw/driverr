@@ -420,9 +420,8 @@ struct PaneChatView: View {
         list: model.subagentList, turns: transcript.turns, isExpanded: $isSubagentListOpen,
         horizontalInset: chatGutter
       ) { row in
-        guard let link = row.summary.link else { return }
         isSubagentListOpen = false
-        model.openSubagent(link: link, title: row.summary.title)
+        model.openSubagent(link: row.summary.link, title: row.summary.title)
       }
     }
     // The agent stopped on a failed API request. Hidden while the composer is collapsed, like

@@ -22,15 +22,57 @@ struct SubagentListTests {
     id: "a0006", description: "Read the diff", agentType: "Explore", toolUseID: "toolu_3",
     spawnedAt: ago(100), writtenAt: ago(5))
 
-  private static func spawn(_ link: SubagentLink, _ state: TaskProgress.State, id: String)
-    -> TranscriptTurn
-  {
+  private static func spawn(
+    _ link: SubagentLink, _ state: TaskProgress.State, id: String, agentID: String? = nil
+  ) -> TranscriptTurn {
     TranscriptTurn(
       id: id,
       speech: .agentEvent(
         .init(
           sender: "x", summary: nil, body: "", kind: .spawned,
-          task: TaskProgress(state: state, startedAt: ago(1000)), link: link)))
+          task: TaskProgress(state: state, startedAt: ago(1000)), link: link, agentID: agentID)))
+  }
+
+  /// A teammate stopped and spawned again under the same name: a meta and a file per spawn.
+  private static let firstSpawn = SubagentSummary(
+    id: "averifier-7-first", name: "verifier-7", agentType: "verifier", spawnedAt: ago(2000),
+    writtenAt: ago(1500))
+  private static let secondSpawn = SubagentSummary(
+    id: "averifier-7-second", name: "verifier-7", agentType: "verifier", spawnedAt: ago(900),
+    writtenAt: ago(5))
+
+  @Test("a respawned teammate's rows each take their own spawn line, joined by agent id")
+  func aRespawnJoinsByAgentID() {
+    let rows = SubagentList(total: 2, summaries: [Self.firstSpawn, Self.secondSpawn]).rows(
+      merging: [
+        Self.spawn(.teammate(name: "verifier-7"), .stopped, id: "t1", agentID: "averifier-7-first"),
+        Self.spawn(.teammate(name: "verifier-7"), .running, id: "t2", agentID: "averifier-7-second"),
+      ],
+      asOf: Self.now)
+    #expect(rows.map(\.id) == ["averifier-7-second", "averifier-7-first"])
+    #expect(rows.map(\.state) == [.running, .stopped])
+    #expect(rows.map(\.summary.link) == [.agent(id: "averifier-7-second"), .agent(id: "averifier-7-first")])
+  }
+
+  /// An older Claude Code wrote a teammate's answer id as `name@team`, which names no file.
+  @Test("without agent ids, a respawned name pairs its newest spawn line with its newest row")
+  func aRespawnPairsByName() {
+    let rows = SubagentList(total: 2, summaries: [Self.firstSpawn, Self.secondSpawn]).rows(
+      merging: [
+        Self.spawn(.teammate(name: "verifier-7"), .stopped, id: "t1", agentID: "verifier-7@team"),
+        Self.spawn(.teammate(name: "verifier-7"), .running, id: "t2", agentID: "verifier-7@team"),
+      ],
+      asOf: Self.now)
+    #expect(rows.map(\.state) == [.running, .stopped])
+  }
+
+  @Test("a row left over after its name's spawn lines takes nothing from the page")
+  func aRowWithNoSpawnLineLeft() {
+    let rows = SubagentList(total: 2, summaries: [Self.firstSpawn, Self.secondSpawn]).rows(
+      merging: [Self.spawn(.teammate(name: "verifier-7"), .running, id: "t2")], asOf: Self.now)
+    #expect(rows.first?.state == .running)
+    #expect(rows.last?.task == nil)
+    #expect(rows.last?.state == nil, "written 25m ago, so not running, and not the page's")
   }
 
   @Test("newest spawned first, whatever order the host printed")
@@ -48,9 +90,12 @@ struct SubagentListTests {
 
   @Test("a plain spawn links by its tool-use id, a teammate by its name")
   func links() {
-    #expect(Self.plain.link == .toolUse(id: "toolu_1"))
-    #expect(Self.teammate.link == .teammate(name: "verifier-7"))
-    #expect(SubagentSummary(id: "a1").link == nil)
+    #expect(Self.plain.pageLink == .toolUse(id: "toolu_1"))
+    #expect(Self.teammate.pageLink == .teammate(name: "verifier-7"))
+    #expect(SubagentSummary(id: "a1").pageLink == nil)
+    // A row opens its own file, whatever the page would link by.
+    #expect(Self.plain.link == .agent(id: "a0004"))
+    #expect(Self.teammate.link == .agent(id: "averifier-0123"))
   }
 
   @Test("the title is the name, else the type, else the description")

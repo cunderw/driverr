@@ -268,7 +268,7 @@ struct PaneTranscriptModelTests {
 
     #expect(model.transcript != nil)
     #expect(model.subagentList.total == 1)
-    #expect(model.subagentList.summaries.first?.link == .toolUse(id: "toolu_1"))
+    #expect(model.subagentList.summaries.first?.pageLink == .toolUse(id: "toolu_1"))
     let asked = log.commands.filter { $0.contains("*.meta.json") }
     #expect(asked.count == 1)
     #expect(asked.first?.contains("-Users-x-Dev-driverr/a1b2/subagents") == true)
@@ -291,6 +291,33 @@ struct PaneTranscriptModelTests {
     await settled(model)
 
     #expect(log.commands.filter { $0.contains("*.meta.json") }.count == 1)
+  }
+
+  /// A spawn is the moment the list changes, so a page that gains one must not wait out the
+  /// staleness that holds back every other re-read.
+  @Test("a page that gains a spawn line asks for the list again inside the staleness")
+  func aNewSpawnRefetchesTheList() async {
+    let pages = MutablePages(records: [
+      Records.human("ship it", uuid: "u1"), Records.assistant("shipping.", uuid: "a1"),
+    ])
+    let log = SubagentCommandLog()
+    let run = growingHost(pages)
+    let model = PaneTranscriptModel(
+      pane: pane(),
+      reader: TranscriptReader(run: { command in
+        log.record(command)
+        return try await run(command)
+      }))
+    model.loadIfNeeded()
+    await settled(model)
+    #expect(log.commands.filter { $0.contains("*.meta.json") }.count == 1)
+
+    pages.append(Records.spawn(description: "Find the callers", id: "toolu_s1", uuid: "s1"))
+    model.refresh()
+    await settled(model)
+
+    #expect(model.transcript?.turns.contains { $0.agentEvent?.kind == .spawned } == true)
+    #expect(log.commands.filter { $0.contains("*.meta.json") }.count == 2)
   }
 
   @Test("a list the host refuses leaves the page on screen and no list")
@@ -1967,6 +1994,13 @@ private enum Records {
   static func assistant(_ text: String, uuid: String = "a1") -> String {
     #"{"type":"assistant","uuid":"\#(uuid)","isSidechain":false,"#
       + #""message":{"role":"assistant","content":[{"type":"text","text":"\#(text)"}]}}"#
+  }
+
+  /// An `Agent` call: this session spawning a sub-agent.
+  static func spawn(description: String, id: String, uuid: String) -> String {
+    #"{"type":"assistant","uuid":"\#(uuid)","isSidechain":false,"#
+      + #""message":{"role":"assistant","content":[{"type":"tool_use","id":"\#(id)","#
+      + #""name":"Agent","input":{"subagent_type":"Explore","description":"\#(description)"}}]}}"#
   }
 
   /// A run of tool calls, as one record carrying every call — one of the two shapes a real

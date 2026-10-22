@@ -808,6 +808,9 @@ final class PaneTranscriptModel {
         case .teammate(let name):
           found = try await reader.subagentFile(
             teammateName: name, directory: target.directory, sessionID: target.sessionID)
+        case .agent(let id):
+          found = try await reader.subagentFile(
+            agentID: id, directory: target.directory, sessionID: target.sessionID)
         }
         guard !Task.isCancelled else { return }
         subagentFile = found

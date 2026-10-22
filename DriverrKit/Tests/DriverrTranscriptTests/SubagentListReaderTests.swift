@@ -25,10 +25,10 @@ struct SubagentListReaderTests {
     "1792649108",
     "/Users/me/.claude/projects/-Users-me-dev/sess1/subagents",
     "#       3",
-    "1792649074\t1792649106\t  528259\tagent-aexec-subagents-4e3d51c1e2190d37.jsonl\t\(teammateMeta)",
-    "1792640000\t1792641000\t   1200\tagent-a0000000000000004.jsonl\t\(plainMeta)",
+    "2026-10-22T06:04:34.000Z\t1792649106\t  528259\tagent-aexec-subagents-4e3d51c1e2190d37.jsonl\t\(teammateMeta)",
+    "2026-10-22T03:33:20Z\t1792641000\t   1200\tagent-a0000000000000004.jsonl\t\(plainMeta)",
     // A meta that does not decode is dropped and still counted.
-    "1792630000\t1792630000\t     10\tagent-abroken.jsonl\t{\"agentType\":",
+    "2026-10-22T00:46:40.000Z\t1792630000\t     10\tagent-abroken.jsonl\t{\"agentType\":",
   ].joined(separator: "\n") + "\n"
 
   @Test("each meta line maps to a summary, the teammate's type from spawnedAgentType")
@@ -40,15 +40,18 @@ struct SubagentListReaderTests {
     #expect(teammate.name == "exec-subagents")
     #expect(teammate.agentType == "executor")
     #expect(teammate.toolUseID == nil)
-    #expect(teammate.link == .teammate(name: "exec-subagents"))
+    #expect(teammate.pageLink == .teammate(name: "exec-subagents"))
+    #expect(teammate.link == .agent(id: "aexec-subagents-4e3d51c1e2190d37"))
     #expect(!teammate.isFinished)
     let plain = try #require(list.summaries.last)
     #expect(plain.name == nil)
     #expect(plain.agentType == "Explore")
-    #expect(plain.link == .toolUse(id: "toolu_01KyouBhuktvfGFRdr28FgXe"))
+    #expect(plain.pageLink == .toolUse(id: "toolu_01KyouBhuktvfGFRdr28FgXe"))
     #expect(plain.isFinished)
   }
 
+  /// The spawn time is a host timestamp, with or without fractional seconds, and is moved onto
+  /// the reader's clock by the same subtraction as the write time.
   @Test("ages are the host's subtraction, placed on the reader's clock")
   func agesAreTheHosts() throws {
     let list = TranscriptReader.subagentList(from: Self.answer, readAt: Self.readAt)
@@ -89,7 +92,9 @@ struct SubagentListReaderTests {
     #expect(
       TranscriptCommands.subagentListCommand(directory: "/home/a b", sessionID: "s")
         .contains("d='/home/a b/s/subagents';"))
-    #expect(command.contains("\(TranscriptCommands.subagentListSelector) 2>/dev/null | head -n 50"))
+    #expect(command.contains("LC_ALL=C sort -r | head -n 50"))
+    // The first line of each agent's file, for its spawn time.
+    #expect(command.contains(#"head -n 1 "$f""#))
     // The `.jsonl` is measured, never read.
     #expect(!command.contains("cat "))
     #expect(!command.contains("tail "))
@@ -112,8 +117,8 @@ struct SubagentListReaderTests {
     #expect(list.total == 2)
     #expect(list.summaries.map(\.title) == ["verifier-7", "Explore"])
     #expect(list.summaries.first?.agentType == "verifier")
-    #expect(list.summaries.first?.link == .teammate(name: "verifier-7"))
-    #expect(list.summaries.last?.link == .toolUse(id: "toolu_9"))
+    #expect(list.summaries.first?.pageLink == .teammate(name: "verifier-7"))
+    #expect(list.summaries.last?.pageLink == .toolUse(id: "toolu_9"))
     #expect(list.summaries.last?.isFinished == true)
   }
 
@@ -130,6 +135,38 @@ struct SubagentListReaderTests {
     #expect(list.total == 60)
     #expect(list.summaries.count == TranscriptCommands.subagentListLimit)
     #expect(list.summaries.first?.id == "a0")
+  }
+
+  /// Written order and spawn order differ: the lookup was spawned first and written last.
+  @Test("the fake host orders by spawn time, not by the last write")
+  func fakeHostOrdersBySpawn() async throws {
+    let host = FakeTranscriptHost(sessionID: "sess1", turns: []).serving([
+      .init(agentID: "alookup", toolUseID: "t1", secondsAgo: 5, prompt: "p", spawnedSecondsAgo: 900),
+      .init(agentID: "areview", toolUseID: "t2", secondsAgo: 600, prompt: "p", spawnedSecondsAgo: 700),
+    ])
+    let list = try await TranscriptReader(run: host.run)
+      .subagentList(directory: host.directory, sessionID: "sess1")
+    #expect(list.summaries.map(\.id) == ["areview", "alookup"])
+  }
+
+  @Test("a sub-agent's file is found by its agent id, and an unsafe id asks nothing")
+  func fileByAgentID() async throws {
+    let host = FakeTranscriptHost(sessionID: "sess1", turns: []).serving([
+      .init(agentID: "averifier7", name: "verifier-7", isTeammate: true, prompt: "p"),
+      .init(agentID: "averifier7b", name: "verifier-7", isTeammate: true, prompt: "p"),
+    ])
+    let reader = TranscriptReader(run: host.run)
+    let found = try await reader.subagentFile(
+      agentID: "averifier7", directory: host.directory, sessionID: "sess1")
+    #expect(found?.name == "agent-averifier7.jsonl")
+    #expect(found?.isSubagentFile == true)
+    #expect(
+      try await reader.subagentFile(agentID: "anobody", directory: host.directory, sessionID: "sess1")
+        == nil)
+    #expect(!TranscriptReader.isSafeAgentID("../a1"))
+    #expect(!TranscriptReader.isSafeAgentID("a 1"))
+    #expect(!TranscriptReader.isSafeAgentID(""))
+    #expect(TranscriptReader.isSafeAgentID("aexec-subagents-4e3d51c1e2190d37"))
   }
 
   @Test("a fake host with no sub-agents lists none")

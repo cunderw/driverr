@@ -26,8 +26,10 @@ public struct SubagentSummary: Identifiable, Hashable, Sendable {
   /// The meta file's `finished`. Written `true` by some background spawns and never `false`,
   /// so its absence says nothing.
   public let isFinished: Bool
-  /// When the meta file was written, which is when the agent was spawned. Phone clock, from
-  /// the host's age.
+  /// When the agent was spawned: the `timestamp` of the first record in its own file, which
+  /// nothing later rewrites. Not the meta file's mtime, which Claude Code rewrites when a
+  /// background agent finishes and when a teammate is woken. Phone clock, by the host's
+  /// subtraction. See `TranscriptCommands.subagentListCommand` for the fallbacks.
   public let spawnedAt: Date?
   /// When the agent's own `.jsonl` was last written. Phone clock, from the host's age. `nil`
   /// while the file does not exist yet.
@@ -58,12 +60,14 @@ public struct SubagentSummary: Identifiable, Hashable, Sendable {
     name ?? agentType ?? description ?? id
   }
 
-  /// Which file a tap opens, by the rule `TranscriptReader.subagentFile` searches with. The
-  /// `toolUseId` when there is one, because it is exact; a teammate's name otherwise.
-  ///
-  /// A teammate respawned under one name has a meta per spawn, and both rows open the newest
-  /// file, as its spawn lines do.
-  public var link: SubagentLink? {
+  /// Which file a tap opens: this agent's own, by its `agentId`. A teammate respawned under
+  /// one name has a file per spawn, and each row opens its own.
+  public var link: SubagentLink { .agent(id: id) }
+
+  /// The link a spawn line on the page carries for this agent, for a page whose spawn answer
+  /// gave no `agentId` to join by: the `toolUseId` when there is one, a teammate's name
+  /// otherwise. See `TranscriptParser.subagentLink`.
+  public var pageLink: SubagentLink? {
     if let toolUseID { return .toolUse(id: toolUseID) }
     if let name { return .teammate(name: name) }
     return nil
@@ -75,7 +79,9 @@ public struct SubagentList: Hashable, Sendable {
   /// How many meta files the session holds. At least `summaries.count`; more when the host
   /// capped the listing.
   public let total: Int
-  /// Newest **spawned** first, so rows hold still while their agents write.
+  /// Newest spawned first, by `SubagentSummary.spawnedAt`. A spawn time never changes, so a
+  /// row moves only when a newer spawn arrives above it, not when an agent writes, finishes or
+  /// is woken.
   public let summaries: [SubagentSummary]
 
   public init(total: Int, summaries: [SubagentSummary]) {
@@ -94,22 +100,36 @@ public struct SubagentList: Hashable, Sendable {
   /// One row per summary, with the state taken from the page where the page carries the
   /// spawn.
   ///
-  /// In order: a spawn line on the page with a state; the meta's `finished`; a file written
+  /// In order: the row's own spawn line on the page; the meta's `finished`; a file written
   /// within `liveWindow`, as running. Otherwise **no state**: a quiet teammate may be idle or
   /// done, and the row says only when it was last written.
   ///
-  /// A spawn line is joined by its `link`, so a teammate's spawn matches by name and a plain
-  /// spawn by its `tool_use` id. A later spawn line under the same link wins.
+  /// **Each row takes its own spawn line.** A spawn line whose answer gave an `agentId` joins
+  /// the row with that id. One without (an older Claude Code wrote a teammate's id as
+  /// `name@team`) joins by `pageLink`, and when several rows share it, as a teammate
+  /// respawned under one name does, the newest spawn line goes to the newest row, the next to
+  /// the next, and a row left over takes nothing from the page.
   public func rows(merging turns: [TranscriptTurn], asOf now: Date) -> [SubagentRow] {
-    var onPage: [SubagentLink: TaskProgress] = [:]
-    for turn in turns {
-      guard let event = turn.agentEvent, event.kind == .spawned, let link = event.link,
-        let task = event.task
+    let ids = Set(summaries.map(\.id))
+    var byAgent: [String: TaskProgress] = [:]
+    /// Newest spawn line first.
+    var byLink: [SubagentLink: [TaskProgress]] = [:]
+    for turn in turns.reversed() {
+      guard let event = turn.agentEvent, event.kind == .spawned, let task = event.task
       else { continue }
-      onPage[link] = task
+      if let agentID = event.agentID, ids.contains(agentID) {
+        if byAgent[agentID] == nil { byAgent[agentID] = task }
+      } else if let link = event.link {
+        byLink[link, default: []].append(task)
+      }
     }
     return summaries.map { summary in
-      if let link = summary.link, let task = onPage[link] {
+      var task = byAgent[summary.id]
+      if task == nil, let link = summary.pageLink, var queue = byLink[link], !queue.isEmpty {
+        task = queue.removeFirst()
+        byLink[link] = queue
+      }
+      if let task {
         return SubagentRow(summary: summary, task: task, state: task.state)
       }
       if summary.isFinished {
@@ -177,7 +197,7 @@ extension TranscriptChatCopy {
   /// The list's header button, for VoiceOver's hint.
   public static let subagentListHint = "Shows the agents this session started"
 
-  /// The open list's foot when the host capped it.
+  /// The open list's foot when the host capped it: the rows are the newest spawns.
   public static func subagentListCapped(shown: Int, of total: Int) -> String {
     "The newest \(shown) of \(total)"
   }

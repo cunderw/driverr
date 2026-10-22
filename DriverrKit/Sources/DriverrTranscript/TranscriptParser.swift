@@ -247,6 +247,11 @@ enum TranscriptParser {
                 if !forSubagentFile {
                   event = event.with(link: subagentLink(of: block, answers: answers))
                 }
+                if let agentID = block.id.flatMap({ answers.launches[$0]?.agentID }),
+                  !agentID.isEmpty
+                {
+                  event = event.with(agentID: agentID)
+                }
               }
               page.turns.append(TranscriptTurn(id: nextID(), speech: .agentEvent(event), at: at))
               continue

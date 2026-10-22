@@ -186,42 +186,80 @@ enum TranscriptCommands {
     ].joined(separator: "; ")
   }
 
+  /// One sub-agent file by its `agentId`, in `listCommand`'s shape, so
+  /// `TranscriptReader.listing(from:)` reads it: the host's clock, the directory, and the
+  /// file's line when it exists. `agentID` must already have passed
+  /// `TranscriptReader.isSafeAgentID`, which leaves `shellQuoted` nothing to quote.
+  ///
+  /// Always exits 0: a missing file is "no such sub-agent", not a channel failure.
+  static func subagentFileCommand(directory: String, sessionID: String, agentID: String) -> String {
+    let d = "\(directory)/\(sessionID)/subagents"
+    return [
+      "date +%s",
+      "d=\(shellQuoted(d))",
+      "printf '%s\\n' \"$d\"",
+      "if [ -d \"$d\" ]; then cd \"$d\" || exit 0",
+      "\(subagentFileSelector)\(shellQuoted("\(agentID).jsonl"))",
+      "if [ -f \"$f\" ]; then"
+        + " mt=$(\(statModified) \"$f\" 2>/dev/null || stat -f %m \"$f\" 2>/dev/null)",
+      "s=$(wc -c < \"$f\" 2>/dev/null)",
+      "printf '%s\\t%s\\t%s\\n' \"${mt:-?}\" \"${s:-?}\" \"$f\"",
+      "fi",
+      "fi",
+    ].joined(separator: "; ")
+  }
+
+  /// The part of `subagentFileCommand` no other command carries, so `FakeTranscriptHost`
+  /// can key on it.
+  static let subagentFileSelector = "f=agent-"
+
   /// What opens the line that counts a session's meta files. Neither a path nor an epoch.
   static let subagentCountMark = "#"
 
-  /// How many meta files `subagentListCommand` prints. A session has been seen with 243;
+  /// How many sub-agents `subagentListCommand` prints. A session has been seen with 244;
   /// at about 500 bytes a line this keeps the answer under 30 KB.
   static let subagentListLimit = 50
 
   /// The part of `subagentListCommand` no other command carries, so `FakeTranscriptHost`
   /// can key on it.
-  static let subagentListSelector = "ls -t -- *.meta.json"
+  static let subagentListSelector = "for m in *.meta.json; do"
 
-  /// Every sub-agent one session spawned, newest spawned first, in one round trip.
+  /// The record key whose first value in an agent's first record is its spawn time.
+  static let spawnTimeKey = #""timestamp":""#
+
+  /// Every sub-agent one session spawned, newest **spawned** first, in one round trip.
   ///
-  /// The host's clock, the directory, the count of meta files, then one line per meta file,
+  /// The host's clock, the directory, the count of meta files, then one line per sub-agent,
   /// at most `subagentListLimit`:
   ///
   /// ```
   /// 1787780603
   /// /home/me/.claude/projects/-home-me-dev-driverr/<sessionId>/subagents
   /// #3
-  /// 1787780001<TAB>1787780590<TAB>48211<TAB>agent-ascout-23ad….jsonl<TAB>{"agentType":…}
+  /// 2026-10-22T06:50:12.345Z<TAB>1787780590<TAB>48211<TAB>agent-ascout-23ad….jsonl<TAB>{"agentType":…}
   /// ```
   ///
-  /// The meta file's mtime (when it was spawned; the file is written once), the `.jsonl`'s
-  /// mtime and size, the `.jsonl`'s name, and **the meta file's one line, as written**. The
-  /// meta is about 400 bytes of JSON whose `description` can carry an escaped quote, which
-  /// an `awk` field match would cut short. JSON cannot hold a raw tab or newline, so it
-  /// travels last and whole, and `TranscriptReader` decodes it. The `.jsonl` is only
-  /// `stat`ed and measured, never read.
+  /// The spawn time, the `.jsonl`'s mtime and size, the `.jsonl`'s name, and **the meta
+  /// file's one line, as written**. The meta is about 400 bytes of JSON whose `description`
+  /// can carry an escaped quote, which an `awk` field match would cut short. JSON cannot hold
+  /// a raw tab or newline, so it travels last and whole, and `TranscriptReader` decodes it.
   ///
-  /// `ls -t` orders by the meta's mtime, so the cap keeps the newest spawns. A `.jsonl` not
-  /// written yet prints `?` for its mtime and size.
+  /// **The spawn time is the `timestamp` of the agent's first record**, read with
+  /// `head -n 1`, because nothing later rewrites it. The meta file's mtime is not a spawn
+  /// time: Claude Code rewrites the meta when a background agent finishes and when a
+  /// teammate is woken, so sorting on it puts a finished agent on top. A `.jsonl` with no
+  /// timestamp in its first line falls back to its birth time, then to the meta's mtime, both
+  /// printed in the same UTC form so the keys sort together. A sub-agent whose `.jsonl` is
+  /// not written yet is being spawned now, and the meta's mtime is that moment.
+  ///
+  /// Every meta file gets a key and the keys are sorted before the cap, so the cap keeps the
+  /// newest spawns. `"timestamp":"` occurs unescaped only as a key, for `recordSelector`'s
+  /// reason. Only the first line of each `.jsonl` is read; the rest is `stat`ed and measured.
   ///
   /// Always exits 0: a missing directory or no meta files is a session with no sub-agents.
   static func subagentListCommand(directory: String, sessionID: String) -> String {
     let d = "\(directory)/\(sessionID)/subagents"
+    let tab = "\"$(printf '\\t')\""
     return [
       literalEmptyGlobs,
       "date +%s",
@@ -230,16 +268,36 @@ enum TranscriptCommands {
       "if [ -d \"$d\" ]; then cd \"$d\" || exit 0",
       // `wc -l` pads its count on BSD; the reader trims it.
       "printf '\(subagentCountMark)%s\\n' \"$(ls -- *.meta.json 2>/dev/null | wc -l)\"",
-      // `do` carries its first statement on the same element, as in `subagentLinkCommand`.
-      "for m in $(\(subagentListSelector) 2>/dev/null | head -n \(subagentListLimit)); do"
-        + " [ -f \"$m\" ] || continue",
+      // One line per meta: its name, a tab, and its agent's first record. The `printf '\n'`
+      // ends a first line written without its newline; the empty lines it leaves are skipped.
+      // `do` carries its first statement on the same element: `do; cmd` is a syntax error in
+      // `sh`.
+      "\(subagentListSelector) [ -f \"$m\" ] || continue",
       "f=\"${m%.meta.json}.jsonl\"",
-      "ms=$(\(statModified) \"$m\" 2>/dev/null || stat -f %m \"$m\" 2>/dev/null)",
+      "printf '%s\\t' \"$m\"",
+      "[ -f \"$f\" ] && head -n 1 \"$f\" 2>/dev/null",
+      "printf '\\n'",
+      "done | awk -F'\\t' '$1!=\"\"{k=\"-\";"
+        + "if(match($0,/\(spawnTimeKey)[^\"]*\"/))k=substr($0,RSTART+\(spawnTimeKey.count),"
+        + "RLENGTH-\(spawnTimeKey.count + 1));print k \"\\t\" $1}'"
+        // The fallbacks, for a key the first line did not give. In the same element, because
+        // the elements are joined with `;` and a pipe cannot follow one.
+        + " | while IFS=\(tab) read -r k m; do"
+        + " if [ \"$k\" = - ]; then f=\"${m%.meta.json}.jsonl\"",
+      "b=$(stat -c %W \"$f\" 2>/dev/null || stat -f %B \"$f\" 2>/dev/null)",
+      "[ \"${b:-0}\" -gt 0 ] 2>/dev/null"
+        + " || b=$(\(statModified) \"$m\" 2>/dev/null || stat -f %m \"$m\" 2>/dev/null)",
+      "k=$(date -u -d \"@$b\" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null"
+        + " || date -u -r \"$b\" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)",
+      "fi",
+      "printf '%s\\t%s\\n' \"${k:-0}\" \"$m\"",
+      "done | LC_ALL=C sort -r | head -n \(subagentListLimit) | while IFS=\(tab) read -r k m; do"
+        + " f=\"${m%.meta.json}.jsonl\"",
       "mt=$(\(statModified) \"$f\" 2>/dev/null || stat -f %m \"$f\" 2>/dev/null)",
       // Guarded, because zsh reports a failed `<` on its own stderr, whatever the command
       // itself redirects.
       "s=; [ -f \"$f\" ] && s=$(wc -c < \"$f\" 2>/dev/null)",
-      "printf '%s\\t%s\\t%s\\t%s\\t' \"${ms:-?}\" \"${mt:-?}\" \"${s:-?}\" \"$f\"",
+      "printf '%s\\t%s\\t%s\\t%s\\t' \"$k\" \"${mt:-?}\" \"${s:-?}\" \"$f\"",
       "tr -d '\\n' < \"$m\"",
       "printf '\\n'",
       "done",

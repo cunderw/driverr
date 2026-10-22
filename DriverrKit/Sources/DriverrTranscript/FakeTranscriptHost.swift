@@ -342,8 +342,8 @@ public struct FakeTranscriptHost: Sendable {
     public let agentType: String?
     /// The meta file's `finished: true`, which only some background spawns write.
     public let isFinished: Bool
-    /// How long ago the meta file was written, the list's sort key. `secondsAgo` when not
-    /// given.
+    /// How long ago the sub-agent was spawned: its first record's time, the list's sort key.
+    /// `secondsAgo`, the last write, when not given.
     public let spawnedSecondsAgo: TimeInterval?
 
     public init(
@@ -563,6 +563,9 @@ public struct FakeTranscriptHost: Sendable {
       }
       // **Before the listing branch**, for the same reason: it carries `date +%s` and
       // `stat -c %Y`.
+      if command.contains(TranscriptCommands.subagentFileSelector) {
+        return ok(subagentFileAnswer(for: command, asOf: now))
+      }
       if command.contains(TranscriptCommands.subagentListSelector) {
         return ok(subagentListAnswer(asOf: now))
       }
@@ -640,8 +643,20 @@ public struct FakeTranscriptHost: Sendable {
     return ([String(epoch), dir] + lines).joined(separator: "\n") + "\n"
   }
 
-  /// `subagentListCommand`'s shape: the newest spawned fixtures up to the command's cap,
-  /// whichever session asked, and the count of all of them. Empty `subagents` answers a
+  /// `subagentFileCommand`'s shape: the fixture whose file the command names, if any.
+  private func subagentFileAnswer(for command: String, asOf now: Date) -> String {
+    let epoch = Int(now.timeIntervalSince1970)
+    let dir = "\(directory)/subagents"
+    let lines = subagentFixture(named: command).map { fixture -> String in
+      let size = fixture.fileSizeInBytes ?? subagentRecords(of: fixture, asOf: now).utf8.count
+      return "\(epoch - Int(fixture.secondsAgo))\t\(size)\t\(fixture.fileName)"
+    }
+    return ([String(epoch), dir] + (lines.map { [$0] } ?? [])).joined(separator: "\n") + "\n"
+  }
+
+  /// `subagentListCommand`'s shape: the newest **spawned** fixtures up to the command's cap,
+  /// by `spawnedSecondsAgo` and not by when their files were last written, whichever session
+  /// asked, and the count of all of them. Empty `subagents` answers a
   /// directory with no meta files.
   private func subagentListAnswer(asOf now: Date) -> String {
     let epoch = Int(now.timeIntervalSince1970)
@@ -651,7 +666,9 @@ public struct FakeTranscriptHost: Sendable {
       ($0.spawnedSecondsAgo ?? $0.secondsAgo) < ($1.spawnedSecondsAgo ?? $1.secondsAgo)
     }
     let lines = ordered.prefix(TranscriptCommands.subagentListLimit).map { fixture -> String in
-      let spawned = epoch - Int(fixture.spawnedSecondsAgo ?? fixture.secondsAgo)
+      // The first record's `timestamp`, the command's spawn time.
+      let spawned = now.addingTimeInterval(-(fixture.spawnedSecondsAgo ?? fixture.secondsAgo))
+        .formatted(.iso8601)
       let written = epoch - Int(fixture.secondsAgo)
       let size = fixture.fileSizeInBytes ?? subagentRecords(of: fixture, asOf: now).utf8.count
       return "\(spawned)\t\(written)\t\(size)\t\(fixture.fileName)\t\(fixture.metaLine)"

@@ -615,6 +615,31 @@ public struct TranscriptReader: Sendable {
       }
   }
 
+  /// The sub-agent file named by its `agentId`, under `sessionID`, or `nil`. The returned
+  /// file has `isSubagentFile` set. See `SubagentLink.agent(id:)`.
+  public func subagentFile(
+    agentID: String, directory: String, sessionID: String
+  ) async throws -> TranscriptFile? {
+    guard Self.isSafeAgentID(agentID) else { return nil }
+    let command = TranscriptCommands.subagentFileCommand(
+      directory: directory, sessionID: sessionID, agentID: agentID)
+    let result = try await execute(command)
+    return Self.listing(from: result.standardOutput).files.first.map {
+      TranscriptFile(path: $0.path, sizeInBytes: $0.sizeInBytes, age: $0.age, isSubagentFile: true)
+    }
+  }
+
+  /// Whether an `agentId` is safe to put in a file name on the host: ASCII letters, digits,
+  /// `-` and `_` only. Real ids are `a` and hex, or `a<name>-<hex>`. A `/` or `..` would
+  /// leave the `subagents` directory.
+  static func isSafeAgentID(_ value: String) -> Bool {
+    !value.isEmpty
+      && value.unicodeScalars.allSatisfy { scalar in
+        scalar.isASCII
+          && (CharacterSet.alphanumerics.contains(scalar) || scalar == "-" || scalar == "_")
+      }
+  }
+
   // MARK: - Every sub-agent a session spawned
 
   /// The sub-agents one session's meta files list. `directory` is the expanded project
@@ -629,10 +654,11 @@ public struct TranscriptReader: Sendable {
     return Self.subagentList(from: result.standardOutput, readAt: now())
   }
 
-  /// `date`, the directory, `#<count>`, then one line per meta file; see
-  /// `TranscriptCommands.subagentListCommand`. Ages are the host's clock minus the host's
-  /// mtimes, placed on `readAt`'s clock. A line whose meta does not decode is dropped and
-  /// still counted, because the count is the host's.
+  /// `date`, the directory, `#<count>`, then one line per sub-agent; see
+  /// `TranscriptCommands.subagentListCommand`. Every time is placed on `readAt`'s clock by the
+  /// host's own subtraction: the spawn time is a host timestamp and the write time a host
+  /// mtime, so each is moved by `readAt` minus the host's clock. A line whose meta does not
+  /// decode is dropped and still counted, because the count is the host's.
   static func subagentList(from output: String, readAt: Date) -> SubagentList {
     var lines = output.split(separator: "\n", omittingEmptySubsequences: true).map(String.init)
     let hostNow = lines.first.flatMap { epoch(trimmed($0)) }
@@ -652,6 +678,13 @@ public struct TranscriptReader: Sendable {
       return readAt.addingTimeInterval(-max(0, hostNow - modified))
     }
 
+    /// An ISO 8601 spawn time from the host. Without the host's clock it stands as written.
+    func spawned(_ field: Substring) -> Date? {
+      guard let stamp = TranscriptParser.timestamp(trimmed(String(field))) else { return nil }
+      guard let hostNow else { return stamp }
+      return readAt.addingTimeInterval(-max(0, hostNow - stamp.timeIntervalSince1970))
+    }
+
     let summaries: [SubagentSummary] = lines.compactMap { line in
       let fields = line.split(
         separator: TranscriptCommands.fieldSeparator, maxSplits: 4,
@@ -663,7 +696,7 @@ public struct TranscriptReader: Sendable {
       else { return nil }
       let id = String(file.dropFirst("agent-".count).dropLast(".jsonl".count))
       guard !id.isEmpty else { return nil }
-      return meta.summary(id: id, spawnedAt: date(fields[0]), writtenAt: date(fields[1]))
+      return meta.summary(id: id, spawnedAt: spawned(fields[0]), writtenAt: date(fields[1]))
     }
     return SubagentList(total: total, summaries: summaries)
   }
