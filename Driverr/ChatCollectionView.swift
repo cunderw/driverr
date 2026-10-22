@@ -286,9 +286,11 @@ struct ChatCollectionView<Row: View>: UIViewRepresentable {
     // composer's material loses its backdrop. A per-row `.scrollTransition` cannot do it
     // either, because its phase is relative to each row's own height.
     view.bottomEdgeEffect.style = .soft
-    // The band `ChatTopFade` draws over. `contentInset.bottom` belongs to the composer and is
-    // set on every update; this one is fixed.
-    view.contentInset.top = ChatTopFade.height
+    // Under `ChatTopFade`. `contentInset.bottom` belongs to the composer and is set on every
+    // update; these are fixed. The indicator stays out of the whole fade, as the bottom one
+    // stays out of the composer.
+    view.contentInset.top = ChatTopFade.contentInset
+    view.verticalScrollIndicatorInsets.top = ChatTopFade.height
     // UIKit, unlike SwiftUI, does not propagate an identifier to children, so the rows keep
     // their own `pane.chat.turn.*` identifiers.
     view.accessibilityIdentifier = "pane.chat"
