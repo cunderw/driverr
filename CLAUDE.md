@@ -339,12 +339,21 @@ The release procedure lives outside this repo. These are only the facts about th
   archive command line.
 - **The whole App Store listing is `docs/appstore/copy.json`.** There is no prose mirror.
 - **Screenshots** are in `docs/app-store-assets/iphone-max` and
-  `docs/app-store-assets/ipad`. Regenerate with `scripts/screenshots.sh`, which checks the
-  pixel sizes and the image count per kind. It shuts each device down and boots it before
-  the tour, and it fails the phone set if an image draws the home indicator
-  (`scripts/home-indicator.sh`). The store images have none. They upload in filename
-  order. The phone set is `01-` to `06-`. The iPad set is `02-` to `06-`, five images with
-  no `01-hosts`, because on the split view the host list is never a separate screen.
+  `docs/app-store-assets/ipad`. Each is a real tour capture in a device frame under a
+  caption, drawn by `scripts/frame-screenshots.swift`, which also holds their order and
+  captions. The app UI inside the frame must stay an unedited capture (App Review
+  guideline 2.3.3). The captures themselves are in `docs/app-store-assets/raw/<kind>`, and
+  nothing in a store directory may be a raw capture, because the count check and the
+  upload read those directories. Regenerate with `scripts/screenshots.sh`, which checks the
+  raw captures' sizes and count per kind, frames them, and checks the framed set's sizes,
+  count and alpha. It shuts each device down and boots it before the tour, and it fails
+  the phone set if a capture draws the home indicator (`scripts/home-indicator.sh`).
+  `scripts/screenshots.sh --frame` frames the committed captures again with no tour. They
+  upload in filename order. Both sets are `01-` to `05-` and start with Needs You. The
+  phone's `raw/iphone-max/hosts.png` is captured and not published.
+- **The product page header** is `docs/app-store-assets/header/header.png`, drawn by the
+  same script and uploaded by hand. `crop-21x9.png` and `crop-3x2.png` beside it show what
+  the header and search results keep after Apple's centre crop; they are not uploaded.
 - Before a release, the full UI suite on both simulators and the clean warnings sweep are
   worth running.
 

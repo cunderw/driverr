@@ -5,8 +5,10 @@ import XCTest
 /// at the sizes App Store Connect requires.
 ///
 /// Everything comes from `FakeControl`'s seeded session, so every run captures the same
-/// content. `scripts/screenshots.sh` runs it on the store sizes and copies the results into
-/// `docs/app-store-assets/`.
+/// content. `scripts/screenshots.sh` runs it on the store sizes, copies the captures into
+/// `docs/app-store-assets/raw/`, and frames them for the store with
+/// `scripts/frame-screenshots.swift`, which also sets the store order. The capture names
+/// here are what that script looks for.
 ///
 /// Hand-driven on purpose: it types the password and accepts the trust prompt rather than
 /// seeding the connection, so it also fails if the connect path breaks. It is one test on
@@ -213,6 +215,18 @@ final class ScreenshotTourUITests: XCTestCase {
     )
   }
 
+  /// Waits for the software keyboard to leave. It leaves with an animation, so a check
+  /// straight after the tap can still find it.
+  private func requireKeyboardGone(
+    _ app: XCUIApplication, file: StaticString = #filePath, line: UInt = #line
+  ) {
+    let gone = XCTNSPredicateExpectation(
+      predicate: NSPredicate(format: "exists == false"), object: app.keyboards.firstMatch)
+    XCTAssertEqual(
+      XCTWaiter().wait(for: [gone], timeout: 10), .completed,
+      "The keyboard did not go down. Tree was:\n\(app.debugDescription)", file: file, line: line)
+  }
+
   func testTheTour() {
     XCUIDevice.shared.orientation = .portrait
     let app = XCUIApplication()
@@ -222,9 +236,9 @@ final class ScreenshotTourUITests: XCTestCase {
     // Seeded, because an empty list shows nothing.
     require(app, "hosts.row", "Expected the seeded host")
 
-    // Settings is captured first, because it opens from the host list. The filename sets the
-    // store order. Through a retry, because this tap sometimes fails to open the sheet, and a
-    // failed tour costs a full slow re-run.
+    // Settings is captured first, because it opens from the host list. Through a retry,
+    // because this tap sometimes fails to open the sheet, and a failed tour costs a full slow
+    // re-run.
     tapUntil(
       app,
       opening: "hosts.overflow",
@@ -236,10 +250,10 @@ final class ScreenshotTourUITests: XCTestCase {
     scrollTo(app, "settings.preview")
 
     settle(app)
-    capture("06-settings")
+    capture("settings")
     require(app, "settings.done", "Expected a way out of settings").tap()
 
-    // 2: the session, with a blocked agent lifted to the top. Connected by hand.
+    // The session, with a blocked agent lifted to the top. Connected by hand.
     require(app, "hosts.row", "Expected the seeded host").tap()
     require(app, "connect.password", "Expected a password field").tap()
     // By tapping keys where the keyboard has them, because `typeText` into the secure field
@@ -253,31 +267,36 @@ final class ScreenshotTourUITests: XCTestCase {
     // would then say "Needs You · 1" beside a badge that says 2.
     waitForBothBlockedPanes(app)
     settle(app)
-    capture("02-needs-you")
+    capture("needs-you")
 
-    // 1: the host list, captured after 2 so it shows a connected host and its badge. The
-    // filename sets the store order.
+    // The host list, captured after the session so it shows a connected host and its badge.
     //
-    // Not in the split view. The list is the sidebar there and is already in 2, so the shot
-    // would be 2 again, pixel for pixel. The iPad set therefore starts at 02.
+    // Not in the split view. The list is the sidebar there and is already in the session
+    // shot, so this shot would be that one again, pixel for pixel. The iPad has no `hosts`.
     if !showsTheHostListBesideTheHost(app) {
       returnToHostList(app)
       settle(app)
-      capture("01-hosts")
+      capture("hosts")
       returnToTheHost(app)
     }
 
-    // 3: the chat, with the composer under it. The Needs-you row opens the pane on its chat
-    // with the composer focused. Named, not by position, because the section re-sorts and
-    // store art of the wrong pane would ship.
-    waitForBothBlockedPanes(app)
-    blockedPaneRow(app, titled: "needs a decision").tap()
+    // The chat, with the composer under it and no keyboard. Through the session tree, because
+    // the Needs-you row opens the chat with the composer focused, and the keyboard then
+    // covers half of the conversation. Named, not by position, because store art of the
+    // wrong pane would ship.
+    treePaneRow(app, titled: "needs a decision").tap()
     require(app, "composer.text", "Expected the composer")
     settle(app)
-    capture("03-chat")
+    XCTAssertFalse(
+      app.keyboards.firstMatch.exists,
+      "The chat shot would ship with the keyboard over the conversation. Tree was:\n"
+        + app.debugDescription
+    )
+    capture("chat")
     leavePaneScene(app, "Expected a way out of the pane screen")
 
-    // 4: the terminal, attached to the same pane, named for the same reason. An agent pane
+    // The terminal, attached to the same pane, named for the same reason. The keyboard
+    // stays up, because the key row above it is in the listing's copy. An agent pane
     // opens on its chat, so the tour asks for the terminal.
     waitForBothBlockedPanes(app)
     blockedPaneRow(app, titled: "needs a decision").tap()
@@ -290,13 +309,16 @@ final class ScreenshotTourUITests: XCTestCase {
       require(app, "terminal.key.esc", "Expected the terminal's key row"),
       "The terminal capture would ship without the key row."
     )
-    capture("04-terminal")
+    capture("terminal")
 
-    // 5: the pane's controls, open.
+    // The pane's controls, open, over the terminal with the keyboard down, so the menu is
+    // not drawn over the keys.
+    require(app, "terminal.key.dismiss", "Expected the key row's keyboard key").tap()
+    requireKeyboardGone(app)
     require(app, "pane.actions", "Expected the pane actions menu").tap()
     require(app, "pane.rename", "Expected the menu to be open")
     settle(app)
-    capture("05-pane-actions")
+    capture("pane-actions")
     // Dismiss the menu without choosing anything, and leave the terminal tidy.
     app.tap()
     leavePaneScene(app, "Expected a way out of the terminal")
