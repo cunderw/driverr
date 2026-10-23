@@ -17,7 +17,7 @@ terminal.
 
 | Blocked agents, first | Answer without a terminal |
 | --- | --- |
-| <img src="docs/app-store-assets/iphone-max/02-needs-you.png" alt="The host screen, with a Needs You section that lists two blocked panes above the session tree" width="300"> | <img src="docs/app-store-assets/iphone-max/03-chat.png" alt="The chat for a blocked pane. The agent asks a question, then waits for permission to edit session.rs. Approve and Deny chips are above the composer" width="300"> |
+| <img src="docs/app-store-assets/raw/iphone-max/needs-you.png" alt="The host screen, with a Needs You section that lists two blocked panes above the session tree" width="300"> | <img src="docs/app-store-assets/raw/iphone-max/chat.png" alt="The chat for a blocked pane. The agent asks a question, then waits for permission to edit session.rs. Approve and Deny chips are above the composer" width="300"> |
 
 *Both are screenshots captured by the UI test suite against a seeded test session. That is
 why they are identical on every run.*

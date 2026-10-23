@@ -67,7 +67,7 @@ struct StoreTourSeedTests {
     #expect(pending.first?.asksItsOwnQuestions == false)
 
     // The Needs-you row quotes the last words, and `SessionTreeUITests` matches these two lines
-    // on the ordinary seed. The tour says the same thing in `02-needs-you`.
+    // on the ordinary seed. The tour says the same thing in its `needs-you` capture.
     let lastWords = tour.last { $0.speaker.isAssistantWords }?.text
     let seededWords = turns(AppEnvironment.seededTranscript).last?.text
     #expect(lastWords == seededWords)

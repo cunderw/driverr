@@ -1,20 +1,38 @@
 #!/usr/bin/env bash
 #
-# Capture the App Store screenshot tour at the two sizes App Store Connect requires,
-# and write them into docs/app-store-assets/.
+# Capture the App Store screenshot tour at the two sizes App Store Connect requires, and
+# frame the captures for the store.
 #
 #   scripts/screenshots.sh              both sizes
 #   scripts/screenshots.sh iphone-max   just the 6.9" iPhone
 #   scripts/screenshots.sh ipad         just the 13" iPad
+#   scripts/screenshots.sh --frame      no tour: frame the committed captures again
 #   scripts/screenshots.sh --help       this text. It touches no simulator
 #
-# The tour itself is DriverrUITests/ScreenshotTourUITests, driven against FakeControl's
-# seeded session, so the images repeat from run to run, with one exception. The chat
-# composer's caret blinks, so 03-chat can differ between two runs of the same code.
+# Three directories under docs/app-store-assets/:
 #
-# Each tour runs on this repo's own named simulator for that device kind. The
-# sizes come from the devices, not from any scaling step here — a resized screenshot is
-# rejected by App Store Connect, and worse, silently looks wrong.
+#   raw/<kind>/   the tour's captures, named for what they show (needs-you.png, chat.png).
+#                 Committed, so `--frame` can run without a simulator.
+#   <kind>/       the store images, `NN-<name>.png`. Each is a raw capture in a device frame
+#                 under a caption, drawn by scripts/frame-screenshots.swift, which also sets
+#                 their order and captions. These are what the store upload reads.
+#   header/       the product page header, header.png, uploaded by hand.
+#
+# The header is drawn from both kinds' raw captures, so every run draws it again. Two crops
+# of it, at the shapes Apple cuts it to for the product page and for search results, go to
+# .build-logs/header-crops/, which git ignores. Open them to check that nothing that matters
+# is cut off.
+#
+# The tour itself is DriverrUITests/ScreenshotTourUITests, driven against FakeControl's
+# seeded session, so the images repeat from run to run, nearly. The pane actions menu's glass
+# shading and the iPad keyboard's microphone key can differ between two runs of the same
+# code, so compare a re-run by looking at it, not with a byte diff.
+#
+# Each tour runs on this repo's own named simulator for that device kind, and a capture's
+# size comes from the device and is checked, never produced by scaling. The framing then
+# scales each capture down into its device frame (about 0.75 on the phone and 0.71 on the
+# iPad) and rounds its corners to the display's. Nothing else changes the app's pixels. The
+# store image's size is the canvas the framing draws on, which is checked too.
 #
 # The status bar is overridden for the run (9:41 on a fixed date, four bars, a full
 # battery) and cleared afterwards, also when the run fails. Without that every image
@@ -24,10 +42,11 @@
 # draws the home indicator. `capture_one` says why. The shutdown stops anything else that is
 # using that simulator, so run nothing else on it while this script runs.
 #
-# Each tour is captured to a temporary directory. A set replaces the committed one only
-# after its count, its sizes and its home-indicator check pass. A failed tour leaves its
-# own committed set as it was and prints where the failed captures are. With both sizes
-# asked for, a tour that passed before the failed one has already replaced its set.
+# Everything is made in one staging directory first: each tour's captures, after their count,
+# size and home-indicator checks, then each framed set, after its count, size and alpha
+# checks, then the header. Only when every step for every kind asked for has passed does the
+# script copy the staged images into docs/app-store-assets/. A failure anywhere changes
+# nothing there and prints where the staged images are.
 
 set -euo pipefail
 
@@ -38,7 +57,12 @@ export XCODEBUILDMCP_SENTRY_DISABLED=true
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly REPO_ROOT
 readonly OUT_ROOT="$REPO_ROOT/docs/app-store-assets"
+readonly RAW_ROOT="$OUT_ROOT/raw"
 readonly TOUR="DriverrUITests/ScreenshotTourUITests"
+readonly FRAMER="$REPO_ROOT/scripts/frame-screenshots.swift"
+readonly CROPS="$REPO_ROOT/.build-logs/header-crops"
+# Where this run makes everything before it is copied into the tree. See `main`.
+STAGE=""
 
 # What App Store Connect expects, and therefore what this script verifies rather than
 # assumes. A tour that quietly captured the wrong device is the failure mode worth
@@ -51,8 +75,8 @@ expected_size() {
   esac
 }
 
-# How many images each tour takes. The tour leaves the host list out of the split view, so
-# the iPad set starts at 02. A skip that fires on the phone, or does not fire on the iPad,
+# How many captures each tour takes. The tour leaves the host list out of the split view, so
+# the iPad has no hosts.png. A skip that fires on the phone, or does not fire on the iPad,
 # still passes the test, so the count is checked here and not assumed.
 expected_count() {
   case "$1" in
@@ -62,9 +86,14 @@ expected_count() {
   esac
 }
 
+
 colour() { printf '\033[%sm%s\033[0m\n' "$1" "$2"; }
 note() { colour "36" "==> $*"; }
-fail() { colour "31" "error: $*" >&2; exit 1; }
+fail() {
+  colour "31" "error: $*" >&2
+  [ -z "$STAGE" ] || colour "31" "Nothing in docs/app-store-assets changed. This run's images are in $STAGE." >&2
+  exit 1
+}
 
 # The devices whose status bar this run has overridden. One trap for the whole script,
 # because `main` loops over the kinds and a trap set per kind would replace the one before it.
@@ -110,20 +139,83 @@ tour_time() {
   echo "2007-01-09T09:41:00.000${offset:0:3}:${offset:3:2}"
 }
 
-# Fails unless the directory holds exactly the number of images this kind takes. The
-# directory is the fresh capture, so the message says the committed set was not touched.
+# Fails unless the directory holds exactly `want` images.
 check_count() {
-  local kind="$1" dir="$2"
-  local want got
-  want="$(expected_count "$kind")"
+  local what="$1" dir="$2" want="$3"
+  local got
   got="$(find "$dir" -maxdepth 1 -name '*.png' | wc -l | tr -d ' ')"
-  [ "$got" = "$want" ] || fail "$kind has $got screenshots, expected $want." \
-    "The committed set is unchanged. The failed captures are in $dir."
+  [ "$got" = "$want" ] || fail "$what has $got images in $dir, expected $want."
+}
+
+# Fails unless the image is `want` pixels (WxH) and, when `opaque` is given, has no alpha
+# channel. App Store Connect rejects a screenshot or a header with one.
+check_image() {
+  local image="$1" want="$2" opaque="${3:-}"
+  local got
+  got="$(sips -g pixelWidth -g pixelHeight "$image" \
+    | awk '/pixelWidth/{w=$2} /pixelHeight/{h=$2} END{print w "x" h}')"
+  [ "$got" = "$want" ] || fail "$image is ${got}, expected ${want}."
+  if [ -n "$opaque" ]; then
+    local alpha
+    alpha="$(sips -g hasAlpha "$image" | awk '/hasAlpha/{print $2}')"
+    [ "$alpha" = "no" ] || fail "$image has an alpha channel (hasAlpha: $alpha)."
+  fi
+}
+
+# Makes `out` hold exactly the PNGs in `from`.
+replace_set() {
+  local from="$1" out="$2"
+  rm -rf "$out"
+  mkdir -p "$out"
+  cp "$from"/*.png "$out"/
+}
+
+# Frames one kind's staged captures into its staged store set. The count is checked against
+# the framing script's own list, so the number lives in one place.
+frame_one() {
+  local kind="$1"
+  note "$kind: framing the captures"
+  local raw="$STAGE/raw/$kind" out="$STAGE/$kind"
+  mkdir -p "$out"
+  swift "$FRAMER" "$kind" "$raw" "$out" || fail "$kind: the framing failed."
+  local listed
+  listed="$(swift "$FRAMER" --list | wc -l | tr -d ' ')"
+  check_count "$kind" "$out" "$listed"
+  local want shot
+  want="$(expected_size "$kind")"
+  for shot in "$out"/*.png; do
+    check_image "$shot" "$want" opaque
+  done
+  note "$kind: $listed store images, all ${want}, no alpha"
+}
+
+# Draws the header from both kinds' staged captures, and its two crops into $CROPS.
+frame_header() {
+  note "header: drawing it"
+  local out="$STAGE/header"
+  mkdir -p "$out"
+  rm -rf "$CROPS"
+  swift "$FRAMER" header "$STAGE/raw" "$out" "$CROPS" || fail "header: the drawing failed."
+  check_count "header" "$out" 1
+  check_image "$out/header.png" "5244x2950" opaque
+  check_image "$CROPS/crop-21x9.png" "3840x1646"
+  check_image "$CROPS/crop-3x2.png" "3840x2560"
+  note "header: header.png 5244x2950, no alpha. Crops in ${CROPS#"$REPO_ROOT"/}"
+}
+
+# Copies every staged image into the tree. Only `main` calls it, after every check passed.
+publish() {
+  local kind
+  for kind in "$@"; do
+    replace_set "$STAGE/raw/$kind" "$RAW_ROOT/$kind"
+    replace_set "$STAGE/$kind" "$OUT_ROOT/$kind"
+  done
+  replace_set "$STAGE/header" "$OUT_ROOT/header"
 }
 
 capture_one() {
   local kind="$1"
-  local out="$OUT_ROOT/$kind"
+  local out="$STAGE/raw/$kind"
   note "capturing the tour on $kind"
 
   local device
@@ -179,8 +271,7 @@ print(os.path.expanduser(d.get("data", {}).get("artifacts", {}).get("xcresultPat
   staging="$(mktemp -d)"
   xcrun xcresulttool export attachments --path "$bundle" --output-path "$staging" >/dev/null
 
-  # Not into `$out`. The committed set stays until every check below has passed, so a failed
-  # tour does not leave the tree without store images.
+  # Not into `$out`, which keeps the committed captures until every check below has passed.
   local fresh
   fresh="$(mktemp -d)"
 
@@ -197,7 +288,7 @@ for entry in manifest:
         exported = attachment.get("exportedFileName")
         if not exported or not name:
             continue
-        # "01-hosts_0_<uuid>.png" -> "01-hosts.png"
+        # "needs-you_0_<uuid>.png" -> "needs-you.png"
         stem = name.split("_")[0]
         shutil.copyfile(os.path.join(staging, exported), os.path.join(out, stem + ".png"))
         count += 1
@@ -208,41 +299,34 @@ PY
   xcrun simctl status_bar "$udid" clear
 
   note "$kind: checking the captures in $fresh"
-  check_count "$kind" "$fresh"
+  check_count "$kind" "$fresh" "$(expected_count "$kind")"
 
   # The phone set has no home indicator, and the simulator decides that, not the tour. The
   # check reads the 6.9" phone captures only. The iPad captures have never drawn one.
   if [ "$kind" = "iphone-max" ]; then
     "$REPO_ROOT/scripts/home-indicator.sh" none "$fresh" \
       || fail "$kind drew the home indicator, or the check could not read it." \
-        "The committed set is unchanged. The failed captures are in $fresh." \
-        "Run the script again."
+        "The captures are in $fresh. Run the script again."
   fi
 
   local want
   want="$(expected_size "$kind")"
   local shot
   for shot in "$fresh"/*.png; do
-    local got
-    got="$(sips -g pixelWidth -g pixelHeight "$shot" \
-      | awk '/pixelWidth/{w=$2} /pixelHeight/{h=$2} END{print w "x" h}')"
-    [ "$got" = "$want" ] || fail "$(basename "$shot") is ${got}, expected ${want} for $kind." \
-      "The committed set is unchanged. The failed captures are in $fresh."
+    check_image "$shot" "$want"
   done
 
-  # Every check has passed, so this set replaces the committed one.
-  rm -rf "$out"
-  mkdir -p "$out"
-  cp "$fresh"/*.png "$out"/
+  # Every check has passed, so this set replaces the staged copy of the committed one.
+  replace_set "$fresh" "$out"
   rm -rf "$fresh"
-  note "$kind: $(ls "$out"/*.png | wc -l | tr -d ' ') screenshots, all ${want}"
+  note "$kind: $(ls "$out"/*.png | wc -l | tr -d ' ') captures, all ${want}"
 }
 
 # Stops with the README section that lists what a machine needs, and not with a bare
 # "command not found" after the simulator has been rebooted.
 require_tools() {
   local tool
-  for tool in npx python3 xcrun sips; do
+  for tool in npx python3 xcrun sips swift; do
     command -v "$tool" >/dev/null 2>&1 \
       || fail "$tool is not on PATH. README.md, \"Building it\", lists what to install"
   done
@@ -258,13 +342,28 @@ main() {
       ;;
   esac
   require_tools
+  local tour=1
+  if [ "${1:-}" = "--frame" ]; then
+    tour=0
+    shift
+  fi
   local kinds=("$@")
   [ ${#kinds[@]} -gt 0 ] || kinds=(iphone-max ipad)
   local kind
   for kind in "${kinds[@]}"; do
     [ -n "$(expected_size "$kind")" ] || fail "unknown size $kind (iphone-max|ipad)"
-    capture_one "$kind"
   done
+  # The committed captures first, so the header can draw on a kind this run does not capture.
+  STAGE="$(mktemp -d)"
+  cp -R "$RAW_ROOT" "$STAGE/raw"
+  for kind in "${kinds[@]}"; do
+    [ "$tour" = 0 ] || capture_one "$kind"
+    frame_one "$kind"
+  done
+  frame_header
+  publish "${kinds[@]}"
+  rm -rf "$STAGE"
+  STAGE=""
   note "written to docs/app-store-assets/"
   colour "33" "Now open them. A generated screenshot that nobody opened is not evidence."
 }

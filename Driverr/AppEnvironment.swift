@@ -850,7 +850,8 @@ struct AppEnvironment {
     return hosts
   }
 
-  /// The hosts the store tour lists under workbox, so `01-hosts` is a list and not one row.
+  /// The hosts the store tour lists under workbox, so its `hosts` capture is a list and not
+  /// one row.
   /// Never connected: they have no password and no host key.
   static let storeTourHosts: [DriverrCore.Host] = [
     DriverrCore.Host(
@@ -1229,11 +1230,13 @@ struct AppEnvironment {
     isStoreTour ? storeTourTranscript : seededTranscript
   }
 
-  /// The conversation the store tour's chat shows: `seededTranscript` with a shorter first
-  /// reply and one more call, which waits for an answer.
+  /// The conversation the store tour's chat shows: `seededTranscript` with four more turns,
+  /// including a shorter reply, and one more call, which waits for an answer. The person asks
+  /// to be asked before the handlers change, and the last words ask exactly that.
   ///
-  /// The reply is shorter so a phone shows its opening line above the code with the keyboard
-  /// up. The waiting call is the edit `demoTranscript` ends on asking about. `w1:p2` is
+  /// The added turns are there so the iPad's chat reaches the composer. With the keyboard
+  /// down it is about twice the phone's height, and the seeded conversation filled two
+  /// thirds of it. The waiting call is the edit `demoTranscript` ends on asking about. `w1:p2` is
   /// `blocked`, so the chat draws Approve and Deny under it, and they send the `y` and `n`
   /// the terminal's `(y/n)` takes.
   ///
@@ -1250,6 +1253,28 @@ struct AppEnvironment {
           .init(
             speaker: .assistant,
             text: """
+              The pool holds a mutex across every checkout, so `acquire` blocks the runtime \
+              under load. Making it async changes `open_session` too, and two handlers call \
+              that.
+              """,
+            secondsAgo: 450
+          ),
+          .init(
+            speaker: .human,
+            text: "start with the pool, and ask me before you touch the handlers",
+            secondsAgo: 420
+          ),
+          .init(
+            speaker: .tools([
+              ToolCall(name: "Edit", target: "pool.rs"),
+              ToolCall(name: "Bash", target: "cargo test"),
+              ToolCall(name: "Read", target: "routes/session.rs"),
+            ]),
+            secondsAgo: 360
+          ),
+          .init(
+            speaker: .assistant,
+            text: """
               **`Pool::acquire`** was still blocking. Fixed in `pool.rs`:
 
               ```rust
@@ -1258,8 +1283,16 @@ struct AppEnvironment {
               }
               ```
               """,
+            secondsAgo: 330
+          ),
+          .init(
+            speaker: .assistant,
+            text: """
+              Both handlers in `routes/session.rs` already run inside async routes, so only \
+              their signatures change. Anything outside this crate that calls them would see it.
+              """,
             secondsAgo: 300
-          )
+          ),
         ]
         + [
           .init(speaker: .assistant, text: seeded.last?.text ?? "", secondsAgo: 250),
@@ -2603,9 +2636,10 @@ struct AppEnvironment {
   /// A plausible agent session, sized to fill a terminal on both store devices.
   ///
   /// Every line is under 48 columns, because the 6.9-inch portrait terminal is 55 wide and a
-  /// wrapped line looks like a bug. It is longer than an iPhone frame, because the iPad shows
-  /// about 52 rows against 28, and a terminal shows its tail, so both devices end on the same
-  /// lines. It ends on a question, which is what the app is about.
+  /// wrapped line looks like a bug. It is longer than either device's terminal with the
+  /// keyboard down, because the iPad then shows about 68 rows and the phone about 44, and a
+  /// terminal shows its tail, so both devices end on the same lines with no blank rows under
+  /// them. It ends on a question, which is what the app is about.
   static let demoTranscript = [
     "carson@workbox:~/api$ herdr attach api-refactor",
     "[herdr] attached to pane 3 (claude)",
@@ -2620,6 +2654,21 @@ struct AppEnvironment {
     "● Reading src/db/pool.rs",
     "  Pool::open_session is the only sync entry",
     "  point left in the module.",
+    "",
+    "● Reading src/db/config.rs",
+    "  max_connections = 16, idle_timeout = 30s",
+    "",
+    "● Grep \"spawn_blocking\" (2 files)",
+    "  src/db/pool.rs:41",
+    "  src/jobs/cleanup.rs:19",
+    "",
+    "● Reading src/jobs/cleanup.rs",
+    "  The cleanup job holds a connection across",
+    "  a sleep. It can use the async pool as is.",
+    "",
+    "● Reading src/routes/health.rs",
+    "  The health check pings the pool directly.",
+    "  It already awaits.",
     "",
     "● Ran tests: 41 passed, 0 failed",
     "  Baseline is green.",
@@ -2637,13 +2686,26 @@ struct AppEnvironment {
     "  -  pub fn open_session(&self)",
     "  +  pub async fn open_session(&self)",
     "",
+    "● Edited src/jobs/cleanup.rs",
+    "  -  let conn = pool.get()?;",
+    "  +  let conn = pool.acquire().await;",
+    "",
     "● cargo check",
     "   Compiling driverr-api v0.4.1",
     "    Finished dev [unoptimized] in 4.21s",
     "",
+    "● cargo clippy",
+    "    Checking driverr-api v0.4.1",
+    "    Finished dev [unoptimized] in 2.87s",
+    "  No warnings.",
+    "",
     "● Ran tests: 39 passed, 2 failed",
     "  session::opens_a_session",
     "  session::rejects_a_bad_token",
+    "",
+    "● Reading tests/session.rs",
+    "  Both failures call open_session from a",
+    "  sync test. They need #[tokio::test].",
     "",
     "● The pool is async now. Migrating the two",
     "  call sites changes the public API.",
