@@ -162,18 +162,50 @@ final class ScreenshotTourUITests: XCTestCase {
     usleep(700_000)
   }
 
-  /// Scrolls forward until `identifier` exists, up to five swipes.
+  /// Scrolls `form` until `identifier`'s bottom edge rests a little above the form's bottom
+  /// edge, so it is the last thing on screen and nothing below it is.
   ///
-  /// The preview is the form's first section, but a small form sheet or a later layout
-  /// change could put it below the fold.
-  @discardableResult
-  private func scrollTo(_ app: XCUIApplication, _ identifier: String) -> XCUIElement {
-    let match = element(app, identifier)
+  /// By slow drags that hold before they lift, because a swipe flings the form to its end.
+  /// Each drag is measured again, because the drag's first points are spent recognising it.
+  /// A form builds its rows lazily, so a row below the fold may not exist yet, and the first
+  /// drag is then half the form's height.
+  private func scroll(
+    _ form: XCUIElement,
+    toRest identifier: String,
+    in app: XCUIApplication,
+    file: StaticString = #filePath,
+    line: UInt = #line
+  ) {
+    let target = element(app, identifier)
+    let bounds = form.frame
+    // The row's bottom edge is wanted between these two.
+    let lowest = bounds.maxY - 24
+    let highest = bounds.maxY - 120
     for _ in 0..<5 {
-      if match.exists { return match }
-      app.swipeUp()
+      let distance: CGFloat
+      if target.exists {
+        let bottom = target.frame.maxY
+        if bottom <= lowest && bottom >= highest { return }
+        distance = bottom - (lowest + highest) / 2
+      } else {
+        distance = bounds.height / 2
+      }
+      // Up for a positive distance, down for a negative one, inside the form either way.
+      let travel = min(abs(distance), bounds.height - 80)
+      // From the app, with the form's frame read once, because the row that found the form
+      // can scroll out of the tree.
+      let low = app.coordinate(withNormalizedOffset: .zero)
+        .withOffset(CGVector(dx: bounds.midX, dy: bounds.maxY - 40))
+      let high = low.withOffset(CGVector(dx: 0, dy: -travel))
+      let (from, to) = distance > 0 ? (low, high) : (high, low)
+      from.press(forDuration: 0.1, thenDragTo: to, withVelocity: .slow, thenHoldForDuration: 0.4)
     }
-    return match
+    XCTFail(
+      "'\(identifier)' did not come to rest at the bottom of the form, it is at "
+        + "\(target.frame) in \(bounds).\nTree was:\n\(app.debugDescription)",
+      file: file,
+      line: line
+    )
   }
 
   /// Whether the host list is on screen beside the connected host's screen, which is the
@@ -235,23 +267,6 @@ final class ScreenshotTourUITests: XCTestCase {
 
     // Seeded, because an empty list shows nothing.
     require(app, "hosts.row", "Expected the seeded host")
-
-    // Settings is captured first, because it opens from the host list. Through a retry,
-    // because this tap sometimes fails to open the sheet, and a failed tour costs a full slow
-    // re-run.
-    tapUntil(
-      app,
-      opening: "hosts.overflow",
-      tap: "settings.open",
-      opens: "settings.preview",
-      "settings"
-    )
-    // The shot shows the preview beside the theme rows, so make sure it is on screen.
-    scrollTo(app, "settings.preview")
-
-    settle(app)
-    capture("settings")
-    require(app, "settings.done", "Expected a way out of settings").tap()
 
     // The session, with a blocked agent lifted to the top. Connected by hand.
     require(app, "hosts.row", "Expected the seeded host").tap()
@@ -322,5 +337,34 @@ final class ScreenshotTourUITests: XCTestCase {
     // Dismiss the menu without choosing anything, and leave the terminal tidy.
     app.tap()
     leavePaneScene(app, "Expected a way out of the terminal")
+
+    // Settings, last, because it changes the theme, and the theme tints every screen after
+    // it. Settings live in memory under `-uiTesting`, so the next launch starts on System
+    // again. From the host list, with workbox connected, so the list behind the sheet agrees
+    // with the shots before it. Through a retry, because this tap sometimes fails to open the
+    // sheet, and a failed tour costs a full slow re-run.
+    if !showsTheHostListBesideTheHost(app) { returnToHostList(app) }
+    tapUntil(
+      app,
+      opening: "hosts.overflow",
+      tap: "settings.open",
+      opens: "settings.preview",
+      "settings"
+    )
+    // Scrolled down to Font Size, which the caption names, so the shot holds the lower theme
+    // rows, the fonts and the size. Dracula, because its row is on screen there and its
+    // purple accent shows the choice took effect.
+    let form = app.collectionViews.containing(.any, identifier: "settings.theme.system").firstMatch
+    scroll(form, toRest: "settings.fontsize.value", in: app)
+    let dracula = require(app, "settings.theme.dracula", "Expected the Dracula theme row")
+    XCTAssertTrue(
+      dracula.isHittable,
+      "The Dracula row is not on screen, so the shot would not show a chosen theme. Tree was:\n"
+        + app.debugDescription
+    )
+    dracula.tap()
+    settle(app)
+    capture("settings")
+    require(app, "settings.done", "Expected a way out of settings").tap()
   }
 }

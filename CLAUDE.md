@@ -346,14 +346,16 @@ The release procedure lives outside this repo. These are only the facts about th
   nothing in a store directory may be a raw capture, because the count check and the
   upload read those directories. Regenerate with `scripts/screenshots.sh`, which checks the
   raw captures' sizes and count per kind, frames them, and checks the framed set's sizes,
-  count and alpha. It shuts each device down and boots it before the tour, and it fails
-  the phone set if a capture draws the home indicator (`scripts/home-indicator.sh`).
+  count and alpha, and it changes nothing in the tree unless every step passed. It shuts
+  each device down and boots it before the tour, and it fails the phone set if a capture
+  draws the home indicator (`scripts/home-indicator.sh`).
   `scripts/screenshots.sh --frame` frames the committed captures again with no tour. They
   upload in filename order. Both sets are `01-` to `05-` and start with Needs You. The
   phone's `raw/iphone-max/hosts.png` is captured and not published.
 - **The product page header** is `docs/app-store-assets/header/header.png`, drawn by the
-  same script and uploaded by hand. `crop-21x9.png` and `crop-3x2.png` beside it show what
-  the header and search results keep after Apple's centre crop; they are not uploaded.
+  same script and uploaded by hand. Each run also writes `.build-logs/header-crops/`, which
+  shows what the header and search results keep after Apple's centre crop. The crops are
+  not committed.
 - Before a release, the full UI suite on both simulators and the clean warnings sweep are
   worth running.
 

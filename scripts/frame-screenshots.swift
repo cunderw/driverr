@@ -6,14 +6,15 @@
 //
 //   swift scripts/frame-screenshots.swift iphone-max <raw dir> <out dir>
 //   swift scripts/frame-screenshots.swift ipad       <raw dir> <out dir>
-//   swift scripts/frame-screenshots.swift header     <raw root> <out dir>
+//   swift scripts/frame-screenshots.swift header     <raw root> <out dir> [<crops dir>]
+//   swift scripts/frame-screenshots.swift --list     the published names, one per line
 //
 // `scripts/screenshots.sh` calls it after a tour, and `scripts/screenshots.sh --frame`
 // calls it on the committed raw captures without a tour.
 //
 // The app UI inside a frame is the capture, scaled and nothing else. App Review guideline
-// 2.3.3 requires that, so the background, the frame and the caption are the only things
-// drawn here.
+// 2.3.3 requires that, so the background, the frame, the phone's Dynamic Island and the
+// caption are the only things drawn here.
 //
 // CoreGraphics, CoreText and ImageIO only, so it runs on any Mac that builds the app.
 
@@ -55,6 +56,10 @@ struct Kind {
   /// 55 on the 13" iPad. Rounded up, because a clip smaller than the drawn corner leaves a
   /// sliver of the app's background between the keyboard and the frame.
   let screenRadius: CGFloat
+  /// The Dynamic Island in capture pixels, or nil for a device without one. The simulator
+  /// does not draw it, and the status bar leaves its place empty, so drawing it covers no
+  /// app UI.
+  let island: CGRect?
   /// The bezel's width in canvas pixels.
   let bezel: CGFloat
   let captionSize: CGFloat
@@ -67,10 +72,14 @@ struct Kind {
 let kinds: [String: Kind] = [
   "iphone-max": Kind(
     canvas: CGSize(width: 1320, height: 2868), capture: CGSize(width: 1320, height: 2868),
-    screenRadius: 186, bezel: 28, captionSize: 112, top: 170, gap: 120, bottom: 120),
+    screenRadius: 186,
+    // 126 by 37 points, 11 points from the top edge, at 3x.
+    island: CGRect(x: 471, y: 34, width: 378, height: 112),
+    bezel: 28, captionSize: 112, top: 170, gap: 120, bottom: 120),
   "ipad": Kind(
     canvas: CGSize(width: 2064, height: 2752), capture: CGSize(width: 2064, height: 2752),
-    screenRadius: 60, bezel: 40, captionSize: 132, top: 160, gap: 120, bottom: 130),
+    screenRadius: 60, island: nil, bezel: 40, captionSize: 132, top: 160, gap: 120,
+    bottom: 130),
 ]
 
 /// The header fills both the product page header and the search results, and Apple crops
@@ -251,6 +260,16 @@ func drawDevice(
       transform: nil))
   context.clip()
   context.draw(capture, in: screen)
+  if let island = kind.island {
+    let pill = CGRect(
+      x: screen.minX + island.minX * scale, y: screen.maxY - island.maxY * scale,
+      width: island.width * scale, height: island.height * scale)
+    context.addPath(
+      CGPath(roundedRect: pill, cornerWidth: pill.height / 2, cornerHeight: pill.height / 2,
+        transform: nil))
+    context.setFillColor(CGColor(srgbRed: 0, green: 0, blue: 0, alpha: 1))
+    context.fillPath()
+  }
   context.restoreGState()
   return outer
 }
@@ -399,7 +418,7 @@ func frameSet(_ name: String, kind: Kind, raw: URL, out: URL) {
   }
 }
 
-func frameHeader(rawRoot: URL, out: URL) {
+func frameHeader(rawRoot: URL, out: URL, crops: URL?) {
   let context = canvas(headerSize)
   drawBackground(context)
   let (w, h) = (headerSize.width, headerSize.height)
@@ -440,7 +459,10 @@ func frameHeader(rawRoot: URL, out: URL) {
   writePNG(image, to: out.appendingPathComponent("header.png"))
   print("header: header.png \"\(headerPhrase)\"")
 
-  // The crops are checking aids: what the product page and search results keep.
+  // The crops are checking aids: what the product page and search results keep. They are
+  // redrawn on every run, so they are written outside the store directories.
+  guard let crops else { return }
+  try? FileManager.default.createDirectory(at: crops, withIntermediateDirectories: true)
   for crop in headerCrops {
     let keep: CGSize =
       w / h > crop.aspect.width / crop.aspect.height
@@ -452,20 +474,27 @@ func frameHeader(rawRoot: URL, out: URL) {
         width: keep.width.rounded(), height: keep.height.rounded()))!
     let scaled = canvas(crop.out)
     scaled.draw(cut, in: CGRect(origin: .zero, size: crop.out))
-    writePNG(scaled.makeImage()!, to: out.appendingPathComponent("\(crop.name).png"))
+    writePNG(scaled.makeImage()!, to: crops.appendingPathComponent("\(crop.name).png"))
     print("header: \(crop.name).png")
   }
 }
 
 // MARK: - Main
 
-let arguments = CommandLine.arguments.dropFirst()
-guard arguments.count == 3 else {
-  fail("usage: frame-screenshots.swift iphone-max|ipad|header <raw dir> <out dir>")
+let arguments = Array(CommandLine.arguments.dropFirst())
+if arguments == ["--list"] {
+  for shot in published { print(shot.stem) }
+  exit(0)
 }
-let job = arguments[arguments.startIndex]
-let raw = URL(fileURLWithPath: arguments[arguments.startIndex + 1])
-let out = URL(fileURLWithPath: arguments[arguments.startIndex + 2])
+guard arguments.count == 3 || (arguments.count == 4 && arguments[0] == "header") else {
+  fail(
+    "usage: frame-screenshots.swift iphone-max|ipad <raw dir> <out dir>, "
+      + "header <raw root> <out dir> [<crops dir>], or --list")
+}
+let job = arguments[0]
+let raw = URL(fileURLWithPath: arguments[1])
+let out = URL(fileURLWithPath: arguments[2])
+let crops = arguments.count == 4 ? URL(fileURLWithPath: arguments[3]) : nil
 try? FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
 print(
   String(
@@ -474,7 +503,7 @@ print(
     Int(backgroundBottom.r * 255), Int(backgroundBottom.g * 255), Int(backgroundBottom.b * 255),
     backgroundTop.contrast(with: white)))
 switch job {
-case "header": frameHeader(rawRoot: raw, out: out)
+case "header": frameHeader(rawRoot: raw, out: out, crops: crops)
 default:
   guard let kind = kinds[job] else { fail("unknown kind '\(job)' (iphone-max|ipad|header)") }
   frameSet(job, kind: kind, raw: raw, out: out)

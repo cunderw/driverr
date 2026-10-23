@@ -3,13 +3,14 @@
 # Says whether each phone capture in a directory draws the home indicator, and fails unless
 # every one of them matches what was asked for.
 #
-#   scripts/home-indicator.sh none  docs/app-store-assets/iphone-max
-#   scripts/home-indicator.sh drawn docs/app-store-assets/iphone-max
+#   scripts/home-indicator.sh none  docs/app-store-assets/raw/iphone-max
+#   scripts/home-indicator.sh drawn docs/app-store-assets/raw/iphone-max
 #
 # The simulator decides whether the indicator is drawn, not the app and not the tour, and it
-# can change between two runs on one booted device. So a store set is checked and
-# not assumed: six images that disagree, or a set that flipped since the last one, would
-# otherwise ship unnoticed.
+# can change between two runs on one booted device. So a set of captures is checked and
+# not assumed: captures that disagree, or a set that flipped since the last one, would
+# otherwise ship unnoticed. It reads the raw captures, not the framed store images, because
+# the rows it samples are a bare capture's.
 #
 # It reads the 6.9" phone captures in light appearance and nothing else, and it fails on a
 # capture it cannot read. The rows it samples are that screen's. On the iPad they cross the
