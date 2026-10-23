@@ -312,19 +312,34 @@ func drawText(
     fail(String(format: "'%@' reads at %.2f:1 on its background", text, contrast))
   }
   print(String(format: "  the text reads at %.2f:1 or better on its background", contrast))
-  let fitted = CTFramesetterSuggestFrameSizeWithConstraints(
-    setter, CFRange(location: 0, length: 0), nil,
-    CGSize(width: box.width, height: .greatestFiniteMagnitude), nil)
-  // Centred vertically in the box.
-  let path = CGPath(
-    rect: CGRect(
-      x: target.minX, y: target.minY + (target.height - fitted.height) / 2,
-      width: target.width, height: ceil(fitted.height)), transform: nil)
-  let frame = CTFramesetterCreateFrame(setter, CFRange(location: 0, length: 0), path, nil)
-  let lines = (CTFrameGetLines(frame) as? [CTLine])?.count ?? 0
+  func lineCount(_ width: CGFloat) -> Int {
+    let tall = CGPath(rect: CGRect(x: 0, y: 0, width: width, height: 100_000), transform: nil)
+    let frame = CTFramesetterCreateFrame(setter, CFRange(location: 0, length: 0), tall, nil)
+    return (CTFrameGetLines(frame) as? [CTLine])?.count ?? 0
+  }
+  let lines = lineCount(target.width)
   guard lines >= 1, lines <= maxLines else {
     fail("'\(text)' takes \(lines) lines at \(Int(size)) pt, and the most is \(maxLines)")
   }
+  // Wrapped text is set in the narrowest width that keeps the same number of lines, so the
+  // lines come out even and no one word sits alone on the last.
+  var narrow = target.width / CGFloat(lines)
+  var wide = target.width
+  while wide - narrow > 1 {
+    let midpoint = (narrow + wide) / 2
+    if lineCount(midpoint) > lines { narrow = midpoint } else { wide = midpoint }
+  }
+  let width = lines > 1 ? ceil(wide) : target.width
+  let fitted = CTFramesetterSuggestFrameSizeWithConstraints(
+    setter, CFRange(location: 0, length: 0), nil,
+    CGSize(width: width, height: .greatestFiniteMagnitude), nil)
+  // Centred vertically in the box, and across it when the text is centred.
+  let x = alignment == .center ? target.minX + (target.width - width) / 2 : target.minX
+  let path = CGPath(
+    rect: CGRect(
+      x: x, y: target.minY + (target.height - fitted.height) / 2,
+      width: width, height: ceil(fitted.height)), transform: nil)
+  let frame = CTFramesetterCreateFrame(setter, CFRange(location: 0, length: 0), path, nil)
   let range = CTFrameGetVisibleStringRange(frame)
   guard range.length == (text as NSString).length else {
     fail("'\(text)' does not fit its box")
