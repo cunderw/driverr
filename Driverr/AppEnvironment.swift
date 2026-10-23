@@ -1230,7 +1230,7 @@ struct AppEnvironment {
     isStoreTour ? storeTourTranscript : seededTranscript
   }
 
-  /// The conversation the store tour's chat shows: `seededTranscript` with three more turns
+  /// The conversation the store tour's chat shows: `seededTranscript` with four more turns
   /// before a shorter reply, and one more call, which waits for an answer.
   ///
   /// The added turns are there so the iPad's chat reaches the composer. With the keyboard
@@ -1266,6 +1266,14 @@ struct AppEnvironment {
               ToolCall(name: "Read", target: "routes/session.rs"),
             ]),
             secondsAgo: 360
+          ),
+          .init(
+            speaker: .assistant,
+            text: """
+              Both handlers already run inside async routes, so only their signatures change. \
+              The tests that call `open_session` directly are the ones to watch.
+              """,
+            secondsAgo: 330
           ),
           .init(
             speaker: .assistant,
