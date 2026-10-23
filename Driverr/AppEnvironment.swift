@@ -1230,8 +1230,9 @@ struct AppEnvironment {
     isStoreTour ? storeTourTranscript : seededTranscript
   }
 
-  /// The conversation the store tour's chat shows: `seededTranscript` with four more turns
-  /// before a shorter reply, and one more call, which waits for an answer.
+  /// The conversation the store tour's chat shows: `seededTranscript` with four more turns,
+  /// including a shorter reply, and one more call, which waits for an answer. The person asks
+  /// to be asked before the handlers change, and the last words ask exactly that.
   ///
   /// The added turns are there so the iPad's chat reaches the composer. With the keyboard
   /// down it is about twice the phone's height, and the seeded conversation filled two
@@ -1258,7 +1259,11 @@ struct AppEnvironment {
               """,
             secondsAgo: 450
           ),
-          .init(speaker: .human, text: "go ahead, and keep the tests passing", secondsAgo: 420),
+          .init(
+            speaker: .human,
+            text: "start with the pool, and ask me before you touch the handlers",
+            secondsAgo: 420
+          ),
           .init(
             speaker: .tools([
               ToolCall(name: "Edit", target: "pool.rs"),
@@ -1266,14 +1271,6 @@ struct AppEnvironment {
               ToolCall(name: "Read", target: "routes/session.rs"),
             ]),
             secondsAgo: 360
-          ),
-          .init(
-            speaker: .assistant,
-            text: """
-              Both handlers already run inside async routes, so only their signatures change. \
-              The tests that call `open_session` directly are the ones to watch.
-              """,
-            secondsAgo: 330
           ),
           .init(
             speaker: .assistant,
@@ -1286,8 +1283,16 @@ struct AppEnvironment {
               }
               ```
               """,
+            secondsAgo: 330
+          ),
+          .init(
+            speaker: .assistant,
+            text: """
+              Both handlers in `routes/session.rs` already run inside async routes, so only \
+              their signatures change. Anything outside this crate that calls them would see it.
+              """,
             secondsAgo: 300
-          )
+          ),
         ]
         + [
           .init(speaker: .assistant, text: seeded.last?.text ?? "", secondsAgo: 250),

@@ -208,6 +208,51 @@ final class ScreenshotTourUITests: XCTestCase {
     )
   }
 
+  /// Scrolls until the top edge of `identifier`'s row meets the bottom edge of `bar`, so the
+  /// shot has no row cut in half under the bar.
+  ///
+  /// A row's edge, not its label's: the row is the cell holding the identifier when there is
+  /// one. A drag moves the content by less than the finger, because the first points are
+  /// spent recognising it, so each round measures what the last drag lost and adds it. A gap
+  /// smaller than that loss first moves the other way, so the next drag is long enough to
+  /// count.
+  private func align(
+    _ identifier: String,
+    under bar: XCUIElement,
+    in app: XCUIApplication,
+    file: StaticString = #filePath,
+    line: UInt = #line
+  ) {
+    func rowTop() -> CGFloat {
+      let cell = app.cells.containing(.any, identifier: identifier).firstMatch
+      return cell.exists ? cell.frame.minY : element(app, identifier).frame.minY
+    }
+    let origin = app.coordinate(withNormalizedOffset: .zero)
+    let x = bar.frame.midX
+    let barBottom = bar.frame.maxY
+    var lost: CGFloat = 0
+    for _ in 0..<8 {
+      let before = rowTop()
+      var gap = before - barBottom
+      print("tour: '\(identifier)' row top \(before), bar bottom \(barBottom), gap \(gap)")
+      if abs(gap) <= 0.5 { return }
+      if abs(gap) < 30 { gap += gap > 0 ? -60 : 60 }
+      // Up for a positive gap, down for a negative one, in the middle of the screen.
+      let travel = abs(gap) + lost
+      let start = origin.withOffset(CGVector(dx: x, dy: barBottom + 260))
+      let end = start.withOffset(CGVector(dx: 0, dy: gap > 0 ? -travel : travel))
+      start.press(forDuration: 0.1, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.4)
+      let moved = abs(before - rowTop())
+      if moved > 0 { lost = max(0, travel - moved) }
+    }
+    XCTFail(
+      "The '\(identifier)' row's top edge is at \(rowTop()), and the bar ends at \(barBottom).\n"
+        + "Tree was:\n\(app.debugDescription)",
+      file: file,
+      line: line
+    )
+  }
+
   /// Whether the host list is on screen beside the connected host's screen, which is the
   /// split view at regular width. Read from the layout, so it follows the app and not the
   /// device's name.
@@ -343,7 +388,8 @@ final class ScreenshotTourUITests: XCTestCase {
     // again. From the host list, with workbox connected, so the list behind the sheet agrees
     // with the shots before it. Through a retry, because this tap sometimes fails to open the
     // sheet, and a failed tour costs a full slow re-run.
-    if !showsTheHostListBesideTheHost(app) { returnToHostList(app) }
+    let isSplitView = showsTheHostListBesideTheHost(app)
+    if !isSplitView { returnToHostList(app) }
     tapUntil(
       app,
       opening: "hosts.overflow",
@@ -354,8 +400,22 @@ final class ScreenshotTourUITests: XCTestCase {
     // Scrolled down to Font Size, which the caption names, so the shot holds the lower theme
     // rows, the fonts and the size. Dracula, because its row is on screen there and its
     // purple accent shows the choice took effect.
+    //
+    // The iPad's form sheet is short, so there the chosen theme is scrolled to the top
+    // instead, its row edge against the bar. Font Size still fits under it.
     let form = app.collectionViews.containing(.any, identifier: "settings.theme.system").firstMatch
+    // Read now, because the System row that finds the form scrolls out of the tree.
+    let sheetBottom = form.frame.maxY
     scroll(form, toRest: "settings.fontsize.value", in: app)
+    if isSplitView {
+      align("settings.theme.dracula", under: app.navigationBars["Settings"], in: app)
+      let size = require(app, "settings.fontsize.value", "Expected the Font Size row")
+      XCTAssertTrue(
+        size.isHittable && size.frame.maxY <= sheetBottom,
+        "Font Size is below the sheet with Dracula at the top. Tree was:\n"
+          + app.debugDescription
+      )
+    }
     let dracula = require(app, "settings.theme.dracula", "Expected the Dracula theme row")
     XCTAssertTrue(
       dracula.isHittable,
