@@ -5,8 +5,10 @@ import XCTest
 /// at the sizes App Store Connect requires.
 ///
 /// Everything comes from `FakeControl`'s seeded session, so every run captures the same
-/// content. `scripts/screenshots.sh` runs it on the store sizes and copies the results into
-/// `docs/app-store-assets/`.
+/// content. `scripts/screenshots.sh` runs it on the store sizes, copies the captures into
+/// `docs/app-store-assets/raw/`, and frames them for the store with
+/// `scripts/frame-screenshots.swift`, which also sets the store order. The capture names
+/// here are what that script looks for.
 ///
 /// Hand-driven on purpose: it types the password and accepts the trust prompt rather than
 /// seeding the connection, so it also fails if the connect path breaks. It is one test on
@@ -160,18 +162,95 @@ final class ScreenshotTourUITests: XCTestCase {
     usleep(700_000)
   }
 
-  /// Scrolls forward until `identifier` exists, up to five swipes.
+  /// Scrolls `form` until `identifier`'s bottom edge rests a little above the form's bottom
+  /// edge, so it is the last thing on screen and nothing below it is.
   ///
-  /// The preview is the form's first section, but a small form sheet or a later layout
-  /// change could put it below the fold.
-  @discardableResult
-  private func scrollTo(_ app: XCUIApplication, _ identifier: String) -> XCUIElement {
-    let match = element(app, identifier)
+  /// By slow drags that hold before they lift, because a swipe flings the form to its end.
+  /// Each drag is measured again, because the drag's first points are spent recognising it.
+  /// A form builds its rows lazily, so a row below the fold may not exist yet, and the first
+  /// drag is then half the form's height.
+  private func scroll(
+    _ form: XCUIElement,
+    toRest identifier: String,
+    in app: XCUIApplication,
+    file: StaticString = #filePath,
+    line: UInt = #line
+  ) {
+    let target = element(app, identifier)
+    let bounds = form.frame
+    // The row's bottom edge is wanted between these two.
+    let lowest = bounds.maxY - 24
+    let highest = bounds.maxY - 120
     for _ in 0..<5 {
-      if match.exists { return match }
-      app.swipeUp()
+      let distance: CGFloat
+      if target.exists {
+        let bottom = target.frame.maxY
+        if bottom <= lowest && bottom >= highest { return }
+        distance = bottom - (lowest + highest) / 2
+      } else {
+        distance = bounds.height / 2
+      }
+      // Up for a positive distance, down for a negative one, inside the form either way.
+      let travel = min(abs(distance), bounds.height - 80)
+      // From the app, with the form's frame read once, because the row that found the form
+      // can scroll out of the tree.
+      let low = app.coordinate(withNormalizedOffset: .zero)
+        .withOffset(CGVector(dx: bounds.midX, dy: bounds.maxY - 40))
+      let high = low.withOffset(CGVector(dx: 0, dy: -travel))
+      let (from, to) = distance > 0 ? (low, high) : (high, low)
+      from.press(forDuration: 0.1, thenDragTo: to, withVelocity: .slow, thenHoldForDuration: 0.4)
     }
-    return match
+    XCTFail(
+      "'\(identifier)' did not come to rest at the bottom of the form, it is at "
+        + "\(target.frame) in \(bounds).\nTree was:\n\(app.debugDescription)",
+      file: file,
+      line: line
+    )
+  }
+
+  /// Scrolls until the top edge of `identifier`'s row meets the bottom edge of `bar`, so the
+  /// shot has no row cut in half under the bar.
+  ///
+  /// A row's edge, not its label's: the row is the cell holding the identifier when there is
+  /// one. A drag moves the content by less than the finger, because the first points are
+  /// spent recognising it, so each round measures what the last drag lost and adds it. A gap
+  /// smaller than that loss first moves the other way, so the next drag is long enough to
+  /// count.
+  private func align(
+    _ identifier: String,
+    under bar: XCUIElement,
+    in app: XCUIApplication,
+    file: StaticString = #filePath,
+    line: UInt = #line
+  ) {
+    func rowTop() -> CGFloat {
+      let cell = app.cells.containing(.any, identifier: identifier).firstMatch
+      return cell.exists ? cell.frame.minY : element(app, identifier).frame.minY
+    }
+    let origin = app.coordinate(withNormalizedOffset: .zero)
+    let x = bar.frame.midX
+    let barBottom = bar.frame.maxY
+    var lost: CGFloat = 0
+    for _ in 0..<8 {
+      let before = rowTop()
+      var gap = before - barBottom
+      print("tour: '\(identifier)' row top \(before), bar bottom \(barBottom), gap \(gap)")
+      if abs(gap) <= 0.5 { return }
+      if abs(gap) < 30 { gap += gap > 0 ? -60 : 60 }
+      // Up for a positive gap, down for a negative one, in the middle of the screen.
+      let travel = abs(gap) + lost
+      let start = origin.withOffset(CGVector(dx: x, dy: barBottom + 260))
+      let end = start.withOffset(CGVector(dx: 0, dy: gap > 0 ? -travel : travel))
+      start.press(forDuration: 0.1, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.4)
+      let moved = abs(before - rowTop())
+      if moved > 0 { lost = max(0, travel - moved) }
+    }
+    XCTFail(
+      "The '\(identifier)' row's top edge is at \(rowTop()), and the bar ends at \(barBottom).\n"
+        + "Tree was:\n\(app.debugDescription)",
+      file: file,
+      line: line
+    )
   }
 
   /// Whether the host list is on screen beside the connected host's screen, which is the
@@ -213,6 +292,62 @@ final class ScreenshotTourUITests: XCTestCase {
     )
   }
 
+  /// Waits for the software keyboard to leave. It leaves with an animation, so a check
+  /// straight after the tap can still find it.
+  private func requireKeyboardGone(
+    _ app: XCUIApplication, file: StaticString = #filePath, line: UInt = #line
+  ) {
+    let gone = XCTNSPredicateExpectation(
+      predicate: NSPredicate(format: "exists == false"), object: app.keyboards.firstMatch)
+    XCTAssertEqual(
+      XCTWaiter().wait(for: [gone], timeout: 10), .completed,
+      "The keyboard did not go down. Tree was:\n\(app.debugDescription)", file: file, line: line)
+  }
+
+  /// Opens the pane switcher over the chat, captures it with its top in view, and closes it.
+  ///
+  /// Over the chat, not the terminal, because the terminal's caret shows below the iPad's
+  /// sheet. The iPad's sheet is page-sized and shows every pane. The phone's opens at its
+  /// medium detent, and a drag on its title bar takes it to large without scrolling the list,
+  /// so the shot starts at the first workspace and runs on below the fold.
+  ///
+  /// Two `settle`s before the shot, because each tile's picture is grey bars until the first
+  /// screen read answers, and nothing in the accessibility tree says when it has: the tile's
+  /// label is set explicitly and hides the picture's text. Check the capture for grey tiles.
+  private func captureThePaneSwitcher(
+    _ app: XCUIApplication, file: StaticString = #filePath, line: UInt = #line
+  ) {
+    require(app, "terminal.panes", "Expected the panes button", file: file, line: line).tap()
+    let done = require(
+      app, "terminal.sheet.done", "Expected the pane switcher", file: file, line: line)
+    let title = app.navigationBars.staticTexts["Panes on workbox"]
+    let screen = app.windows.firstMatch.frame
+    let origin = app.coordinate(withNormalizedOffset: .zero)
+    for _ in 0..<3 where done.frame.minY > screen.height * 0.2 {
+      // The title is in the sheet's bar, outside the list, so the drag resizes the sheet.
+      let grip = title.exists ? title.frame.midY : done.frame.midY
+      let start = origin.withOffset(CGVector(dx: screen.midX, dy: grip))
+      let end = origin.withOffset(CGVector(dx: screen.midX, dy: screen.minY + 40))
+      start.press(forDuration: 0.1, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.4)
+    }
+    XCTAssertLessThanOrEqual(
+      done.frame.minY, screen.height * 0.2,
+      "The switcher is not at full height. Tree was:\n\(app.debugDescription)",
+      file: file, line: line)
+    // The first workspace's header too, so the list starts at its top.
+    XCTAssertTrue(
+      element(app, "terminal.sheet.workspace").isHittable,
+      "The switcher's first workspace is off screen. Tree was:\n\(app.debugDescription)",
+      file: file, line: line)
+    settle(app)
+    settle(app)
+    capture("pane-switcher")
+    done.tap()
+    XCTAssertTrue(
+      done.waitForNonExistence(timeout: 30),
+      "The switcher did not close. Tree was:\n\(app.debugDescription)", file: file, line: line)
+  }
+
   func testTheTour() {
     XCUIDevice.shared.orientation = .portrait
     let app = XCUIApplication()
@@ -222,24 +357,7 @@ final class ScreenshotTourUITests: XCTestCase {
     // Seeded, because an empty list shows nothing.
     require(app, "hosts.row", "Expected the seeded host")
 
-    // Settings is captured first, because it opens from the host list. The filename sets the
-    // store order. Through a retry, because this tap sometimes fails to open the sheet, and a
-    // failed tour costs a full slow re-run.
-    tapUntil(
-      app,
-      opening: "hosts.overflow",
-      tap: "settings.open",
-      opens: "settings.preview",
-      "settings"
-    )
-    // The shot shows the preview beside the theme rows, so make sure it is on screen.
-    scrollTo(app, "settings.preview")
-
-    settle(app)
-    capture("06-settings")
-    require(app, "settings.done", "Expected a way out of settings").tap()
-
-    // 2: the session, with a blocked agent lifted to the top. Connected by hand.
+    // The session, with a blocked agent lifted to the top. Connected by hand.
     require(app, "hosts.row", "Expected the seeded host").tap()
     require(app, "connect.password", "Expected a password field").tap()
     // By tapping keys where the keyboard has them, because `typeText` into the secure field
@@ -253,31 +371,37 @@ final class ScreenshotTourUITests: XCTestCase {
     // would then say "Needs You · 1" beside a badge that says 2.
     waitForBothBlockedPanes(app)
     settle(app)
-    capture("02-needs-you")
+    capture("needs-you")
 
-    // 1: the host list, captured after 2 so it shows a connected host and its badge. The
-    // filename sets the store order.
+    // The host list, captured after the session so it shows a connected host and its badge.
     //
-    // Not in the split view. The list is the sidebar there and is already in 2, so the shot
-    // would be 2 again, pixel for pixel. The iPad set therefore starts at 02.
+    // Not in the split view. The list is the sidebar there and is already in the session
+    // shot, so this shot would be that one again, pixel for pixel. The iPad has no `hosts`.
     if !showsTheHostListBesideTheHost(app) {
       returnToHostList(app)
       settle(app)
-      capture("01-hosts")
+      capture("hosts")
       returnToTheHost(app)
     }
 
-    // 3: the chat, with the composer under it. The Needs-you row opens the pane on its chat
-    // with the composer focused. Named, not by position, because the section re-sorts and
-    // store art of the wrong pane would ship.
-    waitForBothBlockedPanes(app)
-    blockedPaneRow(app, titled: "needs a decision").tap()
+    // The chat, with the composer under it and no keyboard. Through the session tree, because
+    // the Needs-you row opens the chat with the composer focused, and the keyboard then
+    // covers half of the conversation. Named, not by position, because store art of the
+    // wrong pane would ship.
+    treePaneRow(app, titled: "needs a decision").tap()
     require(app, "composer.text", "Expected the composer")
     settle(app)
-    capture("03-chat")
+    XCTAssertFalse(
+      app.keyboards.firstMatch.exists,
+      "The chat shot would ship with the keyboard over the conversation. Tree was:\n"
+        + app.debugDescription
+    )
+    capture("chat")
+    captureThePaneSwitcher(app)
     leavePaneScene(app, "Expected a way out of the pane screen")
 
-    // 4: the terminal, attached to the same pane, named for the same reason. An agent pane
+    // The terminal, attached to the same pane, named for the same reason. The keyboard
+    // stays up, because the key row above it is in the listing's copy. An agent pane
     // opens on its chat, so the tour asks for the terminal.
     waitForBothBlockedPanes(app)
     blockedPaneRow(app, titled: "needs a decision").tap()
@@ -290,15 +414,73 @@ final class ScreenshotTourUITests: XCTestCase {
       require(app, "terminal.key.esc", "Expected the terminal's key row"),
       "The terminal capture would ship without the key row."
     )
-    capture("04-terminal")
+    // The software keyboard too, by one of its letter keys on screen. A simulator can report
+    // a hardware keyboard, and then the phone keeps the keys in the tree below the screen's
+    // bottom edge and draws a banner in their place, and the iPad has no keys at all. A
+    // `Keyboard` element is in the iPad's tree either way.
+    let letter = app.keyboards.keys["a"]
+    XCTAssertTrue(
+      letter.waitForExistence(timeout: 10) && letter.isHittable
+        && !element(app, "terminal.keyboard.hardwareNotice").exists,
+      "The terminal capture would ship without the software keyboard. Is the simulator "
+        + "reporting a hardware keyboard? Tree was:\n\(app.debugDescription)"
+    )
+    capture("terminal")
 
-    // 5: the pane's controls, open.
+    // The pane's controls, open, over the terminal with the keyboard down, so the menu is
+    // not drawn over the keys.
+    require(app, "terminal.key.dismiss", "Expected the key row's keyboard key").tap()
+    requireKeyboardGone(app)
     require(app, "pane.actions", "Expected the pane actions menu").tap()
     require(app, "pane.rename", "Expected the menu to be open")
     settle(app)
-    capture("05-pane-actions")
+    capture("pane-actions")
     // Dismiss the menu without choosing anything, and leave the terminal tidy.
     app.tap()
     leavePaneScene(app, "Expected a way out of the terminal")
+
+    // Settings, last, because it changes the theme, and the theme tints every screen after
+    // it. Settings live in memory under `-uiTesting`, so the next launch starts on System
+    // again. From the host list, with workbox connected, so the list behind the sheet agrees
+    // with the shots before it. Through a retry, because this tap sometimes fails to open the
+    // sheet, and a failed tour costs a full slow re-run.
+    let isSplitView = showsTheHostListBesideTheHost(app)
+    if !isSplitView { returnToHostList(app) }
+    tapUntil(
+      app,
+      opening: "hosts.overflow",
+      tap: "settings.open",
+      opens: "settings.preview",
+      "settings"
+    )
+    // Scrolled down to Font Size, which the caption names, so the shot holds the lower theme
+    // rows, the fonts and the size. Dracula, because its row is on screen there and its
+    // purple accent shows the choice took effect.
+    //
+    // The iPad's form sheet is short, so there the chosen theme is scrolled to the top
+    // instead, its row edge against the bar. Font Size still fits under it.
+    let form = app.collectionViews.containing(.any, identifier: "settings.theme.system").firstMatch
+    // Read now, because the System row that finds the form scrolls out of the tree.
+    let sheetBottom = form.frame.maxY
+    scroll(form, toRest: "settings.fontsize.value", in: app)
+    if isSplitView {
+      align("settings.theme.dracula", under: app.navigationBars["Settings"], in: app)
+      let size = require(app, "settings.fontsize.value", "Expected the Font Size row")
+      XCTAssertTrue(
+        size.isHittable && size.frame.maxY <= sheetBottom,
+        "Font Size is below the sheet with Dracula at the top. Tree was:\n"
+          + app.debugDescription
+      )
+    }
+    let dracula = require(app, "settings.theme.dracula", "Expected the Dracula theme row")
+    XCTAssertTrue(
+      dracula.isHittable,
+      "The Dracula row is not on screen, so the shot would not show a chosen theme. Tree was:\n"
+        + app.debugDescription
+    )
+    dracula.tap()
+    settle(app)
+    capture("settings")
+    require(app, "settings.done", "Expected a way out of settings").tap()
   }
 }

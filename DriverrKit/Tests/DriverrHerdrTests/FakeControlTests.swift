@@ -39,6 +39,31 @@ struct FakeControlTests {
     #expect(tree.allPanes.allSatisfy { $0.terminalID != nil }, "every pane can be attached")
   }
 
+  /// The store tour's Needs You list and every capture before the switcher are the seed's,
+  /// so the larger session may only add panes, never change or block one.
+  @Test("the store tour's session is the seed plus panes that cannot block")
+  func storeTourTreeExtendsTheSeed() {
+    let seed = FakeControl.seededTree.allPanes
+    let tour = FakeControl.storeTourTree.allPanes
+    let blocked = FakeControl.storeTourScript.last?.allPanes.filter {
+      $0.agent?.status == .blocked
+    }
+
+    #expect(tour.count == 14)
+    #expect(
+      FakeControl.storeTourTree.workspaces.map(\.label) == ["driverr", "tower", "wiki", "docs"])
+    #expect(
+      FakeControl.storeTourTree.workspaces.map { $0.tabs.flatMap(\.panes).count } == [4, 4, 3, 3])
+    #expect(seed.allSatisfy { tour.contains($0) }, "a seed pane changed")
+    #expect(Set(tour.map(\.id)).count == tour.count, "pane ids repeat")
+    #expect(tour.filter { $0.agent?.status == .blocked }.map(\.id) == ["w1:p2"])
+    #expect(blocked?.map(\.id) == ["w1:p2", "w2:p1"])
+    // Roll-ups are recomputed for the new panes, as herdr's are.
+    #expect(FakeControl.storeTourScript.last?.workspaces.map(\.status) == [
+      .blocked, .blocked, .done, .done,
+    ])
+  }
+
   @Test("the seed has a done agent")
   func seedHasADoneAgent() async throws {
     let tree = try await FakeControl().snapshot()
@@ -343,7 +368,8 @@ struct FakeControlTests {
   @Test("every pane in the fake's other trees carries a witness too")
   func everyScriptedPaneIsWitnessed() {
     let trees =
-      FakeControl.blockingScript + FakeControl.vanishingPaneScript + [
+      FakeControl.blockingScript + FakeControl.vanishingPaneScript
+      + FakeControl.storeTourScript + [
         FakeControl.treeWithoutTheBlockedPane,
         FakeControl.treeWithSecondBlockedPane,
         FakeControl.treeWithIdleAgent,
