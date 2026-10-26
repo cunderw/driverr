@@ -304,6 +304,50 @@ final class ScreenshotTourUITests: XCTestCase {
       "The keyboard did not go down. Tree was:\n\(app.debugDescription)", file: file, line: line)
   }
 
+  /// Opens the pane switcher over the chat, captures it with its top in view, and closes it.
+  ///
+  /// Over the chat, not the terminal, because the terminal's caret shows below the iPad's
+  /// sheet. The iPad's sheet is page-sized and shows every pane. The phone's opens at its
+  /// medium detent, and a drag on its title bar takes it to large without scrolling the list,
+  /// so the shot starts at the first workspace and runs on below the fold.
+  ///
+  /// Two `settle`s before the shot, because each tile's picture is grey bars until the first
+  /// screen read answers, and nothing in the accessibility tree says when it has: the tile's
+  /// label is set explicitly and hides the picture's text. Check the capture for grey tiles.
+  private func captureThePaneSwitcher(
+    _ app: XCUIApplication, file: StaticString = #filePath, line: UInt = #line
+  ) {
+    require(app, "terminal.panes", "Expected the panes button", file: file, line: line).tap()
+    let done = require(
+      app, "terminal.sheet.done", "Expected the pane switcher", file: file, line: line)
+    let title = app.navigationBars.staticTexts["Panes on workbox"]
+    let screen = app.windows.firstMatch.frame
+    let origin = app.coordinate(withNormalizedOffset: .zero)
+    for _ in 0..<3 where done.frame.minY > screen.height * 0.2 {
+      // The title is in the sheet's bar, outside the list, so the drag resizes the sheet.
+      let grip = title.exists ? title.frame.midY : done.frame.midY
+      let start = origin.withOffset(CGVector(dx: screen.midX, dy: grip))
+      let end = origin.withOffset(CGVector(dx: screen.midX, dy: screen.minY + 40))
+      start.press(forDuration: 0.1, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.4)
+    }
+    XCTAssertLessThanOrEqual(
+      done.frame.minY, screen.height * 0.2,
+      "The switcher is not at full height. Tree was:\n\(app.debugDescription)",
+      file: file, line: line)
+    // The first workspace's header too, so the list starts at its top.
+    XCTAssertTrue(
+      element(app, "terminal.sheet.workspace").isHittable,
+      "The switcher's first workspace is off screen. Tree was:\n\(app.debugDescription)",
+      file: file, line: line)
+    settle(app)
+    settle(app)
+    capture("pane-switcher")
+    done.tap()
+    XCTAssertTrue(
+      done.waitForNonExistence(timeout: 30),
+      "The switcher did not close. Tree was:\n\(app.debugDescription)", file: file, line: line)
+  }
+
   func testTheTour() {
     XCUIDevice.shared.orientation = .portrait
     let app = XCUIApplication()
@@ -353,6 +397,7 @@ final class ScreenshotTourUITests: XCTestCase {
         + app.debugDescription
     )
     capture("chat")
+    captureThePaneSwitcher(app)
     leavePaneScene(app, "Expected a way out of the pane screen")
 
     // The terminal, attached to the same pane, named for the same reason. The keyboard
@@ -390,40 +435,8 @@ final class ScreenshotTourUITests: XCTestCase {
     require(app, "pane.rename", "Expected the menu to be open")
     settle(app)
     capture("pane-actions")
-    // Dismiss the menu without choosing anything.
+    // Dismiss the menu without choosing anything, and leave the terminal tidy.
     app.tap()
-    XCTAssertTrue(
-      element(app, "pane.rename").waitForNonExistence(timeout: 10),
-      "The pane actions menu did not close. Tree was:\n\(app.debugDescription)"
-    )
-
-    // The pane switcher, over the same pane, so its ring marks the pane the shots before it
-    // show. On the phone it opens at its medium detent, and a drag takes it to large so the
-    // shot lists every pane down to New pane. The iPad's is page-sized and shows them all.
-    require(app, "terminal.panes", "Expected the panes button").tap()
-    require(app, "terminal.sheet.done", "Expected the pane switcher")
-    dragSheetToReveal(
-      app,
-      "terminal.sheet.newPane",
-      anchoredAt: "terminal.sheet.workspace",
-      "Expected the switcher to show every pane"
-    )
-    // The first workspace's header too, so the drag grew the sheet and did not scroll the
-    // top of the list away.
-    XCTAssertTrue(
-      element(app, "terminal.sheet.workspace").isHittable,
-      "The switcher's first workspace is off screen. Tree was:\n\(app.debugDescription)"
-    )
-    // The tiles' pictures arrive with the first read after the sheet opens, and are grey bars
-    // until then.
-    settle(app)
-    settle(app)
-    capture("pane-switcher")
-    require(app, "terminal.sheet.done", "Expected a way out of the switcher").tap()
-    XCTAssertTrue(
-      element(app, "terminal.sheet.done").waitForNonExistence(timeout: 30),
-      "The switcher did not close. Tree was:\n\(app.debugDescription)"
-    )
     leavePaneScene(app, "Expected a way out of the terminal")
 
     // Settings, last, because it changes the theme, and the theme tints every screen after

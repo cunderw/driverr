@@ -653,7 +653,11 @@ public actor FakeControl: HerdrControl {
   /// `seededTree` with `w2:p1`'s Gemini flipped from idle to blocked.
   ///
   /// An agent pane, because only an agent can be blocked.
-  public static let treeWithSecondBlockedPane: SessionTree = mapPanes(seededTree) { pane in
+  public static let treeWithSecondBlockedPane: SessionTree = mapPanes(
+    seededTree, blockingSchemaSync)
+
+  /// `w2:p1`'s agent blocked, and every other pane as it was.
+  private static func blockingSchemaSync(_ pane: Pane) -> Pane {
     guard pane.id == "w2:p1", let agent = pane.agent else { return pane }
     return Pane(
       id: pane.id,
@@ -667,6 +671,79 @@ public actor FakeControl: HerdrControl {
       viewportRows: pane.viewportRows
     )
   }
+
+  /// The App Store tour's session: `seededTree` with eight more panes and a fourth
+  /// workspace, so the pane switcher's grid is full on an iPad.
+  ///
+  /// The seed's panes keep their ids, titles and order, and none of the new ones can block,
+  /// so the tour's Needs You list is the seed's. Fourteen panes: driverr 4, tower 4, wiki 3
+  /// and docs 3, which fill four columns on the iPad's page-sized sheet.
+  public static let storeTourTree: SessionTree = {
+    func pane(
+      _ id: String, _ title: String, _ agent: Agent? = nil, in tab: String,
+      at directory: String
+    ) -> Pane {
+      Pane(
+        id: id,
+        tabID: tab,
+        workspaceID: String(id.prefix { $0 != ":" }),
+        title: title,
+        agent: agent,
+        terminalID: "term_\(id.replacingOccurrences(of: ":", with: ""))",
+        directory: directory
+      )
+    }
+    // Each list goes after the seed pane it is keyed by, in the seed pane's tab.
+    let added: [String: [Pane]] = [
+      "w1:p3": [pane("w1:p4", "lint", in: "w1:t2", at: "~/dev/driverr")],
+      "w2:p1": [
+        pane(
+          "w2:p2", "migrations", Agent(name: "Claude", kind: "claude", status: .working),
+          in: "w2:t1", at: "~/dev/tower"),
+        pane("w2:p3", "api server", in: "w2:t1", at: "~/dev/tower"),
+        pane(
+          "w2:p4", "load test", Agent(name: "Codex", kind: "codex", status: .done),
+          in: "w2:t1", at: "~/dev/tower/bench"),
+      ],
+      "w3:p2": [
+        pane(
+          "w3:p3", "link check", Agent(name: "Claude", kind: "claude", status: .idle),
+          in: "w3:t1", at: "~/wiki")
+      ],
+    ]
+    let docs = Workspace(
+      id: "w4",
+      number: 4,
+      label: "docs",
+      tabs: [
+        Tab(
+          id: "w4:t1",
+          workspaceID: "w4",
+          number: 1,
+          label: "site",
+          panes: [
+            pane(
+              "w4:p1", "release notes", Agent(name: "Claude", kind: "claude", status: .working),
+              in: "w4:t1", at: "~/dev/docs"),
+            pane("w4:p2", "site preview", in: "w4:t1", at: "~/dev/docs"),
+            pane(
+              "w4:p3", "style pass", Agent(name: "Gemini", kind: "gemini", status: .done),
+              in: "w4:t1", at: "~/dev/docs"),
+          ]
+        )
+      ]
+    )
+    let grown = SessionTree(
+      workspaces: seededTree.workspaces + [docs], focusedPaneID: seededTree.focusedPaneID)
+    // Rebuilt, so the roll-ups count the new panes as herdr's would.
+    return rebuild(grown) { [$0] + (added[$0.id] ?? []) }
+  }()
+
+  /// `storeTourTree`, then the same with `w2:p1` blocked, as `blockingScript` does for the
+  /// seed. The tour waits for both blocked panes.
+  public static let storeTourScript: [SessionTree] = [
+    storeTourTree, mapPanes(storeTourTree, blockingSchemaSync),
+  ]
 
   /// `seededTree` with `w1:p1`'s Claude idle instead of working.
   ///

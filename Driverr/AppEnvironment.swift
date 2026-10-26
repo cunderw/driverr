@@ -227,6 +227,9 @@ struct AppEnvironment {
         }
         // herdr drops the open pane from one poll and reports it again.
         if isPaneVanishingOnce { return FakeControl(script: FakeControl.vanishingPaneScript) }
+        // The store tour's larger session, so its pane switcher shot is a full grid. The
+        // seed's panes and its blocked pair are unchanged inside it.
+        if isDemoTranscript { return FakeControl(script: FakeControl.storeTourScript) }
         return FakeControl(script: FakeControl.blockingScript)
       },
       makeTranscriptReader: { _ in
