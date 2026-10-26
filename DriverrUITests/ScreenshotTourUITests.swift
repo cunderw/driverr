@@ -379,8 +379,40 @@ final class ScreenshotTourUITests: XCTestCase {
     require(app, "pane.rename", "Expected the menu to be open")
     settle(app)
     capture("pane-actions")
-    // Dismiss the menu without choosing anything, and leave the terminal tidy.
+    // Dismiss the menu without choosing anything.
     app.tap()
+    XCTAssertTrue(
+      element(app, "pane.rename").waitForNonExistence(timeout: 10),
+      "The pane actions menu did not close. Tree was:\n\(app.debugDescription)"
+    )
+
+    // The pane switcher, over the same pane, so its ring marks the pane the shots before it
+    // show. On the phone it opens at its medium detent, and a drag takes it to large so the
+    // shot lists every pane down to New pane. The iPad's is page-sized and shows them all.
+    require(app, "terminal.panes", "Expected the panes button").tap()
+    require(app, "terminal.sheet.done", "Expected the pane switcher")
+    dragSheetToReveal(
+      app,
+      "terminal.sheet.newPane",
+      anchoredAt: "terminal.sheet.workspace",
+      "Expected the switcher to show every pane"
+    )
+    // The first workspace's header too, so the drag grew the sheet and did not scroll the
+    // top of the list away.
+    XCTAssertTrue(
+      element(app, "terminal.sheet.workspace").isHittable,
+      "The switcher's first workspace is off screen. Tree was:\n\(app.debugDescription)"
+    )
+    // The tiles' pictures arrive with the first read after the sheet opens, and are grey bars
+    // until then.
+    settle(app)
+    settle(app)
+    capture("pane-switcher")
+    require(app, "terminal.sheet.done", "Expected a way out of the switcher").tap()
+    XCTAssertTrue(
+      element(app, "terminal.sheet.done").waitForNonExistence(timeout: 30),
+      "The switcher did not close. Tree was:\n\(app.debugDescription)"
+    )
     leavePaneScene(app, "Expected a way out of the terminal")
 
     // Settings, last, because it changes the theme, and the theme tints every screen after

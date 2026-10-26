@@ -350,7 +350,7 @@ The release procedure lives outside this repo. These are only the facts about th
   each device down and boots it before the tour, and it fails the phone set if a capture
   draws the home indicator (`scripts/home-indicator.sh`).
   `scripts/screenshots.sh --frame` frames the committed captures again with no tour. They
-  upload in filename order. Both sets are `01-` to `05-` and start with Needs You. The
+  upload in filename order. Both sets are `01-` to `06-` and start with Needs You. The
   phone's `raw/iphone-max/hosts.png` is captured and not published.
 - **The product page header** is `docs/app-store-assets/header/header.png`, drawn by the
   same script and uploaded by hand. Each run also writes `.build-logs/header-crops/`, which

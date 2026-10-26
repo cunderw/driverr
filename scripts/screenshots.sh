@@ -80,8 +80,8 @@ expected_size() {
 # still passes the test, so the count is checked here and not assumed.
 expected_count() {
   case "$1" in
-    iphone-max) echo "6" ;;
-    ipad) echo "5" ;;
+    iphone-max) echo "7" ;;
+    ipad) echo "6" ;;
     *) echo "" ;;
   esac
 }

@@ -35,6 +35,7 @@ import ImageIO
 let published: [(stem: String, caption: String)] = [
   ("needs-you", "See which agent needs you"),
   ("chat", "Reply without a terminal"),
+  ("pane-switcher", "Jump to any pane"),
   ("terminal", "A real terminal for any pane"),
   ("pane-actions", "Rename or close a pane"),
   ("settings", "Themes and type sizes"),
