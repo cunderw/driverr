@@ -369,16 +369,16 @@ final class ScreenshotTourUITests: XCTestCase {
       require(app, "terminal.key.esc", "Expected the terminal's key row"),
       "The terminal capture would ship without the key row."
     )
-    // The software keyboard too, on screen. A simulator can report a hardware keyboard, and
-    // the keyboard is then in the tree below the screen's bottom edge. On the phone the
-    // terminal also draws a banner in its place.
-    let keyboard = app.keyboards.firstMatch
+    // The software keyboard too, by one of its letter keys on screen. A simulator can report
+    // a hardware keyboard, and then the phone keeps the keys in the tree below the screen's
+    // bottom edge and draws a banner in their place, and the iPad has no keys at all. A
+    // `Keyboard` element is in the iPad's tree either way.
+    let letter = app.keyboards.keys["a"]
     XCTAssertTrue(
-      keyboard.waitForExistence(timeout: 10)
-        && keyboard.frame.minY < app.windows.firstMatch.frame.maxY
+      letter.waitForExistence(timeout: 10) && letter.isHittable
         && !element(app, "terminal.keyboard.hardwareNotice").exists,
-      "The terminal capture would ship without the software keyboard, which is at "
-        + "\(keyboard.frame). Tree was:\n\(app.debugDescription)"
+      "The terminal capture would ship without the software keyboard. Is the simulator "
+        + "reporting a hardware keyboard? Tree was:\n\(app.debugDescription)"
     )
     capture("terminal")
 
