@@ -206,6 +206,12 @@ Issues are the source of truth for work. By taking part you agree to the
 
 The release procedure is not kept in this repository.
 
+## Support
+
+Driverr is free. If it is useful to you, you can buy me a coffee.
+
+[![Buy me a coffee](https://img.buymeacoffee.com/button-api/?text=Buy%20me%20a%20coffee&emoji=&slug=cunderw&button_colour=FFDD00&font_colour=000000&font_family=Cookie&outline_colour=000000&coffee_colour=ffffff)](https://buymeacoffee.com/cunderw)
+
 ## License
 
 [MIT](LICENSE). The licenses and notices of the dependencies, the bundled font and the theme
