@@ -4,12 +4,12 @@ import Testing
 
 @Suite("AgentStatus")
 struct AgentStatusTests {
-  @Test("the five states rank blocked, done, working, idle, unknown")
+  @Test("the states rank blocked, error, done, working, idle, unknown")
   func urgencyOrder() {
     // Shuffled, so the assertion is on the ranking rather than the input order.
-    let sorted = [AgentStatus.idle, .unknown, .blocked, .working, .done]
+    let sorted = [AgentStatus.idle, .unknown, .error, .blocked, .working, .done]
       .sorted { $0.sortPriority < $1.sortPriority }
-    #expect(sorted == [.blocked, .done, .working, .idle, .unknown])
+    #expect(sorted == [.blocked, .error, .done, .working, .idle, .unknown])
   }
 
   @Test("done outranks working, which is where Driverr parts company with herdr")
@@ -31,6 +31,11 @@ struct AgentStatusTests {
   func unknownFallback() {
     #expect(AgentStatus(wireValue: "some_future_status") == .unknown)
     #expect(AgentStatus(wireValue: "blocked") == .blocked)
+  }
+
+  @Test("error comes off the wire as itself")
+  func errorDecodes() {
+    #expect(AgentStatus(wireValue: "error") == .error)
   }
 
   @Test("done comes off the wire as itself rather than collapsing to unknown")

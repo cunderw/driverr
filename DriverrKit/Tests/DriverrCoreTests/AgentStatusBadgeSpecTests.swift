@@ -44,11 +44,21 @@ struct AgentStatusBadgeSpecTests {
   @Test("each state carries herdr's hue role")
   func huesMatchHerdrsRoles() {
     // herdr's palette cannot be matched literally, so the role each hue plays is.
+    #expect(AgentStatus.error.hue == .orange)
     #expect(AgentStatus.done.hue == .teal)
     #expect(AgentStatus.working.hue == .yellow)
     #expect(AgentStatus.idle.hue == .green)
     // herdr cannot say what this agent is doing, so no colour claims it.
     #expect(AgentStatus.unknown.hue == .neutral)
+  }
+
+  /// Red says "wants you", and `error` asks for nothing.
+  @Test("a failure is drawn apart from a request, in shape and in hue")
+  func errorIsNotBlocked() {
+    #expect(AgentStatus.error.symbolName == "exclamationmark.triangle")
+    #expect(AgentStatus.error.symbolName != AgentStatus.blocked.symbolName)
+    #expect(AgentStatus.error.hue != AgentStatus.blocked.hue)
+    #expect(AgentStatus.error.accessibleName == "Failed")
   }
 
   @Test("only unknown is neutral, so every other state is findable by colour as well")

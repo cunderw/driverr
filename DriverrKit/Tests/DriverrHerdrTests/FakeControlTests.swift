@@ -371,6 +371,7 @@ struct FakeControlTests {
       FakeControl.blockingScript + FakeControl.vanishingPaneScript
       + FakeControl.storeTourScript + [
         FakeControl.treeWithoutTheBlockedPane,
+        FakeControl.treeWithAFailedAgent,
         FakeControl.treeWithSecondBlockedPane,
         FakeControl.treeWithIdleAgent,
         FakeControl.treeWithAWorkingAsker,

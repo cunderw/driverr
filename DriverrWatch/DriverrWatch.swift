@@ -142,6 +142,7 @@ private struct BlockedPaneGlyph: View {
   static func color(for hue: AgentStatusHue) -> Color {
     switch hue {
     case .red: .red
+    case .orange: .orange
     case .teal: .teal
     case .yellow: .yellow
     case .green: .green

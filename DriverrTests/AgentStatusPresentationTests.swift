@@ -18,6 +18,7 @@ struct AgentStatusPresentationTests {
     //
     // System colours stay right in both appearances and under Increase Contrast.
     #expect(AgentStatus.blocked.tint == .red)
+    #expect(AgentStatus.error.tint == .orange)
     #expect(AgentStatus.done.tint == .teal)
     #expect(AgentStatus.working.tint == .yellow)
     #expect(AgentStatus.idle.tint == .green)
@@ -46,9 +47,9 @@ struct AgentStatusPresentationTests {
   @Test("the badge's identifier stays keyed to the status, so tests can find it")
   func identifiersAreStable() {
     #expect(AgentStatus.blocked.rawValue == "blocked")
-    // herdr's five, and no sixth for "no agent": the status lives inside `Pane.agent`, so a
-    // shell pane carries no badge.
-    #expect(AgentStatus.allCases.count == 5)
+    // herdr's five and `error`, and none for "no agent": the status lives inside
+    // `Pane.agent`, so a shell pane carries no badge.
+    #expect(AgentStatus.allCases.count == 6)
     #expect(AgentStatus.done.rawValue == "done")
   }
 }

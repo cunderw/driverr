@@ -224,6 +224,8 @@ struct AppEnvironment {
         if isNothingBlocked {
           return FakeControl(tree: FakeControl.treeWithoutTheBlockedPane)
         }
+        // One agent failed and nothing blocked. See `isAgentError`.
+        if isAgentError { return FakeControl(tree: FakeControl.treeWithAFailedAgent) }
         // A tree that does not move: a status change is a refresh trigger, so a scripted flip
         // would re-read through a different path.
         if isTranscriptGrowing { return FakeControl(tree: FakeControl.seededTree) }
@@ -709,6 +711,12 @@ struct AppEnvironment {
   /// card's working, idle and shell counts are the seeded session's.
   static var isNothingBlocked: Bool {
     ProcessInfo.processInfo.arguments.contains("-uiTestingNothingBlocked")
+  }
+
+  /// Whether one agent in this launch's herdr session has failed, with nothing blocked
+  /// (`-uiTestingAgentError`), so a capture can show the `error` badge.
+  static var isAgentError: Bool {
+    ProcessInfo.processInfo.arguments.contains("-uiTestingAgentError")
   }
 
   /// Whether the fixture should answer at a real host's speed rather than instantly.

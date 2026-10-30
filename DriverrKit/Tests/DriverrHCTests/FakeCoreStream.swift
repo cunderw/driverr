@@ -32,7 +32,10 @@ final class FakeCoreStream: HerdrStream, @unchecked Sendable {
   var exitsAfterHello = false
   /// When true, a call's answer waits for `flushHeld()`, so two answers can land in one chunk.
   var holdsReplies = false
-  var replies: [String: Reply] = ["terminal.list": .result(#"{"terminals":[]}"#)]
+  var replies: [String: Reply] = [
+    "terminal.list": .result(#"{"terminals":[]}"#),
+    "doc.get": .result(FakeCoreStream.noDocument),
+  ]
 
   let output: AsyncThrowingStream<Data, any Error>
   private let continuation: AsyncThrowingStream<Data, any Error>.Continuation
@@ -145,6 +148,9 @@ final class FakeCoreStream: HerdrStream, @unchecked Sendable {
     let frame = CoreFrame(channel: 0, kind: .data, payload: Data(json.utf8)).encoded
     lock.withLock { held.append(frame) }
   }
+
+  /// What `doc.get` answers for a document nobody has written.
+  static let noDocument = #"{"value":null,"version":0}"#
 
   /// `hello`'s reply as a real core 0.1.14 wrote it, `id` first, and with its options.
   static func helloReply(

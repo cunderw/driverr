@@ -116,15 +116,34 @@ struct AgentStatusCountsActivitySummaryTests {
 
   @Test("two hosts' counts add up field by field")
   func countsAdd() {
-    let sum = AgentStatusCounts(blocked: 1, done: 2, working: 3, idle: 4, unknown: 5, shells: 6)
+    let sum =
+      AgentStatusCounts(blocked: 1, errors: 7, done: 2, working: 3, idle: 4, unknown: 5, shells: 6)
       + AgentStatusCounts(blocked: 6, done: 5, working: 4, idle: 3, unknown: 2, shells: 1)
     #expect(sum == AgentStatusCounts(
-      blocked: 7, done: 7, working: 7, idle: 7, unknown: 7, shells: 7))
+      blocked: 7, errors: 7, done: 7, working: 7, idle: 7, unknown: 7, shells: 7))
+  }
+
+  /// "Nothing needs you" over a failed agent would read as all clear.
+  @Test("a failed agent is counted, and takes the all-clear away")
+  func aFailedAgentIsWorded() {
+    let counts = AgentStatusCounts(errors: 1, working: 2)
+    #expect(counts.activitySummary == "1 failed · 2 working")
+    #expect(counts.calmSummary == "1 failed · 2 working")
+    #expect(AgentStatusCounts(blocked: 1, errors: 1).calmSummary == nil)
+  }
+
+  /// A card's payload outlives its build, and builds before `error` wrote no such key.
+  @Test("a card written before the error count decodes with none")
+  func anOldPayloadDecodes() throws {
+    let old = #"{"blocked":1,"done":2,"working":3,"idle":4,"unknown":5,"shells":6}"#
+    let decoded = try JSONDecoder().decode(AgentStatusCounts.self, from: Data(old.utf8))
+    #expect(
+      decoded == AgentStatusCounts(blocked: 1, done: 2, working: 3, idle: 4, unknown: 5, shells: 6))
   }
 
   @Test("the counts round trip so a card can carry them")
   func coding() throws {
-    let counts = AgentStatusCounts(blocked: 1, done: 2, working: 3, idle: 4, shells: 5)
+    let counts = AgentStatusCounts(blocked: 1, errors: 6, done: 2, working: 3, idle: 4, shells: 5)
     #expect(
       try JSONDecoder().decode(
         AgentStatusCounts.self, from: JSONEncoder().encode(counts)) == counts)

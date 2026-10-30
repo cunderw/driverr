@@ -1127,7 +1127,7 @@ struct TranscriptPresentationTests {
     let prompted: Bool
     switch status {
     case .working, .done: prompted = true
-    case .blocked, .idle, .unknown, nil: prompted = false
+    case .blocked, .error, .idle, .unknown, nil: prompted = false
     }
     if prompted {
       #expect(notice.title == "The session file is missing")

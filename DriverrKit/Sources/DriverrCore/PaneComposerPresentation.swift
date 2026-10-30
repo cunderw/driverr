@@ -385,6 +385,9 @@ public struct PaneComposerHeader: Equatable, Sendable {
     case .done:
       state = "\(name) has finished."
       invitation = "You can still say something."
+    case .error:
+      state = "\(name) reported an error."
+      invitation = "You can still say something."
     case .unknown:
       // `unknown` is an agent whose output nothing recognised, so claim nothing.
       state = "herdr can't say what \(name) is doing."

@@ -38,9 +38,24 @@ struct CoreControlTests {
 
   private func listing(_ terminals: String) -> FakeCoreStream {
     let stream = FakeCoreStream()
-    stream.replies = ["terminal.list": .result(#"{"terminals":[\#(terminals)]}"#)]
+    stream.replies["terminal.list"] = .result(#"{"terminals":[\#(terminals)]}"#)
     return stream
   }
+
+  /// Two spaces, listed the wrong way round for `document`.
+  private func spaces() -> FakeCoreStream {
+    listing(
+      #"""
+      {"address":"t1","labels":{"herdr.space":"a","herdr.tab":"x"}},
+      {"address":"t2","labels":{"herdr.space":"b","herdr.tab":"y"}}
+      """#)
+  }
+
+  /// `b` before `a`, and named.
+  private static let document = #"""
+    {"value":{"spaces":[{"id":"b","name":"Bee","tabs":[]},{"id":"a","name":"Ay","tabs":[]}]},
+    "version":7}
+    """#
 
   private let terminal = #"{"address":"t1","cwd":"/srv","title":"a"}"#
 
@@ -51,7 +66,83 @@ struct CoreControlTests {
     let tree = try await control(host).snapshot()
     #expect(tree.allPanes.map(\.id) == ["core:t1"])
     #expect(host.opened == ["'/home/my user/.local/bin/herdr-core' connect"])
-    #expect(stream.methods == ["terminal.list"])
+    #expect(Set(stream.methods) == ["terminal.list", "doc.get"])
+  }
+
+  @Test("the app's document orders and names the snapshot")
+  func documentOrders() async throws {
+    let stream = spaces()
+    stream.replies["doc.get"] = .result(Self.document)
+    let tree = try await control(CoreHost(stream)).snapshot()
+    #expect(tree.workspaces.map(\.label) == ["Bee", "Ay"])
+  }
+
+  @Test("Driverr reads the app's document and never writes it")
+  func neverWrites() async throws {
+    let stream = spaces()
+    stream.replies["doc.get"] = .result(Self.document)
+    let control = control(CoreHost(stream))
+    _ = try await control.snapshot()
+    stream.replies["doc.get"] = .error("unavailable")
+    _ = try await control.snapshot()
+    #expect(Set(stream.methods) == ["terminal.list", "doc.get"])
+    #expect(stream.methods.filter { $0 == "doc.get" }.count == 2)
+  }
+
+  @Test("no document leaves the terminals as listed")
+  func noDocument() async throws {
+    let tree = try await control(CoreHost(spaces())).snapshot()
+    #expect(tree.workspaces.map(\.id) == ["core:a", "core:b"])
+  }
+
+  /// The app's format is private, and one poll's failure must not move rows under a thumb.
+  @Test(
+    "a read that fails keeps the last good order",
+    arguments: [
+      FakeCoreStream.Reply.error("unavailable"),
+      .result(#"{"value":5,"version":8}"#),
+      .result(#"{"value":{"spaces":"later"},"version":8}"#),
+    ])
+  func failedReadKeepsOrder(reply: FakeCoreStream.Reply) async throws {
+    let stream = spaces()
+    stream.replies["doc.get"] = .result(Self.document)
+    let control = control(CoreHost(stream))
+    #expect(try await control.snapshot().workspaces.map(\.id) == ["core:b", "core:a"])
+
+    stream.replies["doc.get"] = reply
+    #expect(try await control.snapshot().workspaces.map(\.id) == ["core:b", "core:a"])
+  }
+
+  @Test(
+    "a first read that fails is no document, not a failed snapshot",
+    arguments: [
+      FakeCoreStream.Reply.error("no such method"),
+      .result(#"{"value":"not a document"}"#),
+    ])
+  func unreadableDocument(reply: FakeCoreStream.Reply) async throws {
+    let stream = spaces()
+    stream.replies["doc.get"] = reply
+    let tree = try await control(CoreHost(stream)).snapshot()
+    #expect(tree.workspaces.map(\.id) == ["core:a", "core:b"])
+  }
+
+  @Test("a read that never answers costs the deadline, not the snapshot")
+  func silentDocument() async throws {
+    let stream = spaces()
+    stream.replies["doc.get"] = .silent
+    let control = control(CoreHost(stream), deadline: .milliseconds(50))
+    #expect(try await control.snapshot().allPanes.count == 2)
+  }
+
+  @Test("a document that has gone clears the order")
+  func documentCleared() async throws {
+    let stream = spaces()
+    stream.replies["doc.get"] = .result(Self.document)
+    let control = control(CoreHost(stream))
+    _ = try await control.snapshot()
+
+    stream.replies["doc.get"] = .result(FakeCoreStream.noDocument)
+    #expect(try await control.snapshot().workspaces.map(\.id) == ["core:a", "core:b"])
   }
 
   @Test("snapshots share one connection")
@@ -137,11 +228,10 @@ struct CoreControlTests {
   @Test("attaching names the terminal's address, quoted, machine prefix included")
   func attachCommand() {
     let pane = Pane(
-      id: "core:10.1.0.254/t1", tabID: "x", workspaceID: "y", title: "z",
-      terminalID: "10.1.0.254/t1")
+      id: "core:box/t1", tabID: "x", workspaceID: "y", title: "z", terminalID: "box/t1")
     #expect(
       control(CoreHost()).attachCommand(for: pane)
-        == "'/home/my user/.local/bin/herdr-core' attach 10.1.0.254/t1"
+        == "'/home/my user/.local/bin/herdr-core' attach box/t1"
     )
   }
 
