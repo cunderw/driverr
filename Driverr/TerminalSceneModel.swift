@@ -59,6 +59,9 @@ final class TerminalSceneModel {
 
   /// Something the scene has to say about the current target. One value, so two cannot be
   /// on screen at once.
+  /// Why a herdr-core terminal does not open. See `refusingCorePane(_:target:)`.
+  static let coreUnavailable = "Driverr can't open a herdr-core terminal yet."
+
   enum Notice: Equatable {
     /// Another client already controls this pane. Offers Take over, the one deliberate
     /// use of `--takeover`.
