@@ -37,6 +37,29 @@ extension TerminalFeed {
   }
 }
 
+/// A herdr-core terminal as a feed.
+///
+/// The other way round from a bridge pane: the bytes are the program's own, so the scrollback
+/// is the emulator's and `TerminalMouseClick` encodes a tap locally, and a feed with no `scroll`
+/// or `click` is what says so. What it adds is the two things a core asks of a viewer.
+extension TerminalFeed {
+  init(
+    raw: any RawTerminalStream,
+    output: AsyncThrowingStream<Data, any Error>,
+    send: @escaping @Sendable (Data) async throws -> Void,
+    resize: @escaping @Sendable (TerminalSize) async throws -> Void
+  ) {
+    self.init(
+      output: output,
+      send: send,
+      resize: resize,
+      // The scene releases, in order; see `TerminalSceneModel.demote(_:)`.
+      close: {},
+      focus: { try await raw.focus($0) },
+      consumed: { raw.consumed($0) }
+    )
+  }
+}
 
 /// `DriverrSSH`'s stream, as `DriverrHerdr` wants it.
 ///

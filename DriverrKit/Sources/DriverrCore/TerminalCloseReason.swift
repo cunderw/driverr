@@ -5,7 +5,7 @@
 /// `DriverrHerdr`.
 ///
 /// Every case except `.streamEnded` and `.processFailed` comes from a `terminal.closed`
-/// record. Those two are read off the channel: a stream that stopped silently, and the
+/// record or a core's CLOSE frame. Those two are read off the channel: a stream that stopped silently, and the
 /// bridge process's exit status. See `.streamEnded` for why the split matters.
 ///
 /// An `Error` so `PaneBridge.output` and `PaneObserver.output` can throw it. `.paneClosed`
@@ -33,6 +33,12 @@ public enum TerminalCloseReason: Error, Equatable, Sendable {
   /// Every pane on the host ends and none was closed. There is nothing to reattach to until
   /// herdr is back, so this neither reattaches nor claims a close. The token is back.
   case serverShuttingDown
+  /// herdr-core lost a kept terminal's program, and a new shell is on the way.
+  ///
+  /// The terminal is still listed, so this is not a close, and it reattaches once the shell
+  /// is up. Until then an attach is refused as unavailable. Sent as a CLOSE frame with
+  /// `finished_ms` null.
+  case lost
   /// A reason string this build does not recognise, kept verbatim.
   case other(String)
   /// The stream stopped with no `terminal.closed` record: the transport dropped, or the

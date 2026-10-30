@@ -107,8 +107,8 @@ struct ConnectionHerdrSocketPathTests {
     #expect(model.phase == .connected)
 
     let size = TerminalSize(columns: 80, rows: 24)
-    _ = await model.observePane(terminalID: "term_1", size: size)
-    _ = await model.openPaneBridge(terminalID: "term_1", size: size)
+    _ = await model.observePane(paneID: "w1:p1", terminalID: "term_1", size: size)
+    _ = await model.openPaneBridge(paneID: "w1:p1", terminalID: "term_1", size: size)
 
     let streamed = await transport.streamedCommands
     let observe = try #require(streamed.first { $0.contains("terminal session observe") })

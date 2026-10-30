@@ -785,12 +785,20 @@ final class ConnectionModel {
   ///   that failure is usually a link already dead with the loss still on its way, and
   ///   recording it would overwrite the loss so the reconnect never starts. `observePane`
   ///   declines for the same reason.
+  ///
+  /// **A core pane's failure never reaches `phase`.** `.failed` says the host is unusable, and
+  /// one terminal refusing an attach says nothing about the host. Its next step is the
+  /// scene's: a kept terminal mid-restart refuses every attach until its shell is up.
   func openPaneBridge(
+    paneID: String,
     terminalID: String,
     size: TerminalSize,
     takeover: Bool = false,
     recordsFailure: Bool = true
   ) async -> (any PaneBridge)? {
+    if let attacher = herdr?.paneAttacher(for: paneID) {
+      return try? await attacher.open(terminalID: terminalID, size: size)
+    }
     guard let client = bridgeClient() else { return nil }
     do {
       return try await client.open(terminalID: terminalID, size: size, takeover: takeover)
@@ -808,7 +816,14 @@ final class ConnectionModel {
   /// An observer never takes herdr's attach token or resizes the pane's PTY, so a scene can
   /// hold several without disturbing the user's desk. A failure is not recorded in `phase`:
   /// a pane nobody is looking at failing to warm up is not the user's concern.
-  func observePane(terminalID: String, size: TerminalSize) async -> (any PaneObserver)? {
+  func observePane(
+    paneID: String,
+    terminalID: String,
+    size: TerminalSize
+  ) async -> (any PaneObserver)? {
+    if let attacher = herdr?.paneAttacher(for: paneID) {
+      return try? await attacher.observe(terminalID: terminalID, size: size)
+    }
     guard let client = bridgeClient() else { return nil }
     return try? await client.observe(terminalID: terminalID, size: size)
   }

@@ -57,9 +57,6 @@ final class TerminalSceneModel {
     case local
   }
 
-  /// Why a herdr-core terminal does not open. See `refusingCorePane`.
-  static let coreUnavailable = "Driverr can't open a herdr-core terminal yet."
-
   /// Something the scene has to say about the current target. One value, so two cannot be
   /// on screen at once.
   enum Notice: Equatable {
@@ -125,6 +122,8 @@ final class TerminalSceneModel {
   /// Targets whose reattach is in flight. The screen reads it only to stay quiet, so
   /// "The session ended." is not printed over the last frame during the round trip.
   private(set) var reattaching: Set<TerminalTarget> = []
+  /// Kept terminals being retried until their new shell answers. See `awaitRestart(of:generation:)`.
+  private var restarts: [TerminalTarget: Task<Void, Never>] = [:]
   /// Controllers that are open but have not painted yet. The observer they will replace
   /// is still on screen.
   private var pending: [TerminalTarget: Entry] = [:]
@@ -150,6 +149,11 @@ final class TerminalSceneModel {
   /// How long one step may run before the chain stops waiting for it; see `enqueue`.
   /// Injected so a test can assert the recovery quickly.
   private let stepDeadline: Duration
+
+  /// How often a lost terminal is tried, and how many times. About a minute more than the
+  /// core's own backoff reaches, so a slow recovery is still caught.
+  private static let restartInterval: Duration = .seconds(2)
+  private static let restartAttempts = 60
 
   /// The same as `PaneComposerCopy.sendDeadline`: how long a herdr command that is not
   /// coming back may hold the app. Generous on purpose, because abandoning a slow open
@@ -607,6 +611,7 @@ final class TerminalSceneModel {
     paneThumbnails?.close()
     reconnectWork?.cancel()
     reconnectWork = nil
+    stopAwaitingRestarts()
     let all = entries
     let opening = Array(pending.values)
     entries = []
@@ -658,6 +663,7 @@ final class TerminalSceneModel {
       // backoff and leaving the scene must not queue behind that. Its re-open goes through
       // the chain, so the loop catches it.
       await reconnectWork?.value
+      for restart in Array(restarts.values) { await restart.value }
       if generation == workGeneration { return }
     }
   }
@@ -703,8 +709,7 @@ final class TerminalSceneModel {
   /// Opens the read-only half for a target that has nothing open.
   ///
   /// Silent about failure, like `ConnectionModel.observePane`: the reader did not ask for an
-  /// observer, and an unobservable pane still has a conversation to read. The one exception
-  /// is a core pane, which `makeObserver` refuses with a notice. See `refusingCorePane`.
+  /// observer, and an unobservable pane still has a conversation to read.
   private func openObserver(for target: TerminalTarget) async {
     guard !isClosed else { return }
     // **`.ended` counts as nothing open.** Otherwise a chat pane whose observe stream ended
@@ -725,9 +730,9 @@ final class TerminalSceneModel {
   /// after that would never be handed back.
   private func makeObserver(for target: TerminalTarget) async -> Entry? {
     guard !isClosed else { return nil }
-    guard case .pane(let paneID) = target, !refusingCorePane(paneID),
-      let terminalID = terminalID(for: paneID),
-      let observer = await model.observePane(terminalID: terminalID, size: viewportSize)
+    guard case .pane(let paneID) = target, let terminalID = terminalID(for: paneID),
+      let observer = await model.observePane(
+        paneID: paneID, terminalID: terminalID, size: viewportSize)
     else { return nil }
     // Checked again after the await. The stream is open on the host by now, so it is
     // released, not dropped.
@@ -820,6 +825,7 @@ final class TerminalSceneModel {
     notices[target] = nil
     reattachAttempts[target] = nil
     reattaching.remove(target)
+    restarts.removeValue(forKey: target)?.cancel()
     guard let index = entries.firstIndex(where: { $0.target == target }) else { return }
     await release(entries.remove(at: index))
   }
@@ -863,10 +869,11 @@ final class TerminalSceneModel {
       )
 
     case .pane(let paneID):
-      guard let pane = pane(id: paneID), !refusingCorePane(paneID) else { return }
+      guard let pane = pane(id: paneID) else { return }
       if let terminalID = pane.terminalID {
         await openBridge(
           target: target,
+          paneID: paneID,
           terminalID: terminalID,
           takeover: takeover,
           automatic: automatic
@@ -897,25 +904,16 @@ final class TerminalSceneModel {
     }
   }
 
-  /// Whether this is a herdr-core terminal, which nothing here can open until #18, with a
-  /// notice on it if so.
-  ///
-  /// Both bridge commands are built from the control's binary, past `CombinedControl`'s
-  /// routing, so without this a core address reaches `herdr terminal session control`.
-  private func refusingCorePane(_ paneID: String) -> Bool {
-    guard CorePaneID.isCore(paneID) else { return false }
-    notices[.pane(id: paneID)] = .failed(.herdrCommandFailed(reason: Self.coreUnavailable))
-    return true
-  }
-
   private func openBridge(
     target: TerminalTarget,
+    paneID: String,
     terminalID: String,
     takeover: Bool,
     automatic: Bool = false
   ) async {
     guard
       let bridge = await model.openPaneBridge(
+        paneID: paneID,
         terminalID: terminalID,
         size: viewportSize,
         takeover: takeover,
@@ -980,8 +978,12 @@ final class TerminalSceneModel {
   /// view, with no banner. Through `pending`, `controllerPainted` swaps on herdr's first
   /// frame. `switchingToAnObservedPaneSwapsOnTheFirstFrame` and
   /// `aReattachKeepsTheLastFrameUntilTheNewOnePaints` cover the two cases.
+  ///
+  /// **Not a core observer.** Its bytes arrive at the terminal's width, not the phone's, so
+  /// what it shows is garbled and blank for one round trip beats keeping it up.
   private func keepsPaintingUntilPromoted(_ target: TerminalTarget) -> Bool {
     guard let role = entry(for: target)?.role else { return false }
+    if role == .observer, case .pane(let id) = target, CorePaneID.isCore(id) { return false }
     return role == .observer || role == .ended
   }
 
@@ -1069,7 +1071,8 @@ final class TerminalSceneModel {
       //
       // The `detached` receipt for our own `terminal.release` never gets here: both feeds
       // drop it on `Task.isCancelled`.
-      case .paneClosed, .other, .streamEnded, .detached, .serverShuttingDown, .processFailed:
+      case .paneClosed, .other, .streamEnded, .detached, .serverShuttingDown, .processFailed,
+        .lost:
         switch TerminalEndDisposition.forSessionThatEnded(
           reason: reason,
           statedByHerdr: statedByHerdr,
@@ -1080,6 +1083,7 @@ final class TerminalSceneModel {
         case .failed(let message):
           notices[target] = .failed(.channelFailed(reason: message))
         case .reattach: reattach(target, generation: generation)
+        case .awaitRestart: awaitRestart(of: target, generation: generation)
         }
       }
     }
@@ -1110,7 +1114,8 @@ final class TerminalSceneModel {
   private static func statedByHerdr(_ reason: TerminalCloseReason) -> Bool {
     switch reason {
     case .streamEnded, .processFailed: return false
-    case .refused, .takenOver, .paneClosed, .detached, .serverShuttingDown, .other: return true
+    case .refused, .takenOver, .paneClosed, .detached, .serverShuttingDown, .lost, .other:
+      return true
     }
   }
 
@@ -1139,6 +1144,40 @@ final class TerminalSceneModel {
       // Re-checked after the queue: a `close()` or a loss in between makes the open wrong.
       guard !self.isClosed, self.linkGeneration == generation else { return }
       await self.openSurface(for: target, automatic: true)
+    }
+  }
+
+  /// Keeps trying a kept terminal that lost its program, until its new shell answers.
+  ///
+  /// **A timer, not `treeChanged()`.** `.onChange` fires only on a change, and a lost terminal
+  /// stays in the tree, so a restart inside one poll would never be seen. Runs until the
+  /// entry stops being `.ended`, the pane leaves the tree, or the link changes.
+  ///
+  /// An attempt refused as unavailable is silent and counts against nothing, because that is
+  /// what the wait is. The sentence stays up until a frame clears it, in `streamPainted`.
+  private func awaitRestart(of target: TerminalTarget, generation: Int) {
+    notices[target] = .failed(
+      .channelFailed(reason: TerminalEndDisposition.awaitingRestartMessage))
+    restarts[target]?.cancel()
+    restarts[target] = Task { [weak self, wait] in
+      for _ in 0..<Self.restartAttempts {
+        await wait(Self.restartInterval)
+        guard let self, !Task.isCancelled else { return }
+        guard !isClosed, linkGeneration == generation,
+          entry(for: target)?.role == .ended
+        else { return }
+        guard paneIsStillInTree(target) else {
+          notices[target] = .closed
+          return
+        }
+        // Untargeted, so a timeout writes no notice over the one up. Awaited, so a slow host
+        // gets one attempt at a time and the chain does not fill with them.
+        enqueue { [weak self] in await self?.openSurface(for: target, automatic: true) }
+        await work.value
+      }
+      guard let self, !Task.isCancelled, entry(for: target)?.role == .ended else { return }
+      notices[target] = .failed(
+        .channelFailed(reason: TerminalEndDisposition.reattachFailedMessage))
     }
   }
 
@@ -1176,6 +1215,7 @@ final class TerminalSceneModel {
     // user left. Bumped before the drop, so every end from here on is stale.
     linkGeneration += 1
     dropEverySession()
+    stopAwaitingRestarts()
     notices = [:]
     // The link explains every end, so none counts against the reattach budget.
     reattachAttempts = [:]
@@ -1290,6 +1330,11 @@ final class TerminalSceneModel {
     }
   }
 
+  private func stopAwaitingRestarts() {
+    for restart in restarts.values { restart.cancel() }
+    restarts = [:]
+  }
+
   // MARK: - Feeds
 
   /// The controller's frames, tapped on the way past for two things a `TerminalSession`
@@ -1356,6 +1401,15 @@ final class TerminalSceneModel {
       }
     }
 
+    if let raw = bridge as? any RawTerminalStream {
+      let feed = TerminalFeed(
+        raw: raw,
+        output: stream,
+        send: { try await bridge.send(bytes: $0) },
+        resize: { try await bridge.resize(to: $0) }
+      )
+      return (feed, pump)
+    }
     let feed = TerminalFeed(
       output: stream,
       send: { try await bridge.send(bytes: $0) },
@@ -1425,9 +1479,18 @@ final class TerminalSceneModel {
       }
     }
 
+    let send: @Sendable (Data) async throws -> Void = { @MainActor [weak self] data in
+      self?.accept(data, from: target)
+    }
+    if let raw = observer as? any RawTerminalStream {
+      // Credit as usual, and `focus`, which an observer ignores, so that SwiftTerm's report of
+      // a paint's `?1004h` is dropped rather than held and typed at the controller.
+      let feed = TerminalFeed(raw: raw, output: stream, send: send, resize: { _ in })
+      return (feed, pump)
+    }
     let feed = TerminalFeed(
       output: stream,
-      send: { @MainActor [weak self] data in self?.accept(data, from: target) },
+      send: send,
       resize: { _ in },
       close: {},
       scroll: nil,

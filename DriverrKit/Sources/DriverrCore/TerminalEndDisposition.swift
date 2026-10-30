@@ -20,6 +20,11 @@ public enum TerminalEndDisposition: Equatable, Sendable {
   /// because saying a pane closed when Driverr does not know is the thing to avoid. The
   /// sentence travels with the case because each arrival is different news.
   case failed(message: String)
+  /// A new shell is coming to this terminal. Try again until it answers, and say so meanwhile.
+  case awaitRestart
+
+  /// What a terminal says while `awaitRestart` runs.
+  public static let awaitingRestartMessage = "Waiting for a new shell."
 
   /// The sentence for a reattach that did not take. Pinned by a test.
   ///
@@ -92,6 +97,10 @@ public enum TerminalEndDisposition: Equatable, Sendable {
     // herdr's own non-close reasons are read before `statedByHerdr`, or the stated-close
     // case below would give them the closed banner.
     switch reason {
+    // A kept terminal stays listed through a loss, so a pane gone from the tree has been
+    // removed since, and no shell is coming to it.
+    case .lost:
+      return paneIsStillInTree ? .awaitRestart : .closed
     // The bridge process ran and refused. It arrives with no `terminal.closed` record, and
     // the pane may still be running. No reattach: the same command would get the same
     // answer, so retrying is the reader's Retry. Shows herdr's own words when it left any.

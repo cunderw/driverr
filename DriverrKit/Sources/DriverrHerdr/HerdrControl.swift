@@ -33,6 +33,12 @@ public protocol HerdrControl: Sendable {
   /// `ConnectionModel.connect()`. Defaulted to `self`: only the TUI has sessions.
   func bound(toSocketPath path: String?) -> any HerdrControl
 
+  /// What opens this pane, when it is not the bridge command built from `binaryPath`.
+  ///
+  /// `nil`, the default, means that command. Defaulted, because only a core has its own
+  /// connection to open a pane on.
+  func paneAttacher(for paneID: String) -> (any PaneAttacher)?
+
   /// Types literal text into a pane, as if typed at the keyboard. Needs no PTY.
   ///
   /// **A trailing newline stays literal and does not submit.** Use `submitText` to send.
@@ -90,6 +96,7 @@ public protocol HerdrControl: Sendable {
 
 extension HerdrControl {
   public func bound(toSocketPath path: String?) -> any HerdrControl { self }
+  public func paneAttacher(for paneID: String) -> (any PaneAttacher)? { nil }
 }
 
 /// Drives herdr through its command-line interface.

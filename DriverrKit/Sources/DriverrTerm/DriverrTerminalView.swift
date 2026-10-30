@@ -85,6 +85,7 @@
       view.wantsKeyboardFocus = wantsKeyboardFocus
       view.keyboardNotice = keyboardNotice
       view.copyNotice = copyNotice
+      view.focusChanged = { [session] in session.focus($0) }
 
       // A pane's history lives in herdr, so a drag becomes `terminal.scroll` and the
       // scroll view is turned off. A pty keeps SwiftTerm's local scrollback.
@@ -609,6 +610,9 @@
       }
     }
 
+    /// Told when this view gains or loses the keyboard. `TerminalFeed.focus` is what wants it.
+    var focusChanged: ((Bool) -> Void)?
+
     /// Set between `wantsKeyboardFocus` turning off and the resign it schedules, so a tap in
     /// that gap does not click.
     private(set) var resignPending = false
@@ -646,6 +650,7 @@
     override public func becomeFirstResponder() -> Bool {
       let granted = super.becomeFirstResponder()
       keyboardNotice.firstResponderChanged(granted)
+      if granted { focusChanged?(true) }
       return granted
     }
 
@@ -660,7 +665,10 @@
       shiftReturnPending = false
       let resigned = super.resignFirstResponder()
       // A refused resign changed nothing, so do not report it as dismissed.
-      if resigned { keyboardNotice.firstResponderChanged(false) }
+      if resigned {
+        keyboardNotice.firstResponderChanged(false)
+        focusChanged?(false)
+      }
       return resigned
     }
 

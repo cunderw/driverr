@@ -34,6 +34,8 @@ public actor FakeControl: HerdrControl {
   /// something. A blank screen is an answer and a refused read is a fault, and tests must
   /// reach both.
   private let screenOverride: PaneScreen?
+  /// What opens a core pane, for a test of that path. A pane on the TUI gets the bridge.
+  private let attacher: (any PaneAttacher)?
 
   /// Every snapshot request, refused ones included.
   public private(set) var snapshotCount = 0
@@ -47,13 +49,15 @@ public actor FakeControl: HerdrControl {
       version: "0.9.1",
       protocolVersion: HerdrProtocol.lastVerified
     ),
-    screen: PaneScreen? = nil
+    screen: PaneScreen? = nil,
+    attacher: (any PaneAttacher)? = nil
   ) {
     script = []
     self.tree = tree
     self.failure = failure
     availabilityOverride = availability
     screenOverride = screen
+    self.attacher = attacher
   }
 
   /// A session that changes as it is polled, for exercising live updates.
@@ -63,6 +67,7 @@ public actor FakeControl: HerdrControl {
     failure = nil
     availabilityOverride = .ready(version: "0.9.1", protocolVersion: HerdrProtocol.lastVerified)
     screenOverride = nil
+    attacher = nil
   }
 
   /// A fake that fails, for exercising the error surfaces without a broken host.
@@ -88,6 +93,10 @@ public actor FakeControl: HerdrControl {
   public func availability() async -> HerdrAvailability {
     if let failure, case .herdrNotInstalled = failure { return .notInstalled }
     return availabilityOverride
+  }
+
+  public nonisolated func paneAttacher(for paneID: String) -> (any PaneAttacher)? {
+    CorePaneID.isCore(paneID) ? attacher : nil
   }
 
   public nonisolated func attachCommand(for pane: Pane) -> String {

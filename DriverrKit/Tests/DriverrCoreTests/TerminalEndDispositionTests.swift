@@ -252,4 +252,30 @@ struct TerminalEndDispositionTests {
     #expect(disposition(.refused) == .closed)
     #expect(disposition(.takenOver) == .closed)
   }
+
+  @Test("a kept terminal that lost its program waits for the new shell, however often it did")
+  func aLostTerminalAwaitsRestart() {
+    for attempts in [0, 1, 5] {
+      #expect(
+        TerminalEndDisposition.forSessionThatEnded(
+          reason: .lost,
+          statedByHerdr: true,
+          paneIsStillInTree: true,
+          reattachAttempts: attempts
+        ) == .awaitRestart
+      )
+    }
+  }
+
+  @Test("a lost terminal that has left the tree is closed, because no shell is coming")
+  func aLostTerminalThatLeftIsClosed() {
+    #expect(
+      TerminalEndDisposition.forSessionThatEnded(
+        reason: .lost,
+        statedByHerdr: true,
+        paneIsStillInTree: false,
+        reattachAttempts: 0
+      ) == .closed
+    )
+  }
 }

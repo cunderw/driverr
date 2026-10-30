@@ -41,6 +41,9 @@ public final class TerminalSession {
   /// How much output is waiting for a renderer, so a test can tell "not read yet" from
   /// "buffered".
   var bufferedByteCount: Int { pending.count }
+  /// The last focus sent to the far side, so a repeat grant costs nothing. A grant counts as
+  /// activity on a core, so a repeat would not be free.
+  private var lastSentFocus: Bool?
   /// The last size actually sent to the far side, so an identical repeat costs nothing.
   private var lastSentSize: TerminalSize?
   /// The newest size the renderer has reported but that has not been sent yet.
@@ -161,6 +164,7 @@ public final class TerminalSession {
     let buffered = pending
     pending.removeAll()
     sink(buffered[...])
+    feed.consumed?(buffered.count)
   }
 
   /// Stops rendering without touching the connection. Later bytes are buffered for the
@@ -191,6 +195,9 @@ public final class TerminalSession {
     case .closed, .failed: return
     case .idle, .running: break
     }
+    // Told through `focus(_:)` when the feed takes that. SwiftTerm's report on top would say
+    // it twice, and as typed bytes a focus-out would count as activity and take the size.
+    if feed.focus != nil, Self.isFocusReport(bytes) { return }
     let data = Data(bytes)
     outbox.yield { [feed] in
       // A failed write means the channel is gone, and the pump reports that.
@@ -200,6 +207,22 @@ public final class TerminalSession {
 
   public func send(text: String) {
     send(ArraySlice(Array(text.utf8)))
+  }
+
+  /// SwiftTerm's two focus reports, whole. Anything else a program asked for goes out.
+  private static func isFocusReport(_ bytes: ArraySlice<UInt8>) -> Bool {
+    bytes.elementsEqual([0x1B, 0x5B, 0x49]) || bytes.elementsEqual([0x1B, 0x5B, 0x4F])
+  }
+
+  /// Tells the far side whether this terminal has the keyboard, if it wants to know.
+  public func focus(_ gained: Bool) {
+    guard let focus = feed.focus, gained != lastSentFocus else { return }
+    switch state {
+    case .closed, .failed: return
+    case .idle, .running: break
+    }
+    lastSentFocus = gained
+    outbox.yield { try? await focus(gained) }
   }
 
   /// Tells the far side the window changed, once the sizes stop moving.
@@ -304,6 +327,7 @@ public final class TerminalSession {
     guard !bytes.isEmpty else { return }
     if let sink {
       sink(bytes[...])
+      feed.consumed?(bytes.count)
     } else {
       pending.append(contentsOf: bytes)
     }

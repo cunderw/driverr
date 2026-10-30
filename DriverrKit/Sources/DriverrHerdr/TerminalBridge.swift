@@ -69,6 +69,29 @@ public protocol PaneObserver: Sendable {
   func release() async
 }
 
+/// A pane whose bytes are the program's own, with no frames around them.
+///
+/// herdr-core's attach stream, and so a pane that behaves like a pty: its history is in the
+/// local emulator and a tap is encoded locally. A `PaneBridge` or `PaneObserver` that is also
+/// this says so, and the feed built from it has no `scroll` or `click`.
+public protocol RawTerminalStream: Sendable {
+  /// This many bytes have reached the emulator, so the far side may send more.
+  ///
+  /// Never waits. Called from the same turn that rendered them.
+  func consumed(_ bytes: Int)
+  /// Whether this viewer has the keyboard. It reaches a program that asked for focus events.
+  func focus(_ gained: Bool) async throws
+}
+
+/// Opens a pane without a bridge command, for a backend that holds its own connection.
+///
+/// See `HerdrControl.paneAttacher(for:)`.
+public protocol PaneAttacher: Sendable {
+  /// A viewer that can type, and that takes the terminal's size as it opens.
+  func open(terminalID: String, size: TerminalSize) async throws -> any PaneBridge
+  func observe(terminalID: String, size: TerminalSize) async throws -> any PaneObserver
+}
+
 /// Opens panes through herdr's control bridge.
 public struct TerminalBridgeClient: Sendable {
   private let binaryPath: String
