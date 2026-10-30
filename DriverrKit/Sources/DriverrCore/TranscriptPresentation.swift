@@ -345,7 +345,7 @@ public struct TranscriptNotice: Equatable, Sendable {
     switch status {
     case .working, .done: true
     // Blocked can be a new session on its trust prompt, before any prompt.
-    case .blocked, .idle, .unknown, nil: false
+    case .blocked, .error, .idle, .unknown, nil: false
     }
   }
 
@@ -735,7 +735,7 @@ public struct PendingToolCallNotice: Hashable, Sendable {
       label = "\(TranscriptChatCopy.pendingWorking) · \(named)"
       isAsking = false
       groups = []
-    case .idle, .done, .unknown, nil:
+    case .idle, .done, .error, .unknown, nil:
       label = "\(TranscriptChatCopy.pendingUnanswered) · \(named)"
       isAsking = false
       groups = []

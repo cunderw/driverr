@@ -281,6 +281,9 @@ public actor FakeControl: HerdrControl {
     case .done:
       message = "Done — the suite is green and the branch is pushed."
       continuation = "Nothing else is waiting on you here."
+    case .error:
+      message = "The build failed and I stopped there."
+      continuation = "The log is above."
     case .working:
       message = "Running the tests now; the first build is cold so it will be a while."
       continuation = "I'll say something when it lands."
@@ -640,6 +643,24 @@ public actor FakeControl: HerdrControl {
   /// until the next poll.
   public static let treeWithoutTheBlockedPane: SessionTree = mapPanes(seededTree) { pane in
     pane.id == "w1:p2" ? nil : pane
+  }
+
+  /// `treeWithoutTheBlockedPane` with `w2:p1`'s Gemini failed, so nothing is blocked and one
+  /// pane wears the `error` badge.
+  public static let treeWithAFailedAgent: SessionTree = mapPanes(treeWithoutTheBlockedPane) {
+    pane in
+    guard pane.id == "w2:p1", let agent = pane.agent else { return pane }
+    return Pane(
+      id: pane.id,
+      tabID: pane.tabID,
+      workspaceID: pane.workspaceID,
+      title: pane.title,
+      agent: Agent(name: agent.name, kind: agent.kind, status: .error, session: agent.session),
+      terminalID: pane.terminalID,
+      directory: pane.directory,
+      isFocused: pane.isFocused,
+      viewportRows: pane.viewportRows
+    )
   }
 
   /// A pane that vanishes for exactly one poll and comes back.

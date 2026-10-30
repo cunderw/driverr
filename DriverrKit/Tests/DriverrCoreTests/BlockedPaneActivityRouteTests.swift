@@ -174,6 +174,24 @@ struct BlockedPaneActivityRouteTests {
     LastPaneRecord(paneID: paneID, witness: witness)
   }
 
+  /// A core's address is permanent, and is the witness, so a machine's terminal resumes too.
+  @Test("a terminal on a core's machine survives the URL and resumes")
+  func aCoreTerminalResumes() {
+    let target = BlockedPaneActivityRoute.Target.pane(hostID: hostID, paneID: "core:box/t1")
+    #expect(
+      BlockedPaneActivityRoute.target(of: BlockedPaneActivityRoute.url(for: target)) == target)
+
+    let pane = Pane(
+      id: "core:box/t1", tabID: "x", workspaceID: "y", title: "z", terminalID: "box/t1")
+    #expect(pane.sessionWitness == "box/t1")
+    #expect(
+      BlockedPaneActivityRoute.resumed(
+        .host(hostID: hostID),
+        lastPane: record("core:box/t1", "box/t1"),
+        panesOnHost: ["core:box/t1": "box/t1"]
+      ) == target)
+  }
+
   @Test("a calm card resumes the pane the host was last open on")
   func aCalmCardResumesTheLastPane() {
     #expect(

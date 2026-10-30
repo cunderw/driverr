@@ -22,9 +22,9 @@ enum CoreProbe {
 /// A real core over a real SSH exec channel, so the frames have crossed a transport no fake
 /// shares a line of code with.
 ///
-/// Off unless `DRIVERR_LIVE_CORE=1` and a core is installed here. It sends only `hello` and
-/// `terminal.list`, which change nothing, but `hc connect` starts a core when none is running,
-/// which is why a default run leaves it out. Run it by hand:
+/// Off unless `DRIVERR_LIVE_CORE=1` and a core is installed here. It sends only `hello`,
+/// `terminal.list` and `doc.get`, which change nothing, but `hc connect` starts a core when
+/// none is running, which is why a default run leaves it out. Run it by hand:
 ///
 /// ```sh
 /// DRIVERR_LIVE_CORE=1 swift test --package-path DriverrKit --filter CoreOverSSH
@@ -97,6 +97,30 @@ struct CoreOverSSHTests {
     let tree = try await control.snapshot()
     #expect(tree.allPanes.allSatisfy { CorePaneID.isCore($0.id) && $0.terminalID != nil })
     print("core \(version) listed \(tree.allPanes.count) terminals over SSH")
+  }
+
+  /// Only what holds on any machine, because the terminals are whoever ran this. The print is
+  /// the part to read: the groups in the order the desktop app shows them.
+  @Test("a real core's snapshot comes back in groups")
+  func snapshot() async throws {
+    let server = try await server()
+    defer { Task { await server.stop() } }
+    let transport = try await connectedTransport(server)
+    defer { Task { await transport.disconnect() } }
+
+    let binary = try #require(CoreProbe.binary)
+    let control = CoreControl(binaryPath: binary) { command in
+      Stream(stream: try await transport.execStream(command: command))
+    }
+
+    let tree = try await control.snapshot()
+    for workspace in tree.workspaces {
+      #expect(CorePaneID.isCore(workspace.id) && !workspace.label.isEmpty)
+      #expect(workspace.tabs.allSatisfy { !$0.panes.isEmpty && !$0.label.isEmpty })
+      print("group \(workspace.label): \(workspace.tabs.map(\.label)) \(workspace.status as Any)")
+    }
+    let agents = tree.allPanes.filter { $0.agent != nil }
+    print("snapshot: \(tree.allPanes.count) terminals, \(agents.count) agents")
   }
 
   @Test("discovery finds it over the same channels the app uses")

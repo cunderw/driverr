@@ -31,9 +31,16 @@ public struct CoreControl: HerdrControl {
   public func snapshot() async throws -> SessionTree {
     let (connection, handshake) = await link.established()
     guard let connection else { throw Self.failure(for: handshake) }
+    // Beside the list, on every poll, until #19's `doc` event says when it changed. Only this
+    // core's: a machine it added has its own document, and `on` would be a call per machine.
+    async let document = try? connection.call(
+      "doc.get",
+      params: CoreDocGetParams(name: CoreAppDocument.name),
+      as: CoreDocGetResult<CoreAppDocument>.self
+    )
     let list = try await connection.call(
       "terminal.list", params: CoreNoParams(), as: CoreListResult.self)
-    return CoreSnapshotMapper.tree(from: list)
+    return CoreSnapshotMapper.tree(from: list, document: await link.settled(document))
   }
 
   /// Asks by connecting. `hc connect` starts a core if none is running, and nothing else
@@ -114,6 +121,7 @@ actor CoreLink {
 
   private var current: Established?
   private var opening: Task<Established, Never>?
+  private var document: CoreAppDocument?
 
   init(command: String, callDeadline: Duration, open: @escaping StreamRunner) {
     self.command = command
@@ -147,6 +155,15 @@ actor CoreLink {
     opening = nil
     current = established
     return established
+  }
+
+  /// The document to order this poll by, given what the read came back with.
+  ///
+  /// `nil` is a failed read, which keeps the last good one, so one bad poll cannot reorder
+  /// the rows under a thumb. A read that found no document clears it.
+  func settled(_ read: CoreDocGetResult<CoreAppDocument>?) -> CoreAppDocument? {
+    if let read { document = read.value }
+    return document
   }
 
   func close() async {

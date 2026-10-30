@@ -232,6 +232,27 @@ struct SessionTreeTests {
     #expect(counts.shells == 2)
   }
 
+  /// `error` is the one state that sorts above `done` and asks for nothing.
+  @Test("a failed agent sorts second and is not waiting on anyone")
+  func aFailedAgentIsNotBlocked() {
+    let tree = SessionTree(workspaces: [
+      Workspace(
+        id: "w1", number: 1, label: "a",
+        tabs: [
+          Tab(
+            id: "t1", workspaceID: "w1", number: 1, label: "x",
+            panes: [
+              pane("done", status: .done), pane("failed", status: .error),
+              pane("blocked", status: .blocked),
+            ])
+        ])
+    ])
+    #expect(tree.panesByUrgency.map(\.id) == ["blocked", "failed", "done"])
+    #expect(tree.blockedPanes.map(\.id) == ["blocked"])
+    #expect(tree.loneBlockedPane?.id == "blocked")
+    #expect(tree.agentStatusCounts.errors == 1)
+  }
+
   @Test("an empty tree counts nothing in any state")
   func agentStatusCountsOfAnEmptyTree() {
     #expect(SessionTree.empty.agentStatusCounts == AgentStatusCounts())

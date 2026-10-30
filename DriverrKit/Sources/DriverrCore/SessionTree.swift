@@ -26,6 +26,13 @@ public struct AgentSession: Hashable, Sendable {
   }
 }
 
+/// What a blocked agent is waiting for, when the program said.
+public enum AgentBlockedKind: String, Hashable, Sendable {
+  case permission
+  case question
+  case auth
+}
+
 /// A coding agent herdr recognised in a pane, and what it is doing.
 ///
 /// Name, status, `kind` and `session` travel together so that a shell pane with a status
@@ -42,17 +49,22 @@ public struct Agent: Hashable, Sendable {
   public let status: AgentStatus
   /// The agent's own session, when a herdr integration reported one. See `AgentSession`.
   public let session: AgentSession?
+  /// What it is blocked on, from a herdr-core report. Always `nil` unless `status` is
+  /// `blocked`, and for a word this build does not know.
+  public let blockedKind: AgentBlockedKind?
 
   public init(
     name: String,
     kind: String? = nil,
     status: AgentStatus,
-    session: AgentSession? = nil
+    session: AgentSession? = nil,
+    blockedKind: AgentBlockedKind? = nil
   ) {
     self.name = name
     self.kind = kind
     self.status = status
     self.session = session
+    self.blockedKind = blockedKind
   }
 }
 
@@ -174,7 +186,7 @@ public struct Tab: Identifiable, Hashable, Sendable {
   public var panesByUrgency: [Pane] { sortedByUrgency(panes) }
 }
 
-/// Blocked first, then done, working, idle and unknown, then panes with no agent.
+/// Blocked first, then error, done, working, idle and unknown, then panes with no agent.
 ///
 /// Stable, so a list does not reshuffle whenever an unrelated agent changes state. Swift's
 /// `sorted(by:)` is not stable, hence the index tie-break.
@@ -247,6 +259,7 @@ public enum TabHeaderStyle: Hashable, Sendable {
 /// cannot drift from the tree's counts.
 public struct AgentStatusCounts: Codable, Hashable, Sendable {
   public var blocked: Int
+  public var errors: Int
   public var done: Int
   public var working: Int
   public var idle: Int
@@ -256,6 +269,7 @@ public struct AgentStatusCounts: Codable, Hashable, Sendable {
 
   public init(
     blocked: Int = 0,
+    errors: Int = 0,
     done: Int = 0,
     working: Int = 0,
     idle: Int = 0,
@@ -263,6 +277,7 @@ public struct AgentStatusCounts: Codable, Hashable, Sendable {
     shells: Int = 0
   ) {
     self.blocked = blocked
+    self.errors = errors
     self.done = done
     self.working = working
     self.idle = idle
@@ -270,19 +285,29 @@ public struct AgentStatusCounts: Codable, Hashable, Sendable {
     self.shells = shells
   }
 
+  /// `errors` may be absent. A Live Activity's payload outlives the build that wrote it, and
+  /// builds before `error` existed wrote none.
+  public init(from decoder: any Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    blocked = try container.decode(Int.self, forKey: .blocked)
+    errors = try container.decodeIfPresent(Int.self, forKey: .errors) ?? 0
+    done = try container.decode(Int.self, forKey: .done)
+    working = try container.decode(Int.self, forKey: .working)
+    idle = try container.decode(Int.self, forKey: .idle)
+    unknown = try container.decode(Int.self, forKey: .unknown)
+    shells = try container.decode(Int.self, forKey: .shells)
+  }
+
   /// "Nothing needs you · 2 working · 1 finished", so the app has something to say when
   /// nothing is blocked.
   ///
   /// `nil` when anything is blocked, because the blocked panes are the answer then. Zero
-  /// counts are left out. The host row and the session tree both read this, so they word
-  /// the same state the same way.
+  /// counts are left out. A failed agent drops the "Nothing needs you": it is not asking for
+  /// anything, but the sentence would read as all clear. The host row and the session tree
+  /// both read this, so they word the same state the same way.
   public var calmSummary: String? {
     guard blocked == 0 else { return nil }
-    var parts = ["Nothing needs you"]
-    if working > 0 { parts.append("\(working) working") }
-    if done > 0 { parts.append("\(done) finished") }
-    if idle > 0 { parts.append("\(idle) idle") }
-    if shells > 0 { parts.append("\(shells) \(shells == 1 ? "shell" : "shells")") }
+    let parts = (errors > 0 ? [] : ["Nothing needs you"]) + clauses
     return parts.joined(separator: " · ")
   }
 
@@ -292,18 +317,24 @@ public struct AgentStatusCounts: Codable, Hashable, Sendable {
   /// guard, because an escalated card still words its calm panes. An empty card says
   /// "Connected". `calmSummary` stays separate so two other screens do not change with it.
   public var activitySummary: String {
+    clauses.isEmpty ? "Connected" : clauses.joined(separator: " · ")
+  }
+
+  private var clauses: [String] {
     var parts: [String] = []
+    if errors > 0 { parts.append("\(errors) failed") }
     if working > 0 { parts.append("\(working) working") }
     if done > 0 { parts.append("\(done) finished") }
     if idle > 0 { parts.append("\(idle) idle") }
     if shells > 0 { parts.append("\(shells) \(shells == 1 ? "shell" : "shells")") }
-    return parts.isEmpty ? "Connected" : parts.joined(separator: " · ")
+    return parts
   }
 
   /// Two hosts' panes as one set of numbers, for the aggregated card.
   public static func + (lhs: Self, rhs: Self) -> Self {
     AgentStatusCounts(
       blocked: lhs.blocked + rhs.blocked,
+      errors: lhs.errors + rhs.errors,
       done: lhs.done + rhs.done,
       working: lhs.working + rhs.working,
       idle: lhs.idle + rhs.idle,
@@ -339,7 +370,7 @@ public struct SessionTree: Hashable, Sendable {
     allPanes.first { $0.id == id }
   }
 
-  /// Blocked first, then done, working and idle. Ties keep herdr's order.
+  /// Blocked first, then error, done, working and idle. Ties keep herdr's order.
   public var panesByUrgency: [Pane] { sortedByUrgency(allPanes) }
 
   /// Only the panes waiting on a human, in tree order. The sidebar's top section.
@@ -372,6 +403,7 @@ public struct SessionTree: Hashable, Sendable {
       }
       switch status {
       case .blocked: counts.blocked += 1
+      case .error: counts.errors += 1
       case .done: counts.done += 1
       case .working: counts.working += 1
       case .idle: counts.idle += 1

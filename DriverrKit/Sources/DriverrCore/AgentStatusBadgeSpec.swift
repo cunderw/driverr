@@ -13,6 +13,7 @@ extension AgentStatus {
   public var symbolName: String {
     switch self {
     case .blocked: "exclamationmark.circle.fill"
+    case .error: "exclamationmark.triangle"
     case .done: "checkmark.circle"
     case .working: "circle.lefthalf.filled"
     case .idle: "circle"
@@ -29,6 +30,8 @@ extension AgentStatus {
   public var hue: AgentStatusHue {
     switch self {
     case .blocked: .red
+    // Not red: red is "wants you", and a failed agent is not asking for anything.
+    case .error: .orange
     case .done: .teal
     case .working: .yellow
     case .idle: .green
@@ -44,6 +47,7 @@ extension AgentStatus {
   public var accessibleName: String {
     switch self {
     case .blocked: "Waiting for you"
+    case .error: "Failed"
     case .done: "Finished"
     case .working: "Working"
     case .idle: "Idle"
@@ -58,6 +62,7 @@ extension AgentStatus {
 /// colour.
 public enum AgentStatusHue: Hashable, Sendable {
   case red
+  case orange
   case teal
   case yellow
   case green
