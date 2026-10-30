@@ -233,7 +233,9 @@ struct TerminalSceneModelTests {
     #expect(!(await transport.streamLog).contains { $0.contains("t7") })
 
     // The same scene on the same host still reaches herdr, so the empty log means the guard.
+    // `w1:p1` is an agent pane, which would otherwise open on chat, with an observer.
     scene.select(.pane(id: "w1:p1"))
+    scene.show(.terminal)
     await scene.settle()
     #expect((await transport.streamLog).contains { $0.contains("terminal session control") })
     #expect(!(await transport.streamLog).contains { $0.contains("t7") })
