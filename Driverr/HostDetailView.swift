@@ -434,7 +434,9 @@ struct HostDetailView: View {
     case .serverNotRunning: "Open Shell to Start herdr"
     // `.statusUnreadable` belongs here: a session is already running, so offering to start
     // one would be the wrong next step.
-    case .notInstalled, .tooOld, .ready, .statusUnreadable, nil: "Open Shell"
+    case .notInstalled, .tooOld, .ready, .statusUnreadable, .coreReady, .combined,
+      .coreIncompatible, nil:
+      "Open Shell"
     }
   }
 

@@ -27,13 +27,17 @@ final class EmbeddedSSHServer: @unchecked Sendable {
   /// - Parameter environment: the whole environment of every real command, in place of the
   ///   test process's own. For a command that writes under `$HOME`, so it writes under a
   ///   scratch directory. `nil` inherits.
+  /// - Parameter streamsStandardOutput: send a real command's stdout as it is written, not
+  ///   all at once when it exits. For a command that answers its stdin and stays up, which
+  ///   would otherwise never be heard from.
   init(
     username: String,
     password: String,
     authorizedKey: NIOSSHPublicKey? = nil,
     executesRealCommands: Bool = false,
     truncatesStandardInputAfter: Int? = nil,
-    environment: [String: String]? = nil
+    environment: [String: String]? = nil,
+    streamsStandardOutput: Bool = false
   ) async throws {
     // A write to the stdin of a command that has exited raises SIGPIPE, which kills the test
     // process. `head -c N` exits as soon as it has N bytes, so this happens in every upload
@@ -82,7 +86,8 @@ final class EmbeddedSSHServer: @unchecked Sendable {
                       ptyRequests: ptyRequests,
                       runningCommands: runningCommands,
                       truncatesStandardInputAfter: truncatesStandardInputAfter,
-                      environment: environment
+                      environment: environment,
+                      streamsStandardOutput: streamsStandardOutput
                     )
                   )
                 }
@@ -197,6 +202,8 @@ final class TestSessionHandler: ChannelDuplexHandler {
   private let truncatesStandardInputAfter: Int?
   /// See `EmbeddedSSHServer.init(environment:)`.
   private let environment: [String: String]?
+  /// See `EmbeddedSSHServer.init(streamsStandardOutput:)`.
+  private let streamsStandardOutput: Bool
   /// Shared with the server that created this handler, not static: suites run in parallel,
   /// and a static flag let one test's pty request fail another's assertion.
   private let ptyRequests: PseudoTerminalRequestLog
@@ -206,13 +213,15 @@ final class TestSessionHandler: ChannelDuplexHandler {
     ptyRequests: PseudoTerminalRequestLog,
     runningCommands: RunningCommandLog = RunningCommandLog(),
     truncatesStandardInputAfter: Int? = nil,
-    environment: [String: String]? = nil
+    environment: [String: String]? = nil,
+    streamsStandardOutput: Bool = false
   ) {
     self.executesRealCommands = executesRealCommands
     self.ptyRequests = ptyRequests
     self.runningCommands = runningCommands
     self.truncatesStandardInputAfter = truncatesStandardInputAfter
     self.environment = environment
+    self.streamsStandardOutput = streamsStandardOutput
   }
 
   func handlerAdded(context: ChannelHandlerContext) {
@@ -275,6 +284,7 @@ final class TestSessionHandler: ChannelDuplexHandler {
     let commands = runningCommands
     commands.begin()
     let environment = environment
+    let streamsStandardOutput = streamsStandardOutput
 
     DispatchQueue.global().async {
       let process = Process()
@@ -293,7 +303,15 @@ final class TestSessionHandler: ChannelDuplexHandler {
       var status = 126
       do {
         try process.run()
-        stdout = out.fileHandleForReading.readDataToEndOfFile()
+        if streamsStandardOutput {
+          while let chunk = try? out.fileHandleForReading.read(upToCount: 64 * 1024),
+            !chunk.isEmpty
+          {
+            loop.execute { Self.write(chunk, as: .channel, to: channel) }
+          }
+        } else {
+          stdout = out.fileHandleForReading.readDataToEndOfFile()
+        }
         stderr = err.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
         status = Int(process.terminationStatus)

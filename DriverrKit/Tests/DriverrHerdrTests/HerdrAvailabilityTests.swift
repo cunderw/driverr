@@ -38,6 +38,51 @@ private let running091Status = """
 
 @Suite("herdr availability")
 struct HerdrAvailabilityTests {
+  @Test("a core or both is ready, and a refused core is not")
+  func coreReadiness() {
+    #expect(HerdrAvailability.coreReady(version: "0.1.14").isReady)
+    #expect(HerdrAvailability.combined(herdrVersion: "0.9.1", coreVersion: "0.1.14").isReady)
+    #expect(
+      !HerdrAvailability.coreIncompatible(version: nil, generation: nil, missingMethods: [])
+        .isReady)
+  }
+
+  @Test("the host list's version is the one that answered")
+  func readyVersion() {
+    #expect(HerdrAvailability.ready(version: "0.9.1", protocolVersion: 22).readyVersion == "0.9.1")
+    #expect(
+      HerdrAvailability.combined(herdrVersion: "0.9.1", coreVersion: "0.1.14").readyVersion
+        == "0.9.1")
+    #expect(HerdrAvailability.coreReady(version: "0.1.14").readyVersion == "core 0.1.14")
+    #expect(HerdrAvailability.serverNotRunning(version: "0.9.1").readyVersion == nil)
+    #expect(HerdrAvailability.statusUnreadable(version: "0.9.1").readyVersion == nil)
+    #expect(HerdrAvailability.notInstalled.readyVersion == nil)
+    #expect(
+      HerdrAvailability.coreIncompatible(version: "2", generation: 2, missingMethods: [])
+        .readyVersion == nil)
+  }
+
+  @Test("each core message says which side to update")
+  func coreMessages() {
+    #expect(HerdrAvailability.coreReady(version: "0.1.14").message == "herdr-core 0.1.14")
+    #expect(
+      HerdrAvailability.combined(herdrVersion: "0.9.1", coreVersion: "0.1.14").message
+        == "herdr 0.9.1 · herdr-core 0.1.14")
+    #expect(
+      HerdrAvailability.coreIncompatible(version: "2.0", generation: 2, missingMethods: []).message
+        == "herdr-core 2.0 speaks protocol generation 2; Driverr speaks 1. Update Driverr.")
+    #expect(
+      HerdrAvailability.coreIncompatible(version: "0.0.1", generation: 0, missingMethods: []).message
+        == "herdr-core 0.0.1 speaks protocol generation 0; Driverr needs 1. Update herdr-core.")
+    #expect(
+      HerdrAvailability.coreIncompatible(
+        version: "0.1.0", generation: 1, missingMethods: ["terminal.list"]
+      ).message == "herdr-core 0.1.0 has no terminal.list. Update herdr-core.")
+    #expect(
+      HerdrAvailability.coreIncompatible(version: nil, generation: nil, missingMethods: []).message
+        == "This herdr-core doesn't speak protocol generation 1. Update herdr-core or Driverr.")
+  }
+
   @Test("a running, compatible herdr is ready")
   func ready() async {
     let control = CLIControl(run: host { _ in output(runningStatus) })

@@ -1,4 +1,5 @@
 import DriverrCore
+import DriverrHC
 import DriverrHerdr
 import DriverrSSH
 import DriverrTranscript
@@ -10,6 +11,16 @@ extension CLIControl {
     self.init(binaryPath: binaryPath) { command in
       try await transport.execChannel(command: command)
     }
+  }
+}
+
+/// The same join for `DriverrHC`, whose one connection is a long-lived stream, not a command.
+extension CoreControl {
+  static func discovering(transport: any SSHTransport) async -> CoreControl? {
+    await discovering(
+      run: { try await transport.execChannel(command: $0) },
+      open: { ExecStreamBridge(stream: try await transport.execStream(command: $0)) }
+    )
   }
 }
 

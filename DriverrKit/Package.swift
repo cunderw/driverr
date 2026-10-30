@@ -9,6 +9,7 @@ let package = Package(
     .library(name: "DriverrSSH", targets: ["DriverrSSH"]),
     .library(name: "DriverrTerm", targets: ["DriverrTerm"]),
     .library(name: "DriverrHerdr", targets: ["DriverrHerdr"]),
+    .library(name: "DriverrHC", targets: ["DriverrHC"]),
     .library(name: "DriverrTranscript", targets: ["DriverrTranscript"]),
   ],
   dependencies: [
@@ -53,7 +54,9 @@ let package = Package(
         .product(name: "NIOSSH", package: "swift-nio-ssh"),
       ]
     ),
-    .testTarget(name: "DriverrSSHTests", dependencies: ["DriverrSSH"]),
+    // `DriverrHC` only for `CoreOverSSHTests`, the opt-in run of a real core over a real exec
+    // channel. No production target joins the two; the app does.
+    .testTarget(name: "DriverrSSHTests", dependencies: ["DriverrSSH", "DriverrHC"]),
     // No dependency on DriverrSSH on purpose: DriverrTerm renders a byte stream, and
     // making it import the SSH module would tie the terminal to one source of bytes.
     .target(
@@ -70,6 +73,11 @@ let package = Package(
     // `SSHTransport.execChannel`.
     .target(name: "DriverrHerdr", dependencies: ["DriverrCore"]),
     .testTarget(name: "DriverrHerdrTests", dependencies: ["DriverrHerdr"]),
+    // herdr-core's framed protocol, as a second `HerdrControl`. It imports DriverrHerdr for
+    // that protocol and for `HerdrStream`, and DriverrHerdr knows nothing of it:
+    // `CombinedControl` holds two `any HerdrControl`.
+    .target(name: "DriverrHC", dependencies: ["DriverrCore", "DriverrHerdr"]),
+    .testTarget(name: "DriverrHCTests", dependencies: ["DriverrHC"]),
     // No dependency on DriverrHerdr either, and that is the point: a Claude session file
     // is not a herdr wire type, so nothing here may reach for one. It shares only the
     // `CommandRunner` closure, which lives in DriverrCore precisely so both modules can
