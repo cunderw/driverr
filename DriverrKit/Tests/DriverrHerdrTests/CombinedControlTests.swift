@@ -312,7 +312,7 @@ struct CombinedControlTests {
 
   @Test("a core id is the prefix and the address, machine included")
   func corePaneID() {
-    #expect(CorePaneID.id(forAddress: "10.1.0.254/t1") == "core:10.1.0.254/t1")
+    #expect(CorePaneID.id(forAddress: "box/t1") == "core:box/t1")
     #expect(CorePaneID.isCore("core:t1"))
     #expect(!CorePaneID.isCore("w1:p1"))
   }
