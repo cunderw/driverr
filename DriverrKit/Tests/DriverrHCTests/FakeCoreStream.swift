@@ -28,6 +28,8 @@ final class FakeCoreStream: HerdrStream, @unchecked Sendable {
   var afterHello = Data()
   /// How many bytes each chunk holds. `nil` delivers each write whole.
   var chunkSize: Int?
+  /// When true, the program exits straight after whatever it said to `hello`.
+  var exitsAfterHello = false
   /// When true, a call's answer waits for `flushHeld()`, so two answers can land in one chunk.
   var holdsReplies = false
   var replies: [String: Reply] = ["terminal.list": .result(#"{"terminals":[]}"#)]
@@ -41,6 +43,7 @@ final class FakeCoreStream: HerdrStream, @unchecked Sendable {
   private var calledMethods: [String] = []
   private var closeCount = 0
   private var held = Data()
+  private var lateReplies = 0
 
   init() {
     let (stream, continuation) = AsyncThrowingStream<Data, any Error>.makeStream()
@@ -52,8 +55,8 @@ final class FakeCoreStream: HerdrStream, @unchecked Sendable {
 
   var methods: [String] { lock.withLock { calledMethods } }
   var closes: Int { lock.withLock { closeCount } }
-  /// Whether the opening has been sent and answered, so a test can end the stream behind it.
-  var didAnswerHello: Bool { lock.withLock { sawHello } }
+  /// How many `.late` replies have been written.
+  var lateRepliesWritten: Int { lock.withLock { lateReplies } }
 
   func send(_ data: Data) async throws {
     let isHello = lock.withLock {
@@ -114,6 +117,7 @@ final class FakeCoreStream: HerdrStream, @unchecked Sendable {
     if let helloReply { opening.append(Data((helloReply + "\n").utf8)) }
     opening.append(afterHello)
     if !opening.isEmpty { write(opening) }
+    if exitsAfterHello { finish() }
   }
 
   private func answer(id: Int, reply: Reply) {
@@ -128,6 +132,7 @@ final class FakeCoreStream: HerdrStream, @unchecked Sendable {
       Task {
         try? await Task.sleep(for: delay)
         self.writeMessage(#"{"id":\#(id),"jsonrpc":"2.0","result":\#(json)}"#)
+        self.lock.withLock { self.lateReplies += 1 }
       }
     }
   }
@@ -156,6 +161,29 @@ final class FakeCoreStream: HerdrStream, @unchecked Sendable {
 }
 
 struct FakeCoreStreamFailure: Error {}
+
+struct WaitTimedOut: Error, CustomStringConvertible {
+  let what: String
+  var description: String { "Never saw: \(what)" }
+}
+
+/// Waits for `condition`, which must stay true once it holds, and fails if it never does.
+///
+/// **Throws at its deadline rather than returning**, so the test stops there and does not go
+/// on to assert against whatever state it reached. `Task.sleep` throws on cancellation, so
+/// `.timeLimit` can stop it too.
+func waitUntil(
+  _ what: String,
+  within limit: Duration = .seconds(10),
+  _ condition: () async -> Bool
+) async throws {
+  let clock = ContinuousClock()
+  let deadline = clock.now + limit
+  while !(await condition()) {
+    guard clock.now < deadline else { throw WaitTimedOut(what: what) }
+    try await Task.sleep(for: .milliseconds(1))
+  }
+}
 
 /// `#require`, for a place the macro cannot reach: this runs off the test's own task.
 private func required<Value>(_ value: Value?) throws -> Value {

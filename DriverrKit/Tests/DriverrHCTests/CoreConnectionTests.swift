@@ -96,7 +96,7 @@ struct CoreConnectionTests {
     let connection = await connected(stream)
     async let first = connection.call("a", params: CoreNoParams(), as: Echo.self)
     async let second = connection.call("b", params: CoreNoParams(), as: Echo.self)
-    while stream.methods.count < 2 { await Task.yield() }
+    try await waitUntil("both calls reach the core") { stream.methods.count == 2 }
     stream.flushHeld()
     #expect(try await first == Echo(value: 1))
     #expect(try await second == Echo(value: 2))
@@ -180,21 +180,21 @@ struct CoreConnectionTests {
       try await connection.call("late", params: CoreNoParams(), as: Echo.self)
     }
     #expect(failure == .herdrCommandFailed(reason: "herdr-core did not answer late."))
-    try await Task.sleep(for: .milliseconds(200))
+    try await waitUntil("the late reply is written") { stream.lateRepliesWritten == 1 }
     // Id 2 was the late call. This is id 3, and it must get its own answer.
     let answer = try await connection.call("echo", params: CoreNoParams(), as: Echo.self)
     #expect(answer == Echo(value: 2))
   }
 
   @Test("a pending call fails when the stream ends, and the stream is let go")
-  func streamEnd() async {
+  func streamEnd() async throws {
     let stream = FakeCoreStream()
     stream.replies = ["never": .silent]
     let connection = await connected(stream)
     async let pending = failure {
       try await connection.call("never", params: CoreNoParams(), as: Echo.self)
     }
-    while stream.methods.isEmpty { await Task.yield() }
+    try await waitUntil("the call reaches the core") { !stream.methods.isEmpty }
     stream.finish()
     #expect(await pending == .channelFailed(reason: "The connection to herdr-core ended."))
     #expect(await !connection.isOpen)
@@ -224,11 +224,9 @@ struct CoreConnectionTests {
     let stream = FakeCoreStream()
     stream.helloReply = nil
     stream.banner = Data("usage: hc [options]\n".utf8)
+    stream.exitsAfterHello = true
     let connection = CoreConnection(stream: stream, callDeadline: patient)
-    async let handshake = connection.handshake()
-    while !stream.didAnswerHello { await Task.yield() }
-    stream.finish()
-    #expect(await handshake == .notCore)
+    #expect(await connection.handshake() == .notCore)
   }
 
   @Test("a program that never answers is not a core, after the deadline, and is closed")
@@ -252,14 +250,14 @@ struct CoreConnectionTests {
   }
 
   @Test("a frame over the bound ends the connection and fails what was pending")
-  func oversizedFrame() async {
+  func oversizedFrame() async throws {
     let stream = FakeCoreStream()
     stream.replies = ["never": .silent]
     let connection = await connected(stream)
     async let pending = failure {
       try await connection.call("never", params: CoreNoParams(), as: Echo.self)
     }
-    while stream.methods.isEmpty { await Task.yield() }
+    try await waitUntil("the call reaches the core") { !stream.methods.isEmpty }
 
     var header = CoreFrame(channel: 0, kind: .data, payload: Data()).encoded
     let length = UInt32(CoreFrame.maximumPayload + 1)
@@ -277,6 +275,6 @@ private struct HangingCloseStream: HerdrStream {
   var end: ProcessEnd? { get async { nil } }
   func send(_ data: Data) async throws {}
   func close() async {
-    await withCheckedContinuation { (_: CheckedContinuation<Void, Never>) in }
+    await withUnsafeContinuation { (_: UnsafeContinuation<Void, Never>) in }
   }
 }

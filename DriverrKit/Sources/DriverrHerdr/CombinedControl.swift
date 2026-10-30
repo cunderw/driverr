@@ -45,7 +45,8 @@ public struct CombinedControl: HerdrControl {
     return CombinedControl(tui: tui, core: core)
   }
 
-  /// The TUI's, because the terminal bridge and the agent hooks run that binary.
+  /// The TUI's, because `ConnectionModel.bridgeClient` runs this binary, and no core pane
+  /// gets that far. See `TerminalSceneModel.refusingCorePane`.
   public var binaryPath: String { tui.binaryPath }
 
   /// Binds the TUI side. `Host.herdrSocketPath` names a herdr session, which a core is not.
@@ -55,8 +56,13 @@ public struct CombinedControl: HerdrControl {
 
   /// The TUI's panes, then the core's.
   ///
-  /// One side failing returns the other, so a stopped TUI session does not hide a running
-  /// core. Both failing throws the TUI's error, which is the one with a next step.
+  /// The core failing returns the TUI's tree, and both failing throws the TUI's error, which
+  /// is the one with a next step.
+  ///
+  /// **The TUI failing returns the core's tree only when the TUI has nothing to show**, so a
+  /// stopped session does not hide a running core. Any other failure is rethrown. A failed
+  /// poll passed over as a tree clears `SessionModel.lastFailure`, and `ConnectionModel.apply`
+  /// then forgets every TUI pane's transcript, screen, draft and surface.
   public func snapshot() async throws -> SessionTree {
     async let tuiTree = Result { try await tui.snapshot() }
     async let coreTree = Result { try await core.snapshot() }
@@ -67,10 +73,20 @@ public struct CombinedControl: HerdrControl {
         workspaces: tui.workspaces + core.workspaces,
         focusedPaneID: tui.focusedPaneID
       )
-    case (.success(let tree), .failure), (.failure, .success(let tree)):
+    case (.success(let tree), .failure):
+      return tree
+    case (.failure(let failure), .success(let tree)):
+      guard await tuiHasNothingToShow() else { throw failure }
       return tree
     case (.failure(let failure), .failure):
       throw failure
+    }
+  }
+
+  private func tuiHasNothingToShow() async -> Bool {
+    switch await tui.availability() {
+    case .serverNotRunning, .notInstalled: true
+    default: false
     }
   }
 
@@ -80,6 +96,9 @@ public struct CombinedControl: HerdrControl {
   /// | ready | anything else | the TUI's |
   /// | anything else | ready | `.coreReady`, because there are terminals to show |
   /// | anything else | anything else | the TUI's |
+  ///
+  /// So a core this build refuses is deliberately not surfaced beside a working TUI. That
+  /// stays so until #21.
   public func availability() async -> HerdrAvailability {
     async let tuiCheck = tui.availability()
     async let coreCheck = core.availability()

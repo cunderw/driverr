@@ -82,14 +82,11 @@ struct CoreControlTests {
     _ = try await control.snapshot()
 
     dying.finish()
-    // The reader sees the end on its own schedule, and a snapshot in the gap fails. That is
-    // the contract: reopened by the next one after the death is noticed.
-    var tree: SessionTree?
-    while tree == nil {
-      tree = try? await control.snapshot()
-      await Task.yield()
-    }
-    #expect(tree?.allPanes.map(\.id) == ["core:t2"])
+    // Letting the stream go is the last thing the reader does when it sees the end.
+    try await waitUntil("the reader sees the end") { dying.closes == 1 }
+
+    let tree = try await control.snapshot()
+    #expect(tree.allPanes.map(\.id) == ["core:t2"])
     #expect(host.opened.count == 2)
   }
 

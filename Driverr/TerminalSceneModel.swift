@@ -59,7 +59,7 @@ final class TerminalSceneModel {
 
   /// Something the scene has to say about the current target. One value, so two cannot be
   /// on screen at once.
-  /// Why a herdr-core terminal does not open. See `refusingCorePane(_:target:)`.
+  /// Why a herdr-core terminal does not open. See `refusingCorePane`.
   static let coreUnavailable = "Driverr can't open a herdr-core terminal yet."
 
   enum Notice: Equatable {
@@ -724,7 +724,8 @@ final class TerminalSceneModel {
   /// after that would never be handed back.
   private func makeObserver(for target: TerminalTarget) async -> Entry? {
     guard !isClosed else { return nil }
-    guard case .pane(let paneID) = target, let terminalID = terminalID(for: paneID),
+    guard case .pane(let paneID) = target, !refusingCorePane(paneID),
+      let terminalID = terminalID(for: paneID),
       let observer = await model.observePane(terminalID: terminalID, size: viewportSize)
     else { return nil }
     // Checked again after the await. The stream is open on the host by now, so it is
@@ -861,7 +862,7 @@ final class TerminalSceneModel {
       )
 
     case .pane(let paneID):
-      guard let pane = pane(id: paneID) else { return }
+      guard let pane = pane(id: paneID), !refusingCorePane(paneID) else { return }
       if let terminalID = pane.terminalID {
         await openBridge(
           target: target,
@@ -893,6 +894,17 @@ final class TerminalSceneModel {
         )
       }
     }
+  }
+
+  /// Whether this is a herdr-core terminal, which nothing here can open until #18, with a
+  /// notice on it if so.
+  ///
+  /// Both bridge commands are built from the control's binary, past `CombinedControl`'s
+  /// routing, so without this a core address reaches `herdr terminal session control`.
+  private func refusingCorePane(_ paneID: String) -> Bool {
+    guard CorePaneID.isCore(paneID) else { return false }
+    notices[.pane(id: paneID)] = .failed(.herdrCommandFailed(reason: Self.coreUnavailable))
+    return true
   }
 
   private func openBridge(

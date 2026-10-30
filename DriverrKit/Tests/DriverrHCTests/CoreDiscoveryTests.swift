@@ -62,7 +62,7 @@ struct CoreDiscoveryTests {
   }
 
   @Test("the probe runs, and finds a core where a login file would hide it", .enabled(if: Self.hasSh))
-  func commandRuns() throws {
+  func commandRuns() async throws {
     let directory = FileManager.default.temporaryDirectory
       .appendingPathComponent(UUID().uuidString)
     let bin = directory.appendingPathComponent(".local/bin")
@@ -72,19 +72,42 @@ struct CoreDiscoveryTests {
     try Data("#!/bin/sh\n".utf8).write(to: hc)
     try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: hc.path)
 
-    let process = Process()
-    process.executableURL = URL(fileURLWithPath: "/bin/sh")
-    process.arguments = ["-c", CoreControl.discoveryCommand]
     // A bare PATH and no login shell to ask, so only the third tier can answer.
-    process.environment = ["HOME": directory.path, "PATH": "/usr/bin:/bin", "SHELL": "/usr/bin/true"]
-    let pipe = Pipe()
-    process.standardOutput = pipe
-    try process.run()
-    let output = pipe.fileHandleForReading.readDataToEndOfFile()
-    process.waitUntilExit()
+    let (status, output) = try await shell(
+      CoreControl.discoveryCommand,
+      environment: ["HOME": directory.path, "PATH": "/usr/bin:/bin", "SHELL": "/usr/bin/true"]
+    )
 
-    #expect(process.terminationStatus == 0)
-    #expect(CoreControl.discoveredPath(in: String(decoding: output, as: UTF8.self)) == hc.path)
+    #expect(status == 0)
+    #expect(CoreControl.discoveredPath(in: output) == hc.path)
+  }
+
+  /// Runs on a thread of its own. Waiting for a process blocks, and a test on the cooperative
+  /// pool must never block. See `EmbeddedSSHServer`.
+  private func shell(
+    _ command: String,
+    environment: [String: String]
+  ) async throws -> (status: Int32, output: String) {
+    try await withCheckedThrowingContinuation { continuation in
+      DispatchQueue.global().async {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/sh")
+        process.arguments = ["-c", command]
+        process.environment = environment
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        do {
+          try process.run()
+          let output = pipe.fileHandleForReading.readDataToEndOfFile()
+          process.waitUntilExit()
+          continuation.resume(
+            returning: (process.terminationStatus, String(decoding: output, as: UTF8.self))
+          )
+        } catch {
+          continuation.resume(throwing: error)
+        }
+      }
+    }
   }
 
   private static let hasSh = FileManager.default.isExecutableFile(atPath: "/bin/sh")
@@ -124,22 +147,16 @@ struct CoreDiscoveryTests {
     let stream = FakeCoreStream()
     stream.helloReply = nil
     stream.banner = Data("hc: unknown command 'connect'\n".utf8)
+    stream.exitsAfterHello = true
     let control = await CoreControl.discovering(
       run: answering("/usr/bin/hc\n"),
-      open: { _ in
-        // It prints its usage, then exits.
-        Task {
-          while !stream.didAnswerHello { await Task.yield() }
-          stream.finish()
-        }
-        return stream
-      }
+      open: opening(stream)
     )
     #expect(control == nil)
   }
 
   @Test("another program called hc, which hangs, costs only the call deadline")
-  func hangingStranger() async {
+  func hangingStranger() async throws {
     let stream = FakeCoreStream()
     stream.helloReply = nil
     let control = await CoreControl.discovering(
@@ -148,7 +165,8 @@ struct CoreDiscoveryTests {
       callDeadline: .milliseconds(50)
     )
     #expect(control == nil)
-    #expect(stream.closes == 1)
+    // The close is not awaited, on purpose, so it lands after the answer.
+    try await waitUntil("the stream is let go") { stream.closes == 1 }
   }
 
   @Test("a core this build refuses comes back, because it has something to say")
@@ -171,7 +189,7 @@ struct CoreDiscoveryTests {
     let control = await CoreControl.discovering(
       run: { _ in
         // Ignores cancellation, as nothing under an exec channel checks it.
-        await withCheckedContinuation { (_: CheckedContinuation<Void, Never>) in }
+        await withUnsafeContinuation { (_: UnsafeContinuation<Void, Never>) in }
         return CommandResult(standardOutput: "", standardError: "", exitStatus: 0)
       },
       open: neverOpens,
