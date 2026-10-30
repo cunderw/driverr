@@ -116,19 +116,43 @@ struct DeferredPaneBridgeTests {
     #expect(attacher.far.log == ["bytes ab", "focus true", "bytes c"])
   }
 
-  @Test("nothing is held once the bridge is over", arguments: [true, false])
-  func nothingHeldOnceOver(released: Bool) async throws {
-    let attacher = Attacher()
-    let bridge = bridge(attacher, deadline: .milliseconds(1))
-    if released {
+  enum Ending: CaseIterable, Sendable {
+    case released, noSizeInTime, refused
+  }
+
+  @Test("nothing is held once the bridge is over", arguments: Ending.allCases)
+  func nothingHeldOnceOver(ending way: Ending) async throws {
+    let refusal: AppError? = way == .refused ? .herdrCommandFailed(reason: "no terminal") : nil
+    let attacher = Attacher(refusal: refusal)
+    let bridge = bridge(attacher, deadline: way == .noSizeInTime ? .milliseconds(1) : .seconds(30))
+    switch way {
+    case .released:
       await bridge.release()
-    } else {
+    case .noSizeInTime:
       #expect(await ending(of: bridge) as? TerminalCloseReason == .neverAttached)
+    case .refused:
+      try await bridge.resize(to: measured)
     }
 
     try await bridge.send(bytes: Data("late".utf8))
 
     #expect(bridge.heldByteCount == 0)
+  }
+
+  @Test("what is typed while the attach is on its way is held, and goes out behind it")
+  func heldWhileAttaching() async throws {
+    let (gate, opening) = AsyncStream<Void>.makeStream()
+    let attacher = Attacher(gate: gate)
+    let bridge = bridge(attacher)
+
+    async let resized: Void = bridge.resize(to: measured)
+    try await waitForAttach(attacher)
+    try await bridge.send(bytes: Data("a".utf8))
+    #expect(bridge.heldByteCount == 1)
+    opening.yield()
+    try await resized
+
+    #expect(attacher.far.log == ["bytes a"])
   }
 
   @Test("held input stops at the cap, at a write's edge, and what was kept still goes out")

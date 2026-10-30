@@ -669,6 +669,7 @@ struct TerminalSceneModelTests {
     ticks.grant(61)
     await scene.settle()
     #expect(attacher.log.count == 4, "an attempt after the paint")
+    #expect(ticks.asked.count == 4, "the retries went on after the paint")
   }
 
   /// `.onChange` fires only on a change, and a restart can fall inside one poll, so nothing

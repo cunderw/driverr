@@ -38,12 +38,14 @@ struct CoreAttachmentTests {
     }
   }
 
-  // The first three payloads are what a core 0.1.14 wrote; the rest are its other reasons.
+  // The first four payloads are what a core 0.1.14 wrote; the rest are its other reasons.
   @Test(
     "a CLOSE's payload maps to why the stream ended",
     arguments: [
       (#"{"exit_code":3,"finished_ms":1793388532835,"reason":"exited","signal":null}"#, .paneClosed),
       (#"{"exit_code":null,"finished_ms":null,"reason":"signaled","signal":9}"#, .lost),
+      // A kept terminal when the core stops. `reason` alone would call this a shutdown.
+      (#"{"exit_code":null,"finished_ms":null,"reason":"server_stop","signal":1}"#, .lost),
       ("", .detached),
       // The API's own example, which has no `finished_ms` at all.
       (#"{"reason":"exited","exit_code":0,"signal":null}"#, .paneClosed),
