@@ -7,8 +7,8 @@ import Foundation
 /// A scripted `hc connect`: it answers `hello`, then answers JSON-RPC calls in frames, and it
 /// controls exactly where the chunks of its output fall.
 ///
-/// **Not instant by default in the way that matters.** `chunkSize` splits every write, so a
-/// test that passes with `1` has seen every byte arrive on its own.
+/// `chunkSize` splits every write, so a test that passes with `1` has seen every byte arrive
+/// on its own.
 final class FakeCoreStream: HerdrStream, @unchecked Sendable {
   /// What the fake does with a call, by method.
   enum Reply {

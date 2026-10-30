@@ -4,8 +4,8 @@ import Foundation
 ///
 /// Channel 0 carries JSON-RPC both ways. Other channels are attach and event streams.
 struct CoreFrame: Equatable, Sendable {
-  /// Every kind generation 1 defines. Kinds this build does not know never reach here,
-  /// because the API only grows. See `CoreFrameDecoder`.
+  /// Every kind generation 1 defines. `CoreFrameDecoder` skips any other, because within a
+  /// generation the API only grows.
   enum Kind: UInt8, Sendable {
     case data = 0
     case credit = 1
