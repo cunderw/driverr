@@ -1,11 +1,11 @@
 # Driverr — repo conventions
 
 Native iOS/iPadOS SSH client built around [herdr](https://github.com/herdrdev/herdr).
-Monorepo: SwiftUI app in `Driverr/`, shared kit in `DriverrKit/` (SwiftPM package, five
+Monorepo: SwiftUI app in `Driverr/`, shared kit in `DriverrKit/` (SwiftPM package, six
 modules). `DriverrCore` holds dependency-free domain types. `DriverrSSH` confines
 swift-nio-ssh, `DriverrTerm` confines SwiftTerm, `DriverrHerdr` confines herdr's wire
-format, and `DriverrTranscript` reads agent session files. No backend of our own: Driverr
-talks directly to the user's own machines over SSH.
+format, `DriverrHC` confines herdr-core's, and `DriverrTranscript` reads agent session
+files. No backend of our own: Driverr talks directly to the user's own machines over SSH.
 
 **Not a config surface.** Global settings are theme, font, font size, whether a captured
 pane screen wraps its long lines, and whether Driverr draws Live Activities. The last of
@@ -22,13 +22,20 @@ This file holds the rules and traps on top of that.
 ## Ground rules
 
 - **Layering: SwiftNIO SSH types never leave `DriverrSSH`; herdr wire types never leave
-  `DriverrHerdr`.** Both map to plain `DriverrCore` structs at the module boundary. This
-  keeps stores testable without a live SSH connection or herdr socket, and it confines
-  upstream churn to one file each. In `DriverrSSH` the only production file that may
+  `DriverrHerdr`; herdr-core wire types never leave `DriverrHC`.** All three map to plain
+  `DriverrCore` structs at the module boundary. This keeps stores testable without a live
+  SSH connection or herdr socket, and it confines upstream churn to one file each. In
+  `DriverrSSH` the only production file that may
   `import NIOSSH` is `NIOSSHTransport.swift`, which is also where every NIOSSH error is
   mapped to `AppError`. Verify with
   `grep -rn --include='*.swift' '^import NIOSSH' Driverr DriverrKit/Sources`: exactly one
   hit, `DriverrKit/Sources/DriverrSSH/NIOSSHTransport.swift`, is the passing result.
+- **`DriverrHC` imports `DriverrHerdr`, never the reverse.** It needs `HerdrControl` and
+  `HerdrStream`. A host with both the TUI and a core is one `CombinedControl`, which holds
+  two `any HerdrControl` and routes each call by the `CorePaneID` prefix, because two
+  sessions applying snapshots would wipe each other's caches.
+- **Core detection is `#if DEBUG` in `AppEnvironment.live` until #21.** Every push to `main`
+  uploads to TestFlight, and a tap guard would not cover every way into `openBridge`.
 - **`DriverrTerm` must not import `DriverrSSH`.** It renders a `TerminalFeed`, a struct of
   closures over a byte stream, so a PTY channel, a herdr pane or a recorded transcript can
   drive it. The adapter is in the app target, `Driverr/TerminalFeed+PTYChannel.swift`, the

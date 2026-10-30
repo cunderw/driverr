@@ -48,6 +48,8 @@
 		AD04 /* DriverrHerdr in Frameworks */ = {isa = PBXBuildFile; productRef = AC05; };
 		AC06 /* DriverrTranscript */ = {isa = XCSwiftPackageProductDependency; productName = DriverrTranscript; };
 		AD05 /* DriverrTranscript in Frameworks */ = {isa = PBXBuildFile; productRef = AC06; };
+		AC08 /* DriverrHC */ = {isa = XCSwiftPackageProductDependency; productName = DriverrHC; };
+		AD09 /* DriverrHC in Frameworks */ = {isa = PBXBuildFile; productRef = AC08; };
 		AC07 /* DriverrCore (widget) */ = {isa = XCSwiftPackageProductDependency; productName = DriverrCore; };
 		AD06 /* DriverrCore in widget Frameworks */ = {isa = PBXBuildFile; productRef = AC07; };
 		AD07 /* DriverrWatch in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = AB04; settings = {ATTRIBUTES = (RemoveHeadersOnCopy); }; };
@@ -78,7 +80,7 @@
 
 /* Build phases — app */
 		BA01 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
-		BA02 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (AD01, AD02, AD03, AD04, AD05); runOnlyForDeploymentPostprocessing = 0; };
+		BA02 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (AD01, AD02, AD03, AD04, AD05, AD09); runOnlyForDeploymentPostprocessing = 0; };
 		BA03 = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (AD08); runOnlyForDeploymentPostprocessing = 0; };
 		BA04 /* Embed Foundation Extensions */ = {isa = PBXCopyFilesBuildPhase; buildActionMask = 2147483647; dstPath = ""; dstSubfolderSpec = 13; files = (AD07); name = "Embed Foundation Extensions"; runOnlyForDeploymentPostprocessing = 0; };
 		BD01 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
@@ -110,7 +112,7 @@
 			dependencies = (CA06);
 			fileSystemSynchronizedGroups = (AA01);
 			name = Driverr;
-			packageProductDependencies = (AC02, AC03, AC04, AC05, AC06);
+			packageProductDependencies = (AC02, AC03, AC04, AC05, AC06, AC08);
 			productName = Driverr;
 			productReference = AB01;
 			productType = "com.apple.product-type.application";

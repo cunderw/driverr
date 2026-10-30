@@ -202,6 +202,60 @@ struct TerminalSceneModelTests {
     await settled.wait()
   }
 
+  // MARK: - A core pane
+
+  /// The seeded session with a core terminal beside it, as `CombinedControl` merges them.
+  private var treeWithACorePane: SessionTree {
+    let pane = Pane(
+      id: "core:t7", tabID: "core:tab", workspaceID: "core:workspace", title: "t7",
+      terminalID: "t7")
+    let tab = DriverrCore.Tab(
+      id: "core:tab", workspaceID: "core:workspace", number: 1, label: "Terminals",
+      isAutoNamed: true, panes: [pane])
+    let workspace = Workspace(
+      id: "core:workspace", number: 1, label: "herdr-core", tabs: [tab])
+    return SessionTree(workspaces: FakeControl.seededTree.workspaces + [workspace])
+  }
+
+  /// Every bridge command is built from the control's binary, past `CombinedControl`, so
+  /// without a guard a core address reaches `herdr terminal session control`.
+  @Test("a core pane runs no bridge command and says why, and a herdr pane beside it opens")
+  func aCorePaneOpensNoBridge() async {
+    let (scene, transport) = await makeScene(
+      initialTarget: .pane(id: "core:t7"),
+      herdr: FakeControl(tree: treeWithACorePane),
+      responder: Self.everythingPaints
+    )
+    scene.start()
+    await scene.settle()
+
+    #expect(scene.notice == .failed(.herdrCommandFailed(reason: TerminalSceneModel.coreUnavailable)))
+    #expect(!(await transport.streamLog).contains { $0.contains("t7") })
+
+    // The same scene on the same host still reaches herdr, so the empty log means the guard.
+    // `w1:p1` is an agent pane, which would otherwise open on chat, with an observer.
+    scene.select(.pane(id: "w1:p1"))
+    scene.show(.terminal)
+    await scene.settle()
+    #expect((await transport.streamLog).contains { $0.contains("terminal session control") })
+    #expect(!(await transport.streamLog).contains { $0.contains("t7") })
+  }
+
+  @Test("a core pane on the chat surface runs no observer either")
+  func aCorePaneOpensNoObserver() async {
+    let (scene, transport) = await makeScene(
+      initialTarget: .pane(id: "core:t7"),
+      surface: .chat,
+      herdr: FakeControl(tree: treeWithACorePane),
+      responder: Self.everythingPaints
+    )
+    scene.start()
+    await scene.settle()
+
+    #expect(scene.notice == .failed(.herdrCommandFailed(reason: TerminalSceneModel.coreUnavailable)))
+    #expect(!(await transport.streamLog).contains { $0.contains("terminal session") })
+  }
+
   /// A bounded step goes on running into a scene that has moved past it. `demote` opens a
   /// replacement observer, and if the scene is left while it is suspended, that stream opens
   /// into a scene `close()` has already emptied, and nothing hands it back: a leaked `observe`

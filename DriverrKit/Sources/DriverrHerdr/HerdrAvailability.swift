@@ -24,10 +24,36 @@ public enum HerdrAvailability: Equatable, Sendable {
   /// telling the user to start a session would be wrong. A renamed status field causes
   /// this.
   case statusUnreadable(version: String?)
+  /// A herdr-core answered on `hc connect` and passed the compatibility gate.
+  ///
+  /// No `.serverNotRunning` counterpart: `hc connect` starts a core when none is up.
+  case coreReady(version: String)
+  /// Both are here and both answered, so the host shows both. See `CombinedControl`.
+  case combined(herdrVersion: String, coreVersion: String)
+  /// A core answered and this build cannot use it.
+  ///
+  /// Gated on `hello`'s generation and method list, not a protocol number. `generation` is
+  /// `nil` when the core refused the opening without saying what it speaks. A core of
+  /// another generation refuses that way.
+  case coreIncompatible(version: String?, generation: Int?, missingMethods: [String])
 
   public var isReady: Bool {
-    if case .ready = self { return true }
-    return false
+    switch self {
+    case .ready, .coreReady, .combined: true
+    case .serverNotRunning, .notInstalled, .tooOld, .statusUnreadable, .coreIncompatible: false
+    }
+  }
+
+  /// Which herdr answered, for the host list's "herdr …", or `nil` if none did.
+  ///
+  /// A core reads "core 0.1.14" there, so its much lower version is not taken for an old
+  /// herdr. With both, the TUI's: its version is the one with a floor.
+  public var readyVersion: String? {
+    switch self {
+    case .ready(let version, _), .combined(let version, _): version
+    case .coreReady(let version): "core \(version)"
+    case .serverNotRunning, .notInstalled, .tooOld, .statusUnreadable, .coreIncompatible: nil
+    }
   }
 
   /// What to tell the user, and what they can do about it.
@@ -60,7 +86,34 @@ public enum HerdrAvailability: Equatable, Sendable {
       (version.map { "herdr \($0) is running here, but this version of Driverr can't read " }
         ?? "herdr is running here, but this version of Driverr can't read ")
         + "its status. Update Driverr."
+    case let .coreReady(version):
+      "herdr-core \(version)"
+    case let .combined(herdrVersion, coreVersion):
+      "herdr \(herdrVersion) · herdr-core \(coreVersion)"
+    case let .coreIncompatible(version, generation, missingMethods):
+      Self.coreIncompatibleMessage(
+        name: version.map { "herdr-core \($0)" } ?? "This herdr-core",
+        generation: generation,
+        missingMethods: missingMethods
+      )
     }
+  }
+
+  private static func coreIncompatibleMessage(
+    name: String,
+    generation: Int?,
+    missingMethods: [String]
+  ) -> String {
+    let needed = HerdrProtocol.coreGeneration
+    guard missingMethods.isEmpty else {
+      return "\(name) has no \(missingMethods.joined(separator: ", ")). Update herdr-core."
+    }
+    guard let generation else {
+      return "\(name) doesn't speak protocol generation \(needed). Update herdr-core or Driverr."
+    }
+    return generation < needed
+      ? "\(name) speaks protocol generation \(generation); Driverr needs \(needed). Update herdr-core."
+      : "\(name) speaks protocol generation \(generation); Driverr speaks \(needed). Update Driverr."
   }
 }
 
@@ -83,6 +136,12 @@ public enum HerdrProtocol {
   /// Protocol 22 is herdr 0.9.1. Its schema only adds fields to the ones
   /// `HerdrWireTypes` decodes.
   public static let lastVerified = 22
+
+  /// The herdr-core protocol generation this build speaks.
+  ///
+  /// An exact match, unlike `minimum`: a generation is a break decided on purpose, and within
+  /// one the API only grows.
+  public static let coreGeneration = 1
 }
 
 extension CLIControl {
@@ -94,10 +153,14 @@ extension CLIControl {
   /// - `$HOME/.local/bin`: herdr's installer default, expanded by the remote shell.
   ///
   /// `discoveryCommand` asks the login shell first, so custom prefixes need no entry here.
-  static let fallbackPaths = [
-    "/opt/homebrew/bin/herdr",
-    "/usr/local/bin/herdr",
-    "$HOME/.local/bin/herdr",
+  static var fallbackPaths: [String] { fallbackDirectories.map { "\($0)/herdr" } }
+
+  /// The directories of `fallbackPaths`. Public because a herdr-core installs to the same
+  /// places.
+  public static let fallbackDirectories = [
+    "/opt/homebrew/bin",
+    "/usr/local/bin",
+    "$HOME/.local/bin",
   ]
 
   /// The directories of `fallbackPaths`, phrased for the not-found message.

@@ -3,8 +3,9 @@ import Foundation
 
 /// What Driverr asks of a herdr session.
 ///
-/// One live conformance, `CLIControl`, and `FakeControl`. herdr's socket is not reachable
-/// over SSH without a remote prerequisite, so there is no socket conformance.
+/// `CLIControl` for the TUI, `DriverrHC.CoreControl` for a herdr-core, `CombinedControl` for a
+/// host with both, and `FakeControl`. The TUI's socket is not reachable over SSH without a
+/// remote prerequisite, so there is no socket conformance.
 public protocol HerdrControl: Sendable {
   /// The whole session as a tree. herdr returns four flat arrays; the tree is assembled
   /// at this boundary so nothing downstream has to join ids.
@@ -25,6 +26,12 @@ public protocol HerdrControl: Sendable {
   /// may be an absolute path, because an SSH exec channel's non-login shell may lack
   /// Homebrew on `PATH`.
   var binaryPath: String { get }
+
+  /// This control, reaching the herdr session at `path` when the host names one.
+  ///
+  /// Here, not on the factory, because the control is built before the `Host` is known. See
+  /// `ConnectionModel.connect()`. Defaulted to `self`: only the TUI has sessions.
+  func bound(toSocketPath path: String?) -> any HerdrControl
 
   /// Types literal text into a pane, as if typed at the keyboard. Needs no PTY.
   ///
@@ -81,6 +88,10 @@ public protocol HerdrControl: Sendable {
   func rename(_ target: RenameTarget, to label: String) async throws
 }
 
+extension HerdrControl {
+  public func bound(toSocketPath path: String?) -> any HerdrControl { self }
+}
+
 /// Drives herdr through its command-line interface.
 ///
 /// The CLI is a client of herdr's socket API and returns the same envelope, so this maps
@@ -94,7 +105,7 @@ public struct CLIControl: HerdrControl {
   /// set, it is exported ahead of every command. See `withSocketPathEnv`.
   ///
   /// A `var`, because the control is built before the `Host` is known and
-  /// `ConnectionModel.connect()` sets it afterwards.
+  /// `bound(toSocketPath:)` sets it afterwards.
   public var herdrSocketPath: String?
   private let run: CommandRunner
 
@@ -106,6 +117,13 @@ public struct CLIControl: HerdrControl {
     self.binaryPath = binaryPath
     self.herdrSocketPath = herdrSocketPath
     self.run = run
+  }
+
+  public func bound(toSocketPath path: String?) -> any HerdrControl {
+    guard let path else { return self }
+    var bound = self
+    bound.herdrSocketPath = path
+    return bound
   }
 
   /// Prefixes a command with `export HERDR_SOCKET_PATH=<value>;` when the host asked for

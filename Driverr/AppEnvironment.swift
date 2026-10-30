@@ -1,4 +1,5 @@
 import DriverrCore
+import DriverrHC
 import DriverrHerdr
 import DriverrSSH
 import DriverrTranscript
@@ -92,9 +93,19 @@ struct AppEnvironment {
     // Discover the binary: an exec channel runs a non-login shell, whose PATH may lack
     // Homebrew's prefix or `~/.local/bin`. A host without herdr gets a control bound to the bare
     // name, whose first command reports `herdrNotInstalled`.
+    //
+    // herdr-core stays out of Release until #21, because every push to `main` uploads to
+    // TestFlight and a tap guard would not cover the pane sheet, the switcher, the shortcuts
+    // or a remembered pane: all of them reach `openBridge`, which only the TUI can serve.
     makeHerdrControl: { transport in
       let run: CommandRunner = { try await transport.execChannel(command: $0) }
+      #if DEBUG
+      async let tui = CLIControl.discovering(run: run)
+      async let core = CoreControl.discovering(transport: transport)
+      return await CombinedControl.joining(tui: tui, core: core) ?? CLIControl(run: run)
+      #else
       return await CLIControl.discovering(run: run) ?? CLIControl(run: run)
+      #endif
     },
     makeTranscriptReader: { TranscriptReader(transport: $0) },
     notifications: LiveNotificationCenter(),

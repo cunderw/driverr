@@ -42,6 +42,37 @@ struct ConnectionHerdrSocketPathTests {
     #expect(control.herdrSocketPath == "/run/herdr.sock")
   }
 
+  @Test("a host with both publishes one control, with the socket path on its TUI side")
+  func combinedControlTakesTheSocketPath() async throws {
+    var environment = environment
+    environment.makeHerdrControl = { _ in
+      CombinedControl(
+        tui: CLIControl(
+          run: { _ in CommandResult(standardOutput: "", standardError: "", exitStatus: 0) }
+        ),
+        core: FakeControl(tree: .empty, availability: .coreReady(version: "0.1.14"))
+      )
+    }
+    let host = DriverrCore.Host(
+      name: "workbox",
+      hostname: "10.1.0.9",
+      username: "carson",
+      herdrSocketPath: "/run/herdr.sock"
+    )
+    let model = ConnectionModel(host: host, environment: environment)
+
+    await model.connect(password: "hunter2", persistence: .promptEveryTime)
+
+    #expect(model.phase == .connected)
+    let control = try #require(model.herdr as? CombinedControl)
+    let pane = DriverrCore.Pane(
+      id: "w1:p1", tabID: "t", workspaceID: "w", title: "x", terminalID: "term")
+    #expect(
+      control.attachCommand(for: pane).hasPrefix("export HERDR_SOCKET_PATH=/run/herdr.sock;"))
+    #expect(model.herdrAvailability == .coreReady(version: "0.1.14"))
+    #expect(model.herdrVersion == "core 0.1.14")
+  }
+
   @Test("a host with no socket path connects to a CLIControl carrying none")
   func noSocketPathLeavesItNil() async throws {
     let host = DriverrCore.Host(name: "workbox", hostname: "10.1.0.9", username: "carson")

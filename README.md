@@ -181,7 +181,7 @@ Those files are the sources, and this document is not.
 
 ## How it is put together
 
-A SwiftUI app in `Driverr/` over a SwiftPM package in `DriverrKit/`, five modules:
+A SwiftUI app in `Driverr/` over a SwiftPM package in `DriverrKit/`, six modules:
 
 | Module | Holds | Rule |
 | --- | --- | --- |
@@ -189,6 +189,7 @@ A SwiftUI app in `Driverr/` over a SwiftPM package in `DriverrKit/`, five module
 | `DriverrSSH` | SwiftNIO SSH | NIOSSH types never leave it |
 | `DriverrTerm` | SwiftTerm, wrapped | Does not import `DriverrSSH` |
 | `DriverrHerdr` | herdr's wire format | herdr types never leave it |
+| `DriverrHC` | herdr-core's framed protocol | Its wire types never leave it |
 | `DriverrTranscript` | The session files of Claude Code and Codex | Their record types never leave it |
 
 The boundaries are the point: they are what let stores be tested with no live SSH

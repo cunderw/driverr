@@ -87,10 +87,7 @@ final class ConnectionModel {
   /// So the host list need not learn `HerdrAvailability`'s cases. `.serverNotRunning` does
   /// not count, because there is no session, and neither does `.statusUnreadable`, because
   /// Driverr cannot tell whether it works with that version.
-  var herdrVersion: String? {
-    guard case .ready(let version, _) = herdrAvailability else { return nil }
-    return version
-  }
+  var herdrVersion: String? { herdrAvailability?.readyVersion }
 
   /// This host's first-contact trust prompt, owned by the connection because it outlives
   /// the screen. A prompt rebuilt with a view would not be the one the suspended handshake
@@ -524,7 +521,7 @@ final class ConnectionModel {
         // write its control, caches, `SessionModel` or loss watcher over the live one's. The
         // identity is checked after each await, and the publish has no `await`. A failed guard
         // closes only this attempt's link, like the `catch` blocks. `HerdrControl` has nothing
-        // to close of its own.
+        // to close of its own: a `CoreControl`'s stream is a channel on that link.
         //
         // Both hops are bounded, because nothing under `CLIControl` or the exec channel ever
         // gives up. A host that finishes the handshake and then stops answering would park
@@ -537,13 +534,7 @@ final class ConnectionModel {
         }
         // `HERDR_SOCKET_PATH` is set here, where both the transport and the `Host` are in hand,
         // instead of widening the factory's signature for every caller.
-        let control: any HerdrControl
-        if var cli = made as? CLIControl, let socketPath = host.herdrSocketPath {
-          cli.herdrSocketPath = socketPath
-          control = cli
-        } else {
-          control = made
-        }
+        let control = made.bound(toSocketPath: host.herdrSocketPath)
         guard attempt == currentAttempt else {
           await coordinator.disconnect()
           return
