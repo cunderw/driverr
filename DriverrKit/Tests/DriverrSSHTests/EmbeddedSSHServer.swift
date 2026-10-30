@@ -304,9 +304,8 @@ final class TestSessionHandler: ChannelDuplexHandler {
       do {
         try process.run()
         if streamsStandardOutput {
-          while let chunk = try? out.fileHandleForReading.read(upToCount: 64 * 1024),
-            !chunk.isEmpty
-          {
+          // `availableData`, not `read(upToCount:)`, which waits for the whole count.
+          while case let chunk = out.fileHandleForReading.availableData, !chunk.isEmpty {
             loop.execute { Self.write(chunk, as: .channel, to: channel) }
           }
         } else {
