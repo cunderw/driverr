@@ -16,9 +16,6 @@ import Foundation
 /// plain shell, whatever it is running. `reported` is not read: a program that reported once
 /// and has since cleared its status is no agent now.
 enum CoreSnapshotMapper {
-  static let workspaceID = CorePaneID.prefix + "workspace"
-  static let tabID = CorePaneID.prefix + "tab"
-
   private typealias Group<Key: Hashable> = (key: Key, terminals: [CoreTerminal])
   private typealias Index = CoreAppDocument.Index
 
@@ -157,15 +154,20 @@ enum CoreSnapshotMapper {
   /// `kind` is never `nil` or empty, because `TranscriptReader` then matches on the name and
   /// `claude-helper` would be handed Claude's files. No app is `unknown`, which is herdr-app's
   /// word too. `session` waits for #20, which finds the file by directory.
+  ///
+  /// A terminal on a machine the core added is `unknown` whatever it runs, and keeps its name.
+  /// The reader lists the SSH host's files, so a real `kind` there would show this host's
+  /// conversation for the same directory on the other machine.
   private static func agent(of terminal: CoreTerminal) -> Agent? {
     guard let report = terminal.status else { return nil }
     let status = AgentStatus(wireValue: report.state ?? "")
     let app = report.app?.trimmingCharacters(in: .whitespacesAndNewlines)
     let reported = app?.isEmpty == false ? app : nil
     let program = reported.flatMap { programs[$0.lowercased()] }
+    let kind = machine(of: terminal) == nil ? program?.kind ?? reported?.lowercased() : nil
     return Agent(
       name: program?.name ?? reported ?? "Agent",
-      kind: program?.kind ?? reported?.lowercased() ?? "unknown",
+      kind: kind ?? "unknown",
       status: status,
       blockedKind:
         status == .blocked ? report.kind.flatMap(AgentBlockedKind.init(rawValue:)) : nil

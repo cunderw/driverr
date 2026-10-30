@@ -90,6 +90,17 @@ struct TranscriptResolverTests {
     #expect(await host.commands.isEmpty)
   }
 
+  /// What a core gives an agent whose files are not on this host. The token has to stop the
+  /// name match, or `Claude` on another machine would read this host's sessions.
+  @Test("the unknown token reads nothing, whatever the agent is called")
+  func unknownToken() async throws {
+    let host = FakeHost()
+    let resolution = try await TranscriptReader(run: host.runner)
+      .resolve(for: HostFixture.pane(agent: Agent(name: "Claude", kind: "unknown", status: .idle)))
+    #expect(resolution == .absent(.agentNotSupported(agent: "Claude")))
+    #expect(await host.commands.isEmpty)
+  }
+
   @Test("an agent herdr named without slugging is matched on the name")
   func agentWithoutASlug() async throws {
     let host = FakeHost(

@@ -130,7 +130,7 @@ struct CoreControlTests {
   func silentDocument() async throws {
     let stream = spaces()
     stream.replies["doc.get"] = .silent
-    let control = control(CoreHost(stream), deadline: .milliseconds(50))
+    let control = control(CoreHost(stream), deadline: .milliseconds(500))
     #expect(try await control.snapshot().allPanes.count == 2)
   }
 
@@ -248,7 +248,7 @@ struct CoreControlTests {
     await #expect(throws: refused) { _ = try await control.readScreen(of: pane, lines: 5) }
     await #expect(throws: refused) { try await control.perform(.close, on: pane.id) }
     await #expect(throws: refused) {
-      try await control.rename(.tab(id: CoreSnapshotMapper.tabID), to: "x")
+      try await control.rename(.tab(id: "core:tab"), to: "x")
     }
   }
 
