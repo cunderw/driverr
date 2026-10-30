@@ -23,8 +23,9 @@ enum CoreProbe {
 /// shares a line of code with.
 ///
 /// Off unless `DRIVERR_LIVE_CORE=1` and a core is installed here. It sends only `hello`,
-/// `terminal.list` and `doc.get`, which change nothing, but `hc connect` starts a core when
-/// none is running, which is why a default run leaves it out. Run it by hand:
+/// `terminal.list`, `doc.get` and `file.read` of a Claude terminal's own record, which change
+/// nothing, but `hc connect` starts a core when none is running, which is why a default run
+/// leaves it out. Run it by hand:
 ///
 /// ```sh
 /// DRIVERR_LIVE_CORE=1 swift test --package-path DriverrKit --filter CoreOverSSH
@@ -109,7 +110,8 @@ struct CoreOverSSHTests {
     defer { Task { await transport.disconnect() } }
 
     let binary = try #require(CoreProbe.binary)
-    let control = CoreControl(binaryPath: binary) { command in
+    let home = FileManager.default.homeDirectoryForCurrentUser.path
+    let control = CoreControl(binaryPath: binary, home: home) { command in
       Stream(stream: try await transport.execStream(command: command))
     }
 
@@ -120,7 +122,11 @@ struct CoreOverSSHTests {
       print("group \(workspace.label): \(workspace.tabs.map(\.label)) \(workspace.status as Any)")
     }
     let agents = tree.allPanes.filter { $0.agent != nil }
-    print("snapshot: \(tree.allPanes.count) terminals, \(agents.count) agents")
+    let sessions = agents.compactMap(\.agent?.session)
+    #expect(sessions.allSatisfy { $0.source == "claude:sessions" && $0.identifier != nil })
+    print(
+      "snapshot: \(tree.allPanes.count) terminals, \(agents.count) agents, "
+        + "\(sessions.count) sessions from Claude's records")
   }
 
   @Test("discovery finds it over the same channels the app uses")
@@ -137,6 +143,7 @@ struct CoreOverSSHTests {
 
     let found = try #require(control)
     #expect(found.binaryPath.hasPrefix("/"))
+    #expect(found.home?.hasPrefix("/") == true)
     #expect(await found.availability() != .notInstalled)
   }
 

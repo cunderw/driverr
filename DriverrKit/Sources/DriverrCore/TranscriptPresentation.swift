@@ -58,10 +58,14 @@ public struct TranscriptHeader: Equatable, Sendable {
   /// The page's context count, drawn beside `caption`, never inside it. With a count, the
   /// phone elides the middle of the caption, and the count must not be what it eats.
   public let contextUsage: ContextUsage?
+  /// Whether the session id came from Claude Code's own record, not from herdr.
+  private let isFromClaudeRecord: Bool
 
+  /// `session` is the pane's, because `provenance` does not say who named the session.
   public init(
     agentName: String,
     source: TranscriptSource,
+    session: AgentSession? = nil,
     contextUsage: ContextUsage? = nil,
     asOf now: Date = Date()
   ) {
@@ -71,6 +75,7 @@ public struct TranscriptHeader: Equatable, Sendable {
     fileName = source.file.name
     age = source.age(asOf: now)
     self.contextUsage = contextUsage
+    isFromClaudeRecord = session?.source == AgentSession.claudeRecordSource
   }
 
   /// The whole pinned row as one line: the kind of match and how fresh the file is.
@@ -84,7 +89,8 @@ public struct TranscriptHeader: Equatable, Sendable {
     switch provenance {
     // A continued session reads the same: Claude Code named the successor itself, so the
     // match is as exact as herdr's.
-    case .reportedByHerdr, .continuedFromHerdrSession: scope = "reported by herdr"
+    case .reportedByHerdr, .continuedFromHerdrSession:
+      scope = isFromClaudeRecord ? "from Claude's record" : "reported by herdr"
     // Keep this short. A longer phrase pushed the age off the end of the row on a phone.
     case .matchedByDirectory: scope = "matched by directory"
     case .chosenByHand: scope = "you picked this file"
@@ -156,7 +162,7 @@ extension TranscriptResolution {
 /// or a refusal.
 ///
 /// One type because `Show the Screen` is the way out of every one of them, and it always
-/// works. A failure with no way out is a dead end.
+/// works where Driverr can read the pane's screen. A failure with no way out is a dead end.
 public struct TranscriptNotice: Equatable, Sendable {
   /// `nil` where the notice sits under turns that did parse, so it does not read as a
   /// heading over the conversation.
@@ -194,9 +200,10 @@ public struct TranscriptNotice: Equatable, Sendable {
   }
 
   /// Never over a sub-agent's chat, because the captured screen is the pane's, not the
-  /// sub-agent's.
-  public func offersScreen(inSubagentChat: Bool) -> Bool {
-    offersScreen && !inSubagentChat
+  /// sub-agent's. Never where Driverr cannot read the pane's screen, because the button would
+  /// only fail: it has not implemented that for a herdr-core terminal.
+  public func offersScreen(inSubagentChat: Bool, canReadScreen: Bool) -> Bool {
+    offersScreen && !inSubagentChat && canReadScreen
   }
 
   /// The exits' titles, kept with the rest of the screen's copy.
@@ -250,7 +257,12 @@ public struct TranscriptNotice: Equatable, Sendable {
   /// finished agent has had its prompt, so a missing file is a fault. A blocked agent keeps
   /// the wait, because a new Claude on its trust prompt reports blocked before any prompt
   /// (`FakeControl.treeWithUnstartedAgent`). No default, so a call site cannot forget it.
-  public init(absence: TranscriptAbsence, agentStatus: AgentStatus?) {
+  ///
+  /// `canReadScreen` is `offersScreen(inSubagentChat:canReadScreen:)`'s, so no sentence names
+  /// a button that is not drawn.
+  public init(absence: TranscriptAbsence, agentStatus: AgentStatus?, canReadScreen: Bool = true) {
+    let leftTheDirectory = "If this pane has left the directory the agent started in,"
+    let fileWillNotAppear = "the file will not appear here"
     switch absence {
     case .noSessionFiles(let directory) where Self.hasHadAPrompt(agentStatus),
       .reportedSessionMissing(_, let directory) where Self.hasHadAPrompt(agentStatus):
@@ -261,9 +273,9 @@ public struct TranscriptNotice: Equatable, Sendable {
       self.init(
         title: "The session file is missing",
         message:
-          "The agent has started, but Driverr found no session file for \(directory). If "
-          + "this pane has left the directory the agent started in, use "
-          + "\(Self.showScreenTitle).",
+          "The agent has started, but Driverr found no session file for \(directory). "
+          + "\(leftTheDirectory) "
+          + (canReadScreen ? "use \(Self.showScreenTitle)." : "\(fileWillNotAppear)."),
         offersRetry: true,
         symbolName: "exclamationmark.triangle"
       )
@@ -319,10 +331,21 @@ public struct TranscriptNotice: Equatable, Sendable {
         title: "No session file yet",
         message:
           "The agent has not written its session file for \(directory) yet. Send a message "
-          + "below to start the conversation. If this pane has left the directory the agent "
-          + "started in, the file will not appear here, so use \(Self.showScreenTitle).",
+          + "below to start the conversation. \(leftTheDirectory) \(fileWillNotAppear)"
+          + (canReadScreen ? ", so use \(Self.showScreenTitle)." : "."),
         offersRetry: true,
         symbolName: "text.bubble"
+      )
+    case .agentOnAddedMachine(let agent, let machine):
+      // No `Show the Screen`: Driverr has not implemented reading a core terminal's screen,
+      // so the button would only fail. No retry either, because the answer cannot change.
+      self.init(
+        title: "\(agent) is running on \(machine)",
+        message:
+          "Driverr reads conversations on the computer it connected to, and this terminal is "
+          + "on \(machine).",
+        offersScreen: false,
+        symbolName: "desktopcomputer"
       )
     case .subagentFileNotFound:
       // No `Show the Screen`: the pane's screen is the parent's. The back bar is the exit.
@@ -586,6 +609,8 @@ public enum TranscriptChatCopy {
 
   /// herdr reports the pane `blocked`, which means a person is needed.
   public static let pendingBlocked = "Waiting for permission"
+  /// A herdr-core agent said it is blocked on signing in, which a chip cannot answer.
+  public static let pendingAuth = "Waiting for you to sign in"
   /// The agent asked a question and no answer has arrived. Separate from `pendingBlocked`
   /// because this row has the answers under it.
   public static let pendingQuestion = "Waiting for your answer"
@@ -702,6 +727,10 @@ extension ToolRun {
 ///
 /// An `AskUserQuestion` with parsed options is the exception. It is the agent asking the
 /// reader by definition, so it outranks `AgentStatus`, which can lag a question or miss it.
+///
+/// A herdr-core agent can also say what it is blocked on. A question or a sign-in is not a
+/// permission prompt, so the synthesised Approve/Deny pair is not offered for either: `y` is
+/// not an answer to them. With no kind, which is every TUI pane, blocked reads as permission.
 public struct PendingToolCallNotice: Hashable, Sendable {
   /// The row's words, naming the call.
   public let label: String
@@ -716,7 +745,7 @@ public struct PendingToolCallNotice: Hashable, Sendable {
   public var chips: [ReplyChip] { groups.flatMap(\.chips) }
 
   /// `nil` for a pane with no agent, which differs from `.unknown`. See `AgentStatus`.
-  public init(call: ToolCall, agentStatus: AgentStatus?) {
+  public init(call: ToolCall, agentStatus: AgentStatus?, blockedKind: AgentBlockedKind? = nil) {
     let named = TranscriptChatCopy.namingCall(call)
     // The file's own answer first, whatever the status: a written question with no result
     // is unanswered.
@@ -728,9 +757,18 @@ public struct PendingToolCallNotice: Hashable, Sendable {
     }
     switch agentStatus {
     case .blocked:
-      label = "\(TranscriptChatCopy.pendingBlocked) · \(named)"
       isAsking = true
-      groups = call.replyChipGroups
+      switch blockedKind {
+      case .question:
+        label = "\(TranscriptChatCopy.pendingQuestion) · \(named)"
+        groups = []
+      case .auth:
+        label = "\(TranscriptChatCopy.pendingAuth) · \(named)"
+        groups = []
+      case .permission, nil:
+        label = "\(TranscriptChatCopy.pendingBlocked) · \(named)"
+        groups = call.replyChipGroups
+      }
     case .working:
       label = "\(TranscriptChatCopy.pendingWorking) · \(named)"
       isAsking = false
@@ -747,8 +785,11 @@ extension ToolCall {
   /// The row this call gets under its run, which always names the call. There is no form
   /// without `agentStatus`, because a label built from a resultless call alone would claim
   /// a permission prompt that may not exist.
-  public func pendingNotice(agentStatus: AgentStatus?) -> PendingToolCallNotice {
-    PendingToolCallNotice(call: self, agentStatus: agentStatus)
+  public func pendingNotice(
+    agentStatus: AgentStatus?,
+    blockedKind: AgentBlockedKind? = nil
+  ) -> PendingToolCallNotice {
+    PendingToolCallNotice(call: self, agentStatus: agentStatus, blockedKind: blockedKind)
   }
 }
 

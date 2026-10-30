@@ -1,4 +1,5 @@
 import DriverrCore
+import DriverrHerdr
 import SwiftUI
 import UIKit
 
@@ -116,7 +117,8 @@ struct PaneChatView: View {
   /// The agent's own name, so the header never calls a Codex session a Claude one.
   let agentName: String
   /// The pane's captured screen, the exit from every chat failure. Held here so Show the
-  /// Screen always works with nothing installed.
+  /// Screen always works with nothing installed, on any pane but a herdr-core one, which
+  /// offers no such exit. See `canReadScreen`.
   let screen: PaneScreenModel
 
   /// Taps a reply chip under a pending turn. `nil` for a shell pane; see `sendReply`.
@@ -201,13 +203,14 @@ struct PaneChatView: View {
   /// Either the reader took Show the Screen from a chat failure, or the agent is one this build
   /// has no reader for. For those agents there was never a conversation, so a notice would
   /// present a normal state as an error (`TranscriptAbsence.isUnreadableAgentKind`). Every
-  /// other absence keeps its notice, because something expected is missing.
+  /// other absence keeps its notice, because something expected is missing. On a herdr-core
+  /// pane such an agent keeps its notice too, because there is no screen to draw instead.
   private var showsCapturedScreen: Bool {
     // The captured screen is the pane's, so a sub-agent's chat never offers it.
     if isShowingSubagent { return false }
     if isShowingScreen { return true }
     if case .unavailable(let resolution) = shown.state {
-      return resolution.isUnreadableAgentKind
+      return resolution.isUnreadableAgentKind && canReadScreen
     }
     return false
   }
@@ -270,6 +273,15 @@ struct PaneChatView: View {
   private var agentStatus: AgentStatus? {
     isShowingSubagent ? nil : model.pane.agent?.status
   }
+
+  /// What the pane's agent said it is blocked on, for `agentStatus`'s reason.
+  private var blockedKind: AgentBlockedKind? {
+    isShowingSubagent ? nil : model.pane.agent?.blockedKind
+  }
+
+  /// Whether a captured screen can be drawn for this pane. Driverr has not implemented
+  /// `CoreControl.readScreen`, so on a herdr-core terminal `Show the Screen` would only fail.
+  private var canReadScreen: Bool { !CorePaneID.isCore(model.pane.id) }
 
   /// `onSendReply`, or `nil` while a sub-agent is shown: a chip there would answer the pane.
   /// `nil` also turns off the reply band and the screen-question read.
@@ -434,12 +446,13 @@ struct PaneChatView: View {
       AgentStopRow(stop: stop, horizontalInset: chatGutter)
     }
     // Show the Screen is reachable from a readable chat on a blocked pane, not only from a
-    // failure, so the reader never has to switch to Terminal to see a prompt.
+    // failure, so the reader never has to switch to Terminal to see a prompt. A herdr-core
+    // pane has no such row, because `canReadScreen` is false there.
     //
     // Not while the composer is collapsed, like the band in `TerminalScreen.surfaceSegment`.
     // A landscape phone with the keyboard up leaves this surface about 100 pt, and without
     // this row the rest fits. The row returns with the keyboard's dismissal or rotation.
-    if agentStatus == .blocked && !isComposerCollapsed {
+    if agentStatus == .blocked && !isComposerCollapsed && canReadScreen {
       HStack {
         Spacer(minLength: 0)
         showScreenButton(isProminent: false)
@@ -472,6 +485,7 @@ struct PaneChatView: View {
           // What decides whether an existing cell is reconfigured. See `ChatRowInputs`.
           rowInputs: ChatRowInputs(
             agentStatus: agentStatus,
+            blockedKind: blockedKind,
             openRuns: shown.openRuns,
             expanded: shown.expanded,
             selection: replySelection,
@@ -694,7 +708,7 @@ struct PaneChatView: View {
       let call = model.transcript?.questionCall(
         screen: screenForQuestion, agentStatus: agentStatus)
     else { return nil }
-    return call.pendingNotice(agentStatus: agentStatus).label
+    return call.pendingNotice(agentStatus: agentStatus, blockedKind: blockedKind).label
   }
 
   /// The turn the chips follow, or `nil` while nothing offers any. Only the last run can carry
@@ -720,6 +734,7 @@ struct PaneChatView: View {
       isFinalBlockedAnswer: isNewest && turn.isAssistant
         && agentStatus == .blocked,
       agentStatus: agentStatus,
+      blockedKind: blockedKind,
       isOpen: shown.openRuns.isOpen(turn),
       isExpanded: shown.expanded.contains(turn.id),
       onToggleOpen: {
@@ -765,7 +780,7 @@ struct PaneChatView: View {
       let call = model.transcript?.questionCall(
         screen: screenForQuestion, agentStatus: agentStatus)
     else { return [] }
-    return call.pendingNotice(agentStatus: agentStatus).groups
+    return call.pendingNotice(agentStatus: agentStatus, blockedKind: blockedKind).groups
   }
 
   /// Whether to read the screen for a question: a blocked pane, a composer to answer through,
@@ -989,7 +1004,11 @@ struct PaneChatView: View {
     TimelineView(.periodic(from: .now, by: Self.ageTick)) { context in
       ProvenanceRow(
         header: TranscriptHeader(
-          agentName: agentName, source: source, contextUsage: contextUsage, asOf: context.date
+          agentName: agentName,
+          source: source,
+          session: model.pane.agent?.session,
+          contextUsage: contextUsage,
+          asOf: context.date
         ),
         horizontalInset: chatGutter
       )
@@ -1009,7 +1028,9 @@ struct PaneChatView: View {
   private func notice(for resolution: TranscriptResolution) -> some View {
     switch resolution {
     case .absent(let absence):
-      centred(TranscriptNotice(absence: absence, agentStatus: agentStatus))
+      centred(
+        TranscriptNotice(
+          absence: absence, agentStatus: agentStatus, canReadScreen: canReadScreen))
     case .ambiguous(let directory, let candidates):
       // The one place nothing is drawn behind what is on screen. Behind it would be a guessed,
       // possibly wrong, conversation.
@@ -1166,7 +1187,7 @@ struct PaneChatView: View {
       .buttonStyle(.borderedProminent)
       .accessibilityIdentifier("pane.chat.chooseFile")
     }
-    if notice.offersScreen(inSubagentChat: isShowingSubagent) {
+    if notice.offersScreen(inSubagentChat: isShowingSubagent, canReadScreen: canReadScreen) {
       showScreenButton(isProminent: isProminent)
     }
   }
@@ -1276,8 +1297,9 @@ struct PaneChatView: View {
     .accessibilityIdentifier("pane.chat.picker.candidate.\(index)")
   }
 
-  /// The exit that needs nothing installed and always works. It shows the captured screen on
-  /// the Chat side of the segment.
+  /// The exit that needs nothing installed and always works where it is drawn, which is
+  /// never on a herdr-core pane (`canReadScreen`). It shows the captured screen on the Chat
+  /// side of the segment.
   private func showScreenButton(isProminent: Bool) -> some View {
     Button { isShowingScreen = true } label: {
       BorderedButtonLabel(TranscriptNotice.showScreenTitle)

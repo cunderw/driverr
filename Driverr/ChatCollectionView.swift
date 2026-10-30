@@ -92,6 +92,7 @@ struct ChatReaderState: Equatable {
 ///   watch the update graph.
 struct ChatRowInputs: Equatable {
   var agentStatus: AgentStatus?
+  var blockedKind: AgentBlockedKind? = nil
   var openRuns: OpenToolRuns
   var expanded: Set<String>
   var selection: ReplyChipSelection

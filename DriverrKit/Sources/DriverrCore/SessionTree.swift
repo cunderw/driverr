@@ -1,16 +1,21 @@
-/// The agent's own session, as its herdr integration reported it.
+/// The agent's own session, as its herdr integration reported it, or for a herdr-core
+/// terminal as Claude Code's own record of the process says.
 ///
 /// The exact answer to "which transcript is this pane's", with no heuristic. Absent unless
 /// the user installed a herdr integration for the agent, which for Claude Code is optional,
-/// so Driverr cannot assume it.
+/// so Driverr cannot assume it. On a core it is absent when the record could not be read.
 public struct AgentSession: Hashable, Sendable {
   /// herdr's token for the agent, `claude`. Trusted over the pane's own agent slug.
   public let agent: String
   /// What `value` is. Only `id` is interpreted; anything else is carried.
   public let kind: String
   public let value: String
-  /// Where herdr got it, such as `herdr:claude`.
+  /// Where it came from, such as `herdr:claude` or `claudeRecordSource`.
   public let source: String?
+
+  /// `source` for an id read from Claude Code's own record of its process, which herdr played
+  /// no part in. `TranscriptHeader` says so.
+  public static let claudeRecordSource = "claude:sessions"
 
   public init(agent: String, kind: String, value: String, source: String? = nil) {
     self.agent = agent
@@ -52,19 +57,24 @@ public struct Agent: Hashable, Sendable {
   /// What it is blocked on, from a herdr-core report. Always `nil` unless `status` is
   /// `blocked`, and for a word this build does not know.
   public let blockedKind: AgentBlockedKind?
+  /// The machine a herdr-core added that this runs on, or `nil` for the connected computer.
+  /// Driverr reads session files only on the computer it connected to.
+  public let machine: String?
 
   public init(
     name: String,
     kind: String? = nil,
     status: AgentStatus,
     session: AgentSession? = nil,
-    blockedKind: AgentBlockedKind? = nil
+    blockedKind: AgentBlockedKind? = nil,
+    machine: String? = nil
   ) {
     self.name = name
     self.kind = kind
     self.status = status
     self.session = session
     self.blockedKind = blockedKind
+    self.machine = machine
   }
 }
 

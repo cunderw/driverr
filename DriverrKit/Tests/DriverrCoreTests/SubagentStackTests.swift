@@ -91,7 +91,7 @@ struct SubagentNoticeTests {
   @Test("a failed sub-agent read offers no screen, where the pane's own failure does")
   func failureOffersNoScreenInASubagent() {
     let notice = TranscriptNotice(failure: .transcriptUnreadable(reason: "gone"))
-    #expect(notice.offersScreen(inSubagentChat: false))
-    #expect(!notice.offersScreen(inSubagentChat: true))
+    #expect(notice.offersScreen(inSubagentChat: false, canReadScreen: true))
+    #expect(!notice.offersScreen(inSubagentChat: true, canReadScreen: true))
   }
 }

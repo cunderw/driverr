@@ -52,6 +52,18 @@ extension CoreControl {
     return nil
   }
 
+  /// Asks for the host's home directory. See `CoreControl.home`.
+  static let homeCommand = #"printf '%s' "$HOME""#
+
+  /// The home directory out of `homeCommand`'s output: its last line, if that is absolute.
+  ///
+  /// The last, because a login file may print a banner first, and only ahead of the command.
+  static func discoveredHome(in output: String) -> String? {
+    let line = output.split(separator: "\n").last?
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+    return line?.hasPrefix("/") == true ? line : nil
+  }
+
   /// Finds a core on the host and returns a control already connected to it.
   ///
   /// Connecting is the only test of what the program is, so a stranger called `hc` is
@@ -72,7 +84,13 @@ extension CoreControl {
         !Task.isCancelled
       else { return nil }
 
-      let control = CoreControl(binaryPath: path, callDeadline: callDeadline, open: open)
+      let home = try? await run(homeCommand)
+      let control = CoreControl(
+        binaryPath: path,
+        home: home.flatMap { discoveredHome(in: $0.standardOutput) },
+        callDeadline: callDeadline,
+        open: open
+      )
       let handshake = await control.link.established().handshake
       guard handshake != .notCore else { return nil }
       guard !Task.isCancelled else {

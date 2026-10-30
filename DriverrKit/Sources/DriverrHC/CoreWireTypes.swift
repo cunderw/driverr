@@ -27,6 +27,15 @@ struct CoreDocGetResult<Value: Decodable & Sendable>: Decodable, Sendable {
   let value: Value?
 }
 
+/// `file.read` of one whole file. `path` must be absolute: the core expands no `~`.
+struct CoreFileReadParams: Encodable, Sendable {
+  let path: String
+}
+
+struct CoreFileReadResult: Decodable, Sendable {
+  let text: String
+}
+
 struct CoreHelloParams: Encodable, Sendable {
   let framed: Bool
   let generation: Int
@@ -63,7 +72,10 @@ struct CoreListResult: Decodable, Sendable {
 
 struct CoreTerminal: Decodable, Sendable {
   struct Foreground: Decodable, Sendable {
+    /// The foreground process group's leader. For Claude Code, the process itself.
+    let pid: Int?
     let argv: [String]?
+    /// As the OS has it, so not a program's name: Claude Code's is its version.
     let name: String?
     let cwd: String?
   }

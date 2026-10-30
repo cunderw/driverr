@@ -224,6 +224,75 @@ struct TranscriptResolverTests {
     )
   }
 
+  /// What a herdr-core terminal's pane carries. See `CoreSessionFiles`.
+  private func corePane(session: String) -> Pane {
+    HostFixture.pane(
+      agent: Agent(
+        name: "Claude",
+        kind: "claude",
+        status: .working,
+        session: AgentSession(
+          agent: "claude", kind: "id", value: session, source: "claude:sessions")
+      )
+    )
+  }
+
+  @Test("two Claude sessions writing in one folder each open their own file")
+  func twoSessionsOneFolder() async throws {
+    let host = FakeHost(
+      responses: [
+        "date +%s": FakeHost.output(
+          HostFixture.listing(
+            now: 1_000_000,
+            directory: HostFixture.projectDirectory,
+            files: [("999999", 100, "first.jsonl"), ("999998", 200, "second.jsonl")]
+          )
+        )
+      ]
+    )
+    let reader = TranscriptReader(run: host.runner)
+    for name in ["first", "second"] {
+      let source = try await reader.resolve(for: corePane(session: name)).source
+      #expect(source?.file.name == "\(name).jsonl")
+      #expect(source?.provenance == .reportedByHerdr(sessionID: name))
+    }
+  }
+
+  /// A new session is named before its file exists, and three of five live records measured
+  /// on a real core had no transcript yet. The newest file is another conversation.
+  @Test("a record whose transcript is not written yet stays missing, among live files")
+  func recordWithNoTranscript() async throws {
+    let host = FakeHost(
+      responses: [
+        "date +%s": FakeHost.output(
+          HostFixture.listing(
+            now: 1_000_000,
+            directory: HostFixture.projectDirectory,
+            files: [("999999", 100, "someone-else.jsonl")]
+          )
+        )
+      ]
+    )
+    let resolution = try await TranscriptReader(run: host.runner)
+      .resolve(for: corePane(session: "not-written"))
+    #expect(
+      resolution
+        == .absent(
+          .reportedSessionMissing(sessionID: "not-written", directory: "/home/me/dev/driverr"))
+    )
+  }
+
+  /// The reader lists the SSH host's files, so anything past this reads the wrong machine.
+  @Test("an agent on an added machine is refused before any file is listed")
+  func addedMachine() async throws {
+    let host = FakeHost()
+    let pane = HostFixture.pane(
+      agent: Agent(name: "Claude", kind: "unknown", status: .working, machine: "box"))
+    let resolution = try await TranscriptReader(run: host.runner).resolve(for: pane)
+    #expect(resolution == .absent(.agentOnAddedMachine(agent: "Claude", machine: "box")))
+    #expect(await host.commands.isEmpty)
+  }
+
   @Test("a session reference of a kind this build does not understand falls back to the directory")
   func unknownSessionKind() async throws {
     let host = FakeHost(

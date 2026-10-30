@@ -37,6 +37,9 @@ final class FakeCoreStream: HerdrStream, @unchecked Sendable {
     "doc.get": .result(FakeCoreStream.noDocument),
   ]
 
+  /// What `file.read` answers, by path. A path with no entry is a file that is not there.
+  var files: [String: Reply] = [:]
+
   let output: AsyncThrowingStream<Data, any Error>
   private let continuation: AsyncThrowingStream<Data, any Error>.Continuation
 
@@ -44,6 +47,7 @@ final class FakeCoreStream: HerdrStream, @unchecked Sendable {
   private var sawHello = false
   private var decoder = CoreFrameDecoder()
   private var calledMethods: [String] = []
+  private var askedPaths: [String] = []
   private var closeCount = 0
   private var held = Data()
   private var lateReplies = 0
@@ -57,6 +61,8 @@ final class FakeCoreStream: HerdrStream, @unchecked Sendable {
   var end: ProcessEnd? { get async { nil } }
 
   var methods: [String] { lock.withLock { calledMethods } }
+  /// Every path `file.read` was asked for, in the order the calls landed.
+  var readPaths: [String] { lock.withLock { askedPaths } }
   var closes: Int { lock.withLock { closeCount } }
   /// How many `.late` replies have been written.
   var lateRepliesWritten: Int { lock.withLock { lateReplies } }
@@ -77,7 +83,14 @@ final class FakeCoreStream: HerdrStream, @unchecked Sendable {
       let id = try required(object?["id"] as? Int)
       let method = try required(object?["method"] as? String)
       lock.withLock { calledMethods.append(method) }
-      answer(id: id, reply: replies[method] ?? .error("no such method"))
+      if method == "file.read" {
+        let params = object?["params"] as? [String: Any]
+        let path = try required(params?["path"] as? String)
+        lock.withLock { askedPaths.append(path) }
+        answer(id: id, reply: files[path] ?? .error("no file \(path)"))
+      } else {
+        answer(id: id, reply: replies[method] ?? .error("no such method"))
+      }
     }
   }
 

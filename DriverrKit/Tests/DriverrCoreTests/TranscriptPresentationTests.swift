@@ -112,6 +112,56 @@ struct TranscriptPresentationTests {
     #expect(header.caption == "Codex session · matched by directory · written 12s ago")
   }
 
+  /// The caption's scope phrase, and the cap on it in `theScopeLeavesRoomForTheAge` holds for
+  /// these too. `ProvenanceCaptionLayoutTests` measures the new one.
+  private func header(_ provenance: TranscriptProvenance, session: AgentSession?) -> String {
+    TranscriptHeader(
+      agentName: "Claude",
+      source: TranscriptSource(
+        file: file(age: 12), provenance: provenance, directory: "/Users/x/Dev/driverr"),
+      session: session,
+      asOf: Date(timeIntervalSince1970: 1_000)
+    ).caption.components(separatedBy: " \u{00B7} ")[1]
+  }
+
+  /// That caption exists to name the evidence, and on a core herdr gave none.
+  @Test(
+    "a session read from Claude's record says so, however it got here",
+    arguments: [
+      TranscriptProvenance.reportedByHerdr(sessionID: "s"),
+      .continuedFromHerdrSession(reportedID: "s", sessionID: "t"),
+    ])
+  func captionNamesClaudesRecord(provenance: TranscriptProvenance) {
+    let record = AgentSession(
+      agent: "claude", kind: "id", value: "s", source: AgentSession.claudeRecordSource)
+    #expect(header(provenance, session: record) == "from Claude's record")
+  }
+
+  @Test(
+    "a session herdr reported still credits herdr",
+    arguments: [
+      AgentSession?.none,
+      AgentSession(agent: "claude", kind: "id", value: "s"),
+      AgentSession(agent: "claude", kind: "id", value: "s", source: "herdr:claude"),
+    ])
+  func captionKeepsCreditingHerdr(session: AgentSession?) {
+    #expect(header(.reportedByHerdr(sessionID: "s"), session: session) == "reported by herdr")
+  }
+
+  /// The pane's session is passed for every page, and only a reported page is about it.
+  @Test(
+    "the record is named only where the session is the evidence",
+    arguments: [
+      (TranscriptProvenance.matchedByDirectory, "matched by directory"),
+      (.chosenByHand, "you picked this file"),
+      (.subagent, "sub-agent"),
+    ])
+  func captionOtherwiseUnchanged(provenance: TranscriptProvenance, scope: String) {
+    let record = AgentSession(
+      agent: "claude", kind: "id", value: "s", source: AgentSession.claudeRecordSource)
+    #expect(header(provenance, session: record) == scope)
+  }
+
   /// `ProvenanceRow` truncates in the middle, so the age stays last and the scope phrase is
   /// held to the longest one that fits. At 12 pt the caption has 341 pt on a 402 pt phone,
   /// measured by `ProvenanceCaptionLayoutTests`. "matched by this pane's directory" ran the
@@ -129,7 +179,6 @@ struct TranscriptPresentationTests {
       (.matchedByDirectory, "matched by directory"),
       (.chosenByHand, "you picked this file"),
     ]
-
     for (provenance, scope) in variants {
       let header = TranscriptHeader(
         agentName: "Claude",
@@ -599,6 +648,48 @@ struct TranscriptPresentationTests {
       call.pendingNotice(agentStatus: .blocked).label
         == "Waiting for permission · Bash cargo test"
     )
+  }
+
+  /// With no kind, which is every TUI pane, nothing changes.
+  @Test("a blocked pane that said nothing about why still reads as permission")
+  func pendingWithNoBlockedKind() {
+    let call = ToolCall(name: "Bash", target: "cargo test", outcome: .pending)
+    let notice = call.pendingNotice(agentStatus: .blocked, blockedKind: nil)
+    #expect(notice == call.pendingNotice(agentStatus: .blocked))
+    #expect(notice.label == "Waiting for permission · Bash cargo test")
+    #expect(notice.chips.map(\.label) == ["Approve", "Deny"])
+    #expect(notice.isAsking)
+  }
+
+  @Test("a permission prompt offers Approve and Deny")
+  func pendingPermission() {
+    let call = ToolCall(name: "Bash", target: "cargo test", outcome: .pending)
+    let notice = call.pendingNotice(agentStatus: .blocked, blockedKind: .permission)
+    #expect(notice.label == "Waiting for permission · Bash cargo test")
+    #expect(notice.chips.map(\.label) == ["Approve", "Deny"])
+  }
+
+  /// `y` is not an answer to either, and a chip would send it.
+  @Test(
+    "a question or a sign-in asks, with no chips",
+    arguments: [
+      (AgentBlockedKind.question, "Waiting for your answer · Bash cargo test"),
+      (.auth, "Waiting for you to sign in · Bash cargo test"),
+    ])
+  func pendingWithNoChips(kind: AgentBlockedKind, label: String) {
+    let call = ToolCall(name: "Bash", target: "cargo test", outcome: .pending)
+    let notice = call.pendingNotice(agentStatus: .blocked, blockedKind: kind)
+    #expect(notice.label == label)
+    #expect(notice.isAsking)
+    #expect(notice.chips.isEmpty)
+  }
+
+  @Test("a kind means nothing on a pane that is not blocked")
+  func blockedKindNeedsBlocked() {
+    let call = ToolCall(name: "Bash", target: "cargo test", outcome: .pending)
+    #expect(
+      call.pendingNotice(agentStatus: .working, blockedKind: .question)
+        == call.pendingNotice(agentStatus: .working))
   }
 
   @Test("a pending call with no target names itself alone")
@@ -1143,6 +1234,93 @@ struct TranscriptPresentationTests {
     #expect(notice.message.contains("session file for /Users/x/Dev/driverr"))
     #expect(!notice.message.contains("3f8c1d20"))
     #expect(!notice.message.contains("Claude"))
+  }
+
+  /// The usual first state of a new Claude on a core, and neither sentence may name a button
+  /// that is not there.
+  @Test(
+    "with no screen to read, a missing file names no way out",
+    arguments: [AgentStatus.idle, .working],
+    [
+      TranscriptAbsence.noSessionFiles(directory: "/p"),
+      .reportedSessionMissing(sessionID: "s", directory: "/p"),
+    ])
+  func aMissingFileWithNoScreen(status: AgentStatus, absence: TranscriptAbsence) {
+    let notice = TranscriptNotice(absence: absence, agentStatus: status, canReadScreen: false)
+    #expect(!notice.message.contains(TranscriptNotice.showScreenTitle))
+    #expect(!notice.offersScreen(inSubagentChat: false, canReadScreen: false))
+    #expect(notice.offersRetry)
+  }
+
+  @Test("with no screen to read, a pane that left its directory is still told why")
+  func leftTheDirectoryWithNoScreen() {
+    let absence = TranscriptAbsence.reportedSessionMissing(sessionID: "s", directory: "/p")
+    let waiting = TranscriptNotice(absence: absence, agentStatus: .idle, canReadScreen: false)
+    #expect(
+      waiting.message
+        == "The agent has not written its session file for /p yet. Send a message below to "
+        + "start the conversation. If this pane has left the directory the agent started in, "
+        + "the file will not appear here.")
+    let fault = TranscriptNotice(absence: absence, agentStatus: .done, canReadScreen: false)
+    #expect(
+      fault.message
+        == "The agent has started, but Driverr found no session file for /p. If this pane has "
+        + "left the directory the agent started in, the file will not appear here.")
+  }
+
+  /// The sentences a TUI pane has always read, whole, so the core wording cannot move them.
+  @Test("a pane whose screen can be read keeps its sentences")
+  func aMissingFileWithAScreen() {
+    let absence = TranscriptAbsence.reportedSessionMissing(sessionID: "s", directory: "/p")
+    #expect(
+      TranscriptNotice(absence: absence, agentStatus: .idle).message
+        == "The agent has not written its session file for /p yet. Send a message below to "
+        + "start the conversation. If this pane has left the directory the agent started in, "
+        + "the file will not appear here, so use Show the Screen.")
+    #expect(
+      TranscriptNotice(absence: absence, agentStatus: .done).message
+        == "The agent has started, but Driverr found no session file for /p. If this pane has "
+        + "left the directory the agent started in, use Show the Screen.")
+  }
+
+  /// Every notice, not only the two that word it: all of them reach the same button.
+  @Test("no notice offers a screen Driverr cannot read")
+  func noNoticeOffersAnUnreadableScreen() throws {
+    let notices = [
+      TranscriptNotice(failure: .transcriptUnreadable(reason: "gone")),
+      TranscriptNotice(absence: .paneHasNoDirectory, agentStatus: nil),
+      TranscriptNotice(absence: .agentNotSupported(agent: "Cursor"), agentStatus: nil),
+      try #require(TranscriptNotice(ambiguous: "/p", candidates: [])),
+      try #require(
+        TranscriptNotice(
+          outcome: .noReadableTurns, turnCount: 0, bytesFetched: 0, agentStatus: nil)),
+    ]
+    for notice in notices {
+      #expect(notice.offersScreen(inSubagentChat: false, canReadScreen: true))
+      #expect(!notice.offersScreen(inSubagentChat: false, canReadScreen: false))
+    }
+  }
+
+  @Test("an agent on an added machine says where it is, with no way out that would fail")
+  func anAgentOnAnAddedMachine() {
+    let notice = TranscriptNotice(
+      absence: .agentOnAddedMachine(agent: "Claude", machine: "box"), agentStatus: .working)
+    #expect(notice.title == "Claude is running on box")
+    #expect(
+      notice.message
+        == "Driverr reads conversations on the computer it connected to, and this terminal is "
+        + "on box.")
+    #expect(!notice.offersScreen)
+    #expect(!notice.offersRetry)
+    #expect(!notice.offersFilePicker)
+  }
+
+  /// `true` would draw the captured screen in its place, and Driverr reads none from a core.
+  @Test("an added machine is not an agent Driverr can never read")
+  func anAddedMachineKeepsItsNotice() {
+    let absence = TranscriptAbsence.agentOnAddedMachine(agent: "Claude", machine: "box")
+    #expect(!absence.isUnreadableAgentKind)
+    #expect(!TranscriptResolution.absent(absence).isUnreadableAgentKind)
   }
 
   @Test("a prompted agent's missing file names the way out")
