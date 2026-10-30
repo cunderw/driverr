@@ -407,6 +407,22 @@ struct PaneComposerHeaderTests {
     #expect(header.invitation == nil)
   }
 
+  @Test(
+    "a blocked agent that said why is worded for it",
+    arguments: [
+      (AgentBlockedKind?.none, "Claude is waiting for you."),
+      (.permission, "Claude is waiting for permission."),
+      (.question, "Claude is waiting for your answer."),
+      (.auth, "Claude is waiting for you to sign in."),
+    ])
+  func blockedKinds(kind: AgentBlockedKind?, state: String) {
+    let agent = Agent(name: "Claude", kind: "claude", status: .blocked, blockedKind: kind)
+    let pane = Pane(id: "w1:p2", tabID: "w1:t1", workspaceID: "w1", title: "t", agent: agent)
+    let header = PaneComposerHeader(pane: pane)
+    #expect(header.state == state)
+    #expect(header.invitation == nil)
+  }
+
   @Test("every other state keeps the composer and changes the sentence")
   func notBlocked() {
     for status in AgentStatus.allCases where status != .blocked {

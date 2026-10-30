@@ -374,7 +374,7 @@ public struct PaneComposerHeader: Equatable, Sendable {
     let name = agent.name
     switch agent.status {
     case .blocked:
-      state = "\(name) is waiting for you."
+      state = Self.blockedState(name, on: agent.blockedKind)
       invitation = nil
     case .working:
       state = "\(name) is working."
@@ -392,6 +392,16 @@ public struct PaneComposerHeader: Equatable, Sendable {
       // `unknown` is an agent whose output nothing recognised, so claim nothing.
       state = "herdr can't say what \(name) is doing."
       invitation = "You can still say something."
+    }
+  }
+
+  /// What a blocked agent is waiting for, when it said. Only a herdr-core agent can.
+  private static func blockedState(_ name: String, on kind: AgentBlockedKind?) -> String {
+    switch kind {
+    case .permission: "\(name) is waiting for permission."
+    case .question: "\(name) is waiting for your answer."
+    case .auth: "\(name) is waiting for you to sign in."
+    case nil: "\(name) is waiting for you."
     }
   }
 

@@ -182,6 +182,57 @@ struct CoreSnapshotMapperTests {
     #expect(agent.status == .working)
   }
 
+  @Test("an agent says which added machine it is on, and a local one says none")
+  func agentMachine() throws {
+    let json = #"""
+      {"terminals":[{"address":"box/t1","status":{"app":"claude-code","state":"idle"}},
+      {"address":"t2","status":{"app":"claude-code","state":"idle"}}]}
+      """#
+    let panes = CoreSnapshotMapper.tree(from: try decoded(json)).allPanes
+    #expect(panes.first { $0.id == "core:box/t1" }?.agent?.machine == "box")
+    #expect(panes.first { $0.id == "core:t2" }?.agent?.machine == nil)
+  }
+
+  @Test(
+    "a status with no app takes the foreground's program, if Driverr knows it",
+    arguments: [
+      (["/opt/homebrew/bin/claude", "--model", "opus"], "Claude", "claude"),
+      (["codex"], "Codex", "codex"),
+      (["/bin/zsh"], "Agent", "unknown"),
+    ])
+  func foregroundProgram(argv: [String], name: String, kind: String) throws {
+    let quoted = argv.map { "\"\($0)\"" }.joined(separator: ",")
+    let agent = try terminal(
+      #""status":{"state":"idle"},"foreground":{"argv":[\#(quoted)],"pid":7}"#
+    ).agent
+    #expect(agent?.name == name)
+    #expect(agent?.kind == kind)
+  }
+
+  @Test("the app a status names beats what is in the foreground")
+  func appBeatsForeground() throws {
+    let agent = try terminal(
+      #""status":{"app":"codex","state":"idle"},"foreground":{"argv":["claude"],"pid":7}"#
+    ).agent
+    #expect(agent?.kind == "codex")
+  }
+
+  @Test("claude running with no status is a shell")
+  func claudeWithNoStatus() throws {
+    #expect(try terminal(#""foreground":{"argv":["claude"],"pid":7}"#).agent == nil)
+  }
+
+  @Test("a session id becomes the agent's session, with where it came from")
+  func sessionFromFile() throws {
+    let json = #"""
+      {"terminals":[{"address":"t1","status":{"app":"claude-code","state":"idle"}}]}
+      """#
+    let tree = CoreSnapshotMapper.tree(from: try decoded(json), sessions: ["t1": "abc"])
+    #expect(
+      tree.allPanes.only?.agent?.session
+        == AgentSession(agent: "claude", kind: "id", value: "abc", source: "claude:sessions"))
+  }
+
   @Test(
     "what a blocked agent waits for is carried, and only for a blocked agent",
     arguments: [

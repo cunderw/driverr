@@ -33,8 +33,9 @@ public struct TranscriptReader: Sendable {
   ///
   /// Tiers, in order of how much is assumed:
   ///
-  /// 1. **`agent_session` reported by herdr.** Exact. Needs an installed integration, so its
-  ///    absence is ordinary. Follows `continued-in` handovers; see
+  /// 1. **`agent_session` reported by herdr**, or read from Claude Code's record of a
+  ///    herdr-core terminal's process. Exact. Needs an installed integration or a readable
+  ///    record, so its absence is ordinary. Follows `continued-in` handovers; see
   ///    `continuation(from:reported:in:)`.
   /// 2. **The newest file in the directory derived from the pane's `cwd`.**
   /// 3. **Ambiguous**: two or more files written within the last minute. Reported, never
@@ -47,6 +48,9 @@ public struct TranscriptReader: Sendable {
     -> TranscriptResolution
   {
     guard let agent = pane.agent else { return .absent(.paneHasNoAgent) }
+    if let machine = agent.machine {
+      return .absent(.agentOnAddedMachine(agent: agent.name, machine: machine))
+    }
     guard let kind = self.agent(of: agent) else {
       return .absent(.agentNotSupported(agent: agent.name))
     }

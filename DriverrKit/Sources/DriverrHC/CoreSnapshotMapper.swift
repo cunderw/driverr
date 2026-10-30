@@ -34,13 +34,18 @@ enum CoreSnapshotMapper {
     "agy": ("antigravity", "Antigravity"),
   ]
 
-  static func tree(from list: CoreListResult, document: CoreAppDocument? = nil) -> SessionTree {
+  /// `sessions` holds each Claude terminal's session id, by address. See `CoreSessionFiles`.
+  static func tree(
+    from list: CoreListResult,
+    document: CoreAppDocument? = nil,
+    sessions: [String: String] = [:]
+  ) -> SessionTree {
     let index = Index(document)
     let machines = ordered(grouped(list.terminals, by: machine)) { $0.key == nil ? 0 : nil }
     return SessionTree(
       workspaces: machines.flatMap { machine in
         let index = machine.key == nil ? index : Index(nil)
-        return workspaces(machine.terminals, on: machine.key, index: index)
+        return workspaces(machine.terminals, on: machine.key, index: index, sessions: sessions)
       }
     )
   }
@@ -49,7 +54,8 @@ enum CoreSnapshotMapper {
   private static func workspaces(
     _ terminals: [CoreTerminal],
     on machine: String?,
-    index: Index
+    index: Index,
+    sessions: [String: String]
   ) -> [Workspace] {
     let prefix = CorePaneID.prefix + (machine.map { $0 + "/" } ?? "")
     let spaces = ordered(grouped(terminals) { label("herdr.space", of: $0) }) { space in
@@ -57,14 +63,17 @@ enum CoreSnapshotMapper {
     }
     return spaces.enumerated().map { offset, space in
       guard let key = space.key else {
-        return flatWorkspace(space.terminals, on: machine, prefix: prefix, number: offset + 1)
+        return flatWorkspace(
+          space.terminals, on: machine, prefix: prefix, number: offset + 1, sessions: sessions)
       }
       let id = prefix + key
       let tabs = ordered(grouped(space.terminals) { label("herdr.tab", of: $0) }) { tab in
         tab.key.flatMap { index.tabRanks[$0] }
       }
       .enumerated().map { offset, tab in
-        self.tab(tab, inSpace: key, id: id, prefix: prefix, number: offset + 1, index: index)
+        self.tab(
+          tab, inSpace: key, id: id, prefix: prefix, number: offset + 1, index: index,
+          sessions: sessions)
       }
       let name =
         index.names[key] ?? place(among: space.terminals, \.space) ?? "Space \(offset + 1)"
@@ -83,11 +92,14 @@ enum CoreSnapshotMapper {
     _ terminals: [CoreTerminal],
     on machine: String?,
     prefix: String,
-    number: Int
+    number: Int,
+    sessions: [String: String]
   ) -> Workspace {
     let workspaceID = prefix + "workspace"
     let tabID = prefix + "tab"
-    let panes = terminals.map { pane(of: $0, tabID: tabID, workspaceID: workspaceID) }
+    let panes = terminals.map {
+      pane(of: $0, tabID: tabID, workspaceID: workspaceID, sessions: sessions)
+    }
     return Workspace(
       id: workspaceID,
       number: number,
@@ -113,11 +125,12 @@ enum CoreSnapshotMapper {
     id workspaceID: String,
     prefix: String,
     number: Int,
-    index: Index
+    index: Index,
+    sessions: [String: String]
   ) -> Tab {
     let id = prefix + (tab.key ?? space + ".tab")
     let panes = ordered(tab.terminals) { index.terminalRanks[$0.address] }
-      .map { pane(of: $0, tabID: id, workspaceID: workspaceID) }
+      .map { pane(of: $0, tabID: id, workspaceID: workspaceID, sessions: sessions) }
     let name = tab.key.flatMap { index.names[$0] } ?? place(among: tab.terminals, \.tab)
     // The app numbers an unnamed tab, as herdr does.
     let isAutoNamed = name?.allSatisfy(\.isWholeNumber) ?? true
@@ -135,43 +148,63 @@ enum CoreSnapshotMapper {
   private static func pane(
     of terminal: CoreTerminal,
     tabID: String,
-    workspaceID: String
+    workspaceID: String,
+    sessions: [String: String]
   ) -> Pane {
     Pane(
       id: CorePaneID.id(forAddress: terminal.address),
       tabID: tabID,
       workspaceID: workspaceID,
       title: title(of: terminal),
-      agent: agent(of: terminal),
+      agent: agent(of: terminal, sessions: sessions),
       terminalID: terminal.address,
       directory: directory(of: terminal),
       viewportRows: terminal.rows
     )
   }
 
+  /// Whether this terminal's pane is Claude on this core. Asks `agent(of:sessions:)`, so a
+  /// shell or an added machine is never read for.
+  static func isLocalClaude(_ terminal: CoreTerminal) -> Bool {
+    agent(of: terminal, sessions: [:])?.kind == TranscriptAgent.claude.rawValue
+  }
+
   /// The agent a status says is there.
   ///
   /// `kind` is never `nil` or empty, because `TranscriptReader` then matches on the name and
   /// `claude-helper` would be handed Claude's files. No app is `unknown`, which is herdr-app's
-  /// word too. `session` waits for #20, which finds the file by directory.
+  /// word too, unless what is in the foreground is a program Driverr knows. A status is still
+  /// what makes an agent, so `claude` running with none stays a shell.
   ///
-  /// A terminal on a machine the core added is `unknown` whatever it runs, and keeps its name.
-  /// The reader lists the SSH host's files, so a real `kind` there would show this host's
-  /// conversation for the same directory on the other machine.
-  private static func agent(of terminal: CoreTerminal) -> Agent? {
+  /// `sessions` only ever holds Claude's. Codex keeps no file that names a process's session,
+  /// so its panes take the reader's directory match.
+  ///
+  /// A terminal on a machine the core added is `unknown` whatever it runs, keeps its name, and
+  /// says which machine. The reader lists the SSH host's files, so a real `kind` there would
+  /// show this host's conversation for the same directory on the other machine.
+  private static func agent(of terminal: CoreTerminal, sessions: [String: String]) -> Agent? {
     guard let report = terminal.status else { return nil }
     let status = AgentStatus(wireValue: report.state ?? "")
     let app = report.app?.trimmingCharacters(in: .whitespacesAndNewlines)
     let reported = app?.isEmpty == false ? app : nil
-    let program = reported.flatMap { programs[$0.lowercased()] }
-    let kind = machine(of: terminal) == nil ? program?.kind ?? reported?.lowercased() : nil
+    let foreground = terminal.foreground?.argv?.first.map(commandName)
+    let program = (reported ?? foreground).flatMap { programs[$0.lowercased()] }
+    let machine = machine(of: terminal)
+    let kind = machine == nil ? program?.kind ?? reported?.lowercased() : nil
     return Agent(
       name: program?.name ?? reported ?? "Agent",
       kind: kind ?? "unknown",
       status: status,
+      session: sessions[terminal.address].map(session),
       blockedKind:
-        status == .blocked ? report.kind.flatMap(AgentBlockedKind.init(rawValue:)) : nil
+        status == .blocked ? report.kind.flatMap(AgentBlockedKind.init(rawValue:)) : nil,
+      machine: machine
     )
+  }
+
+  private static func session(_ id: String) -> AgentSession {
+    AgentSession(
+      agent: TranscriptAgent.claude.rawValue, kind: "id", value: id, source: "claude:sessions")
   }
 
   /// The most urgent agent under these panes, or `nil` when none has one. herdr-core rolls

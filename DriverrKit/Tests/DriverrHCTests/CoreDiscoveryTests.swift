@@ -44,6 +44,49 @@ struct CoreDiscoveryTests {
     #expect(CoreControl.discoveredPath(in: "") == nil)
   }
 
+  // MARK: - Finding home
+
+  @Test("home is the last line, and only if it is absolute")
+  func home() {
+    #expect(CoreControl.discoveredHome(in: "/home/my user") == "/home/my user")
+    #expect(CoreControl.discoveredHome(in: "Welcome to the box\n/home/me") == "/home/me")
+    #expect(CoreControl.discoveredHome(in: "/home/me\n") == "/home/me")
+    #expect(CoreControl.discoveredHome(in: "") == nil)
+    #expect(CoreControl.discoveredHome(in: "~") == nil)
+    #expect(CoreControl.discoveredHome(in: "/home/me\nnot a path") == nil)
+  }
+
+  private func answering(path: String, home: CommandResult?) -> CommandRunner {
+    { command in
+      guard command == CoreControl.homeCommand else {
+        return CommandResult(standardOutput: path, standardError: "", exitStatus: 0)
+      }
+      guard let home else { throw AppError.channelFailed(reason: "gone") }
+      return home
+    }
+  }
+
+  @Test("discovery asks for home once and hands it to the control")
+  func discoveredHome() async {
+    let control = await CoreControl.discovering(
+      run: answering(
+        path: "/usr/bin/hc\n",
+        home: CommandResult(standardOutput: "/home/me", standardError: "", exitStatus: 0)),
+      open: opening(FakeCoreStream())
+    )
+    #expect(control?.home == "/home/me")
+  }
+
+  @Test("a host that will not say where home is still has a core")
+  func noHome() async {
+    let control = await CoreControl.discovering(
+      run: answering(path: "/usr/bin/hc\n", home: nil),
+      open: opening(FakeCoreStream())
+    )
+    #expect(control != nil)
+    #expect(control?.home == nil)
+  }
+
   // MARK: - The probe
 
   @Test("the probe asks all three tiers, for both names, herdr-core first")

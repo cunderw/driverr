@@ -271,6 +271,11 @@ struct PaneChatView: View {
     isShowingSubagent ? nil : model.pane.agent?.status
   }
 
+  /// What the pane's agent said it is blocked on, for `agentStatus`'s reason.
+  private var blockedKind: AgentBlockedKind? {
+    isShowingSubagent ? nil : model.pane.agent?.blockedKind
+  }
+
   /// `onSendReply`, or `nil` while a sub-agent is shown: a chip there would answer the pane.
   /// `nil` also turns off the reply band and the screen-question read.
   private var sendReply: ((ReplyChip) -> Void)? {
@@ -472,6 +477,7 @@ struct PaneChatView: View {
           // What decides whether an existing cell is reconfigured. See `ChatRowInputs`.
           rowInputs: ChatRowInputs(
             agentStatus: agentStatus,
+            blockedKind: blockedKind,
             openRuns: shown.openRuns,
             expanded: shown.expanded,
             selection: replySelection,
@@ -694,7 +700,7 @@ struct PaneChatView: View {
       let call = model.transcript?.questionCall(
         screen: screenForQuestion, agentStatus: agentStatus)
     else { return nil }
-    return call.pendingNotice(agentStatus: agentStatus).label
+    return call.pendingNotice(agentStatus: agentStatus, blockedKind: blockedKind).label
   }
 
   /// The turn the chips follow, or `nil` while nothing offers any. Only the last run can carry
@@ -720,6 +726,7 @@ struct PaneChatView: View {
       isFinalBlockedAnswer: isNewest && turn.isAssistant
         && agentStatus == .blocked,
       agentStatus: agentStatus,
+      blockedKind: blockedKind,
       isOpen: shown.openRuns.isOpen(turn),
       isExpanded: shown.expanded.contains(turn.id),
       onToggleOpen: {
@@ -765,7 +772,7 @@ struct PaneChatView: View {
       let call = model.transcript?.questionCall(
         screen: screenForQuestion, agentStatus: agentStatus)
     else { return [] }
-    return call.pendingNotice(agentStatus: agentStatus).groups
+    return call.pendingNotice(agentStatus: agentStatus, blockedKind: blockedKind).groups
   }
 
   /// Whether to read the screen for a question: a blocked pane, a composer to answer through,

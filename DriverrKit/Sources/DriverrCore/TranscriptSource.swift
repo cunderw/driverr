@@ -104,7 +104,8 @@ public struct TranscriptFile: Hashable, Sendable {
 /// How Driverr came to believe this file is the pane's. A guess names its evidence, and a
 /// file the user picked credits the choice.
 public enum TranscriptProvenance: Hashable, Sendable {
-  /// herdr's integration reported the session id. Nothing to caveat.
+  /// herdr's integration reported the session id, or a herdr-core terminal's process named
+  /// it in Claude Code's own record. Nothing to caveat.
   case reportedByHerdr(sessionID: String)
   /// herdr reported a session that was continued, and this is the file it was carried into.
   ///
@@ -180,6 +181,9 @@ public enum TranscriptAbsence: Hashable, Sendable {
   /// Never fall back to the newest file here. It is not this session's, so it is someone
   /// else's conversation or an older one.
   case reportedSessionMissing(sessionID: String, directory: String)
+  /// The agent runs on a machine a herdr-core added, and session files are read only on the
+  /// computer Driverr connected to. A lookup here would read that computer's files.
+  case agentOnAddedMachine(agent: String, machine: String)
   /// A tapped spawn line whose link no sub-agent file carries. The meta file may not be
   /// written yet, or Claude Code left the link unresolved, which happens occasionally.
   case subagentFileNotFound

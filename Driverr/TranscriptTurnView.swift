@@ -29,6 +29,8 @@ struct TranscriptTurnView: View {
   /// A call with no result is a running tool on a `.working` pane and a permission prompt on
   /// a `.blocked` one, and the file cannot tell them apart. `PendingToolCallNotice` needs it.
   let agentStatus: AgentStatus?
+  /// What a blocked herdr-core agent said it is waiting for. See `PendingToolCallNotice`.
+  var blockedKind: AgentBlockedKind? = nil
   let isOpen: Bool
   let isExpanded: Bool
   let onToggleOpen: () -> Void
@@ -427,7 +429,7 @@ struct TranscriptTurnView: View {
       // file cannot tell a running tool from a prompt. The chips are drawn outside this
       // row; see `body`.
       if let pending = run.pendingCall {
-        let notice = pending.pendingNotice(agentStatus: agentStatus)
+        let notice = pending.pendingNotice(agentStatus: agentStatus, blockedKind: blockedKind)
         Text(notice.label)
           .font(.caption.weight(.semibold))
           // Orange only for a question. A running tool reads like the other rows.

@@ -13,14 +13,21 @@ public struct CoreControl: HerdrControl {
 
   /// Where the core was found. `herdr-core` or `hc`; the two are one program.
   public let binaryPath: String
+  /// The host's `$HOME`, which `file.read` needs because it expands no `~`. `nil` reads no
+  /// session files, and a Claude terminal then falls to the reader's directory match.
+  public let home: String?
   let link: CoreLink
+  private let sessionFiles: CoreSessionFiles
 
   public init(
     binaryPath: String = "hc",
+    home: String? = nil,
     callDeadline: Duration = CoreControl.defaultCallDeadline,
     open: @escaping StreamRunner
   ) {
     self.binaryPath = binaryPath
+    self.home = home
+    sessionFiles = CoreSessionFiles(home: home)
     link = CoreLink(
       command: "\(shellQuoted(binaryPath)) connect",
       callDeadline: callDeadline,
@@ -40,7 +47,9 @@ public struct CoreControl: HerdrControl {
     )
     let list = try await connection.call(
       "terminal.list", params: CoreNoParams(), as: CoreListResult.self)
-    return CoreSnapshotMapper.tree(from: list, document: await link.settled(document))
+    let sessions = await sessionFiles.identifiers(for: list.terminals, over: connection)
+    return CoreSnapshotMapper.tree(
+      from: list, document: await link.settled(document), sessions: sessions)
   }
 
   /// Asks by connecting. `hc connect` starts a core if none is running, and nothing else

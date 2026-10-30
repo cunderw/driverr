@@ -324,6 +324,17 @@ public struct TranscriptNotice: Equatable, Sendable {
         offersRetry: true,
         symbolName: "text.bubble"
       )
+    case .agentOnAddedMachine(let agent, let machine):
+      // No `Show the Screen`: a core does not read a terminal's screen yet, so the button
+      // would only fail. No retry either, because the answer cannot change.
+      self.init(
+        title: "\(agent) is running on \(machine)",
+        message:
+          "Driverr reads conversations on the computer it connected to, and this terminal is "
+          + "on \(machine).",
+        offersScreen: false,
+        symbolName: "desktopcomputer"
+      )
     case .subagentFileNotFound:
       // No `Show the Screen`: the pane's screen is the parent's. The back bar is the exit.
       self.init(
@@ -586,6 +597,8 @@ public enum TranscriptChatCopy {
 
   /// herdr reports the pane `blocked`, which means a person is needed.
   public static let pendingBlocked = "Waiting for permission"
+  /// A herdr-core agent said it is blocked on signing in, which a chip cannot answer.
+  public static let pendingAuth = "Waiting for you to sign in"
   /// The agent asked a question and no answer has arrived. Separate from `pendingBlocked`
   /// because this row has the answers under it.
   public static let pendingQuestion = "Waiting for your answer"
@@ -702,6 +715,10 @@ extension ToolRun {
 ///
 /// An `AskUserQuestion` with parsed options is the exception. It is the agent asking the
 /// reader by definition, so it outranks `AgentStatus`, which can lag a question or miss it.
+///
+/// A herdr-core agent can also say what it is blocked on. A question or a sign-in is not a
+/// permission prompt, so the synthesised Approve/Deny pair is not offered for either: `y` is
+/// not an answer to them. With no kind, which is every TUI pane, blocked reads as permission.
 public struct PendingToolCallNotice: Hashable, Sendable {
   /// The row's words, naming the call.
   public let label: String
@@ -716,7 +733,7 @@ public struct PendingToolCallNotice: Hashable, Sendable {
   public var chips: [ReplyChip] { groups.flatMap(\.chips) }
 
   /// `nil` for a pane with no agent, which differs from `.unknown`. See `AgentStatus`.
-  public init(call: ToolCall, agentStatus: AgentStatus?) {
+  public init(call: ToolCall, agentStatus: AgentStatus?, blockedKind: AgentBlockedKind? = nil) {
     let named = TranscriptChatCopy.namingCall(call)
     // The file's own answer first, whatever the status: a written question with no result
     // is unanswered.
@@ -728,9 +745,18 @@ public struct PendingToolCallNotice: Hashable, Sendable {
     }
     switch agentStatus {
     case .blocked:
-      label = "\(TranscriptChatCopy.pendingBlocked) · \(named)"
       isAsking = true
-      groups = call.replyChipGroups
+      switch blockedKind {
+      case .question:
+        label = "\(TranscriptChatCopy.pendingQuestion) · \(named)"
+        groups = []
+      case .auth:
+        label = "\(TranscriptChatCopy.pendingAuth) · \(named)"
+        groups = []
+      case .permission, nil:
+        label = "\(TranscriptChatCopy.pendingBlocked) · \(named)"
+        groups = call.replyChipGroups
+      }
     case .working:
       label = "\(TranscriptChatCopy.pendingWorking) · \(named)"
       isAsking = false
@@ -747,8 +773,11 @@ extension ToolCall {
   /// The row this call gets under its run, which always names the call. There is no form
   /// without `agentStatus`, because a label built from a resultless call alone would claim
   /// a permission prompt that may not exist.
-  public func pendingNotice(agentStatus: AgentStatus?) -> PendingToolCallNotice {
-    PendingToolCallNotice(call: self, agentStatus: agentStatus)
+  public func pendingNotice(
+    agentStatus: AgentStatus?,
+    blockedKind: AgentBlockedKind? = nil
+  ) -> PendingToolCallNotice {
+    PendingToolCallNotice(call: self, agentStatus: agentStatus, blockedKind: blockedKind)
   }
 }
 

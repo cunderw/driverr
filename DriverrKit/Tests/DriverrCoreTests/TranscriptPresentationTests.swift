@@ -601,6 +601,48 @@ struct TranscriptPresentationTests {
     )
   }
 
+  /// With no kind, which is every TUI pane, nothing changes.
+  @Test("a blocked pane that said nothing about why still reads as permission")
+  func pendingWithNoBlockedKind() {
+    let call = ToolCall(name: "Bash", target: "cargo test", outcome: .pending)
+    let notice = call.pendingNotice(agentStatus: .blocked, blockedKind: nil)
+    #expect(notice == call.pendingNotice(agentStatus: .blocked))
+    #expect(notice.label == "Waiting for permission · Bash cargo test")
+    #expect(notice.chips.map(\.label) == ["Approve", "Deny"])
+    #expect(notice.isAsking)
+  }
+
+  @Test("a permission prompt offers Approve and Deny")
+  func pendingPermission() {
+    let call = ToolCall(name: "Bash", target: "cargo test", outcome: .pending)
+    let notice = call.pendingNotice(agentStatus: .blocked, blockedKind: .permission)
+    #expect(notice.label == "Waiting for permission · Bash cargo test")
+    #expect(notice.chips.map(\.label) == ["Approve", "Deny"])
+  }
+
+  /// `y` is not an answer to either, and a chip would send it.
+  @Test(
+    "a question or a sign-in asks, with no chips",
+    arguments: [
+      (AgentBlockedKind.question, "Waiting for your answer · Bash cargo test"),
+      (.auth, "Waiting for you to sign in · Bash cargo test"),
+    ])
+  func pendingWithNoChips(kind: AgentBlockedKind, label: String) {
+    let call = ToolCall(name: "Bash", target: "cargo test", outcome: .pending)
+    let notice = call.pendingNotice(agentStatus: .blocked, blockedKind: kind)
+    #expect(notice.label == label)
+    #expect(notice.isAsking)
+    #expect(notice.chips.isEmpty)
+  }
+
+  @Test("a kind means nothing on a pane that is not blocked")
+  func blockedKindNeedsBlocked() {
+    let call = ToolCall(name: "Bash", target: "cargo test", outcome: .pending)
+    #expect(
+      call.pendingNotice(agentStatus: .working, blockedKind: .question)
+        == call.pendingNotice(agentStatus: .working))
+  }
+
   @Test("a pending call with no target names itself alone")
   func pendingLabelWithNoTarget() {
     let call = ToolCall(name: "AskUserQuestion", outcome: .pending)
@@ -1143,6 +1185,28 @@ struct TranscriptPresentationTests {
     #expect(notice.message.contains("session file for /Users/x/Dev/driverr"))
     #expect(!notice.message.contains("3f8c1d20"))
     #expect(!notice.message.contains("Claude"))
+  }
+
+  @Test("an agent on an added machine says where it is, with no way out that would fail")
+  func anAgentOnAnAddedMachine() {
+    let notice = TranscriptNotice(
+      absence: .agentOnAddedMachine(agent: "Claude", machine: "box"), agentStatus: .working)
+    #expect(notice.title == "Claude is running on box")
+    #expect(
+      notice.message
+        == "Driverr reads conversations on the computer it connected to, and this terminal is "
+        + "on box.")
+    #expect(!notice.offersScreen)
+    #expect(!notice.offersRetry)
+    #expect(!notice.offersFilePicker)
+  }
+
+  /// `true` would draw the captured screen in its place, and a core cannot read one yet.
+  @Test("an added machine is not an agent Driverr can never read")
+  func anAddedMachineKeepsItsNotice() {
+    let absence = TranscriptAbsence.agentOnAddedMachine(agent: "Claude", machine: "box")
+    #expect(!absence.isUnreadableAgentKind)
+    #expect(!TranscriptResolution.absent(absence).isUnreadableAgentKind)
   }
 
   @Test("a prompted agent's missing file names the way out")
