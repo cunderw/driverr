@@ -138,6 +138,9 @@ final class TerminalSceneModel {
   /// The size to open the next stream at: the phone's real size. The desk reflow is
   /// accepted for the one pane being typed into.
   private var viewportSize = TerminalSize(columns: 80, rows: 24)
+  /// Whether `viewportSize` came from a terminal view, not the default above. See
+  /// `measuredSize(for:)`.
+  private var viewportIsMeasured = false
 
   /// Everything `select`, `takeOver` and `close` start, serialised.
   ///
@@ -149,6 +152,11 @@ final class TerminalSceneModel {
   /// How long one step may run before the chain stops waiting for it; see `enqueue`.
   /// Injected so a test can assert the recovery quickly.
   private let stepDeadline: Duration
+  /// How long a controller's session holds its first size. Injected, like `stepDeadline`,
+  /// because a core attach waits on it.
+  private let openSettlingWindow: Duration
+  /// How long a core attach may wait for a terminal view to report a size.
+  private let coreSizeDeadline: Duration
 
   /// How often a lost terminal is tried, and how many times. About a minute more than the
   /// core's own backoff reaches, so a slow recovery is still caught.
@@ -228,6 +236,8 @@ final class TerminalSceneModel {
     initialTarget: TerminalTarget,
     wait: @escaping ReconnectWaiter = { try? await Task.sleep(for: $0) },
     stepDeadline: Duration = TerminalSceneModel.defaultStepDeadline,
+    openSettlingWindow: Duration = TerminalSession.defaultOpenSettlingWindow,
+    coreSizeDeadline: Duration = DeferredPaneBridge.defaultSizeDeadline,
     notifications: NotificationCenter = .default
   ) {
     self.host = host
@@ -235,6 +245,8 @@ final class TerminalSceneModel {
     self.initialTarget = initialTarget
     self.wait = wait
     self.stepDeadline = stepDeadline
+    self.openSettlingWindow = openSettlingWindow
+    self.coreSizeDeadline = coreSizeDeadline
     self.notifications = notifications
     memoryWarnings = notifications.addObserver(
       forName: UIApplication.didReceiveMemoryWarningNotification,
@@ -464,7 +476,10 @@ final class TerminalSceneModel {
     // size forward for the next stream.
     if let leaving = warm.current, let session = session(for: leaving) {
       warm.setScrolledRows(session.scrolledRows, for: leaving)
-      if let size = session.reportedSize { viewportSize = size }
+      if let size = session.reportedSize {
+        viewportSize = size
+        viewportIsMeasured = true
+      }
     }
 
     // Recorded here too, because in-scene switches (the sheet, keyboard shortcuts, the
@@ -916,6 +931,8 @@ final class TerminalSceneModel {
         paneID: paneID,
         terminalID: terminalID,
         size: viewportSize,
+        measuredSize: measuredSize(for: target),
+        sizeDeadline: coreSizeDeadline,
         takeover: takeover,
         recordsFailure: !automatic
       )
@@ -930,7 +947,7 @@ final class TerminalSceneModel {
     }
 
     let (feed, pump) = controllerFeed(bridge: bridge, target: target)
-    let session = TerminalSession(feed: feed)
+    let session = TerminalSession(feed: feed, openSettlingWindow: openSettlingWindow)
     session.start()
     let opened = Entry(
       id: nextID(),
@@ -948,7 +965,9 @@ final class TerminalSceneModel {
       return
     }
 
-    if keepsPaintingUntilPromoted(target) {
+    // A deferred attach goes straight in: only a view can report the size it is waiting for,
+    // and an entry in `pending` has no view.
+    if keepsPaintingUntilPromoted(target), !(bridge is DeferredPaneBridge) {
       // The existing emulator keeps painting until this controller's first frame. See
       // `controllerPainted`.
       //
@@ -969,6 +988,15 @@ final class TerminalSceneModel {
     // way out.
     let rows = warm.scrolledRows(for: target)
     if rows > 0 { session.restoreScroll(rows: rows) }
+  }
+
+  /// The size a terminal view measured to open `target` at, or `nil` if none has yet.
+  ///
+  /// The entry's own first, which is the one laid out in this slot, then one carried from the
+  /// last pane. `viewportSize` alone is not enough: nothing writes it until a switch, so a
+  /// reattach on the first pane of a scene would be back at the default.
+  private func measuredSize(for target: TerminalTarget) -> TerminalSize? {
+    entry(for: target)?.session.reportedSize ?? (viewportIsMeasured ? viewportSize : nil)
   }
 
   /// Whether what is on screen for `target` stays until the opening controller paints.
@@ -1072,7 +1100,7 @@ final class TerminalSceneModel {
       // The `detached` receipt for our own `terminal.release` never gets here: both feeds
       // drop it on `Task.isCancelled`.
       case .paneClosed, .other, .streamEnded, .detached, .serverShuttingDown, .processFailed,
-        .lost:
+        .lost, .neverAttached:
         switch TerminalEndDisposition.forSessionThatEnded(
           reason: reason,
           statedByHerdr: statedByHerdr,
@@ -1109,11 +1137,11 @@ final class TerminalSceneModel {
   /// Whether a close reason came from a `terminal.closed` record herdr wrote.
   ///
   /// `.streamEnded` (no record) and `.processFailed` (the exit status) come from the channel,
-  /// not from herdr. This is a fact about the record only; `TerminalEndDisposition` decides
-  /// what it means.
+  /// and `.neverAttached` from this side, not from herdr. This is a fact about the record only;
+  /// `TerminalEndDisposition` decides what it means.
   private static func statedByHerdr(_ reason: TerminalCloseReason) -> Bool {
     switch reason {
-    case .streamEnded, .processFailed: return false
+    case .streamEnded, .processFailed, .neverAttached: return false
     case .refused, .takenOver, .paneClosed, .detached, .serverShuttingDown, .lost, .other:
       return true
     }

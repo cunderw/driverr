@@ -245,6 +245,16 @@ public final class TerminalSession {
     }
   }
 
+  /// The renderer's first layout, at this grid.
+  ///
+  /// SwiftTerm reports a size only when it differs from its own default grid, so a view that
+  /// lands on exactly 80x25 reports nothing, and a feed holding an attach for a size would
+  /// wait out its deadline. A feed that is not waiting ignores this.
+  public func firstGridMeasured(_ size: TerminalSize) {
+    guard feed.awaitsFirstSize, reportedSize == nil else { return }
+    resize(to: size)
+  }
+
   /// The newest size the renderer reported, whether or not it has reached the far side.
   ///
   /// A reattach can restate it without waiting for a layout pass.

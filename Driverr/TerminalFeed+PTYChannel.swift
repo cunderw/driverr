@@ -56,7 +56,8 @@ extension TerminalFeed {
       // The scene releases, in order; see `TerminalSceneModel.demote(_:)`.
       close: {},
       focus: { try await raw.focus($0) },
-      consumed: { raw.consumed($0) }
+      consumed: { raw.consumed($0) },
+      awaitsFirstSize: true
     )
   }
 }

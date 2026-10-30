@@ -32,6 +32,10 @@ public struct TerminalFeed: Sendable {
   ///
   /// `nil` for a pty and a herdr pane. Never waits: the session calls it as it renders.
   public var consumed: (@Sendable (Int) -> Void)?
+  /// Whether the far side is waiting to hear a size, so one must always come.
+  ///
+  /// See `TerminalSession.firstGridMeasured(_:)`.
+  public var awaitsFirstSize: Bool
 
   public init(
     output: AsyncThrowingStream<Data, any Error>,
@@ -41,7 +45,8 @@ public struct TerminalFeed: Sendable {
     scroll: (@Sendable (ScrollDirection, Int) async throws -> Void)? = nil,
     click: (@Sendable (TerminalCell) async throws -> Void)? = nil,
     focus: (@Sendable (Bool) async throws -> Void)? = nil,
-    consumed: (@Sendable (Int) -> Void)? = nil
+    consumed: (@Sendable (Int) -> Void)? = nil,
+    awaitsFirstSize: Bool = false
   ) {
     self.output = output
     self.send = send
@@ -51,6 +56,7 @@ public struct TerminalFeed: Sendable {
     self.click = click
     self.focus = focus
     self.consumed = consumed
+    self.awaitsFirstSize = awaitsFirstSize
   }
 
   /// A feed for an `observe` stream: everything but reading is inert.

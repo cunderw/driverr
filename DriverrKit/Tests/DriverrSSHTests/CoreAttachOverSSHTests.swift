@@ -230,6 +230,67 @@ struct CoreAttachOverSSHTests {
     }
   }
 
+  /// The size event is the core's own word for what the terminal went through, so a reflow
+  /// through the default on the way would be in it. Only a real core can say.
+  @Test("a deferred attach holds until the measured size, which is the first resize seen")
+  func deferredAttach() async throws {
+    try await withScratchCore { scratch in
+      let before = try await size(of: scratch)
+      let measured = TerminalSize(columns: 47, rows: 19)
+      #expect(before != [47, 19])
+
+      let events = try await scratch.transport.execStream(
+        command:
+          "HC_SESSION=\(Scratch.session) '\(scratch.binary)' events --json"
+          + " --terminal \(scratch.address)"
+      )
+      let heard = ReadBack()
+      heard.start(events.output, on: nil)
+
+      let attacher = try #require(scratch.control.paneAttacher(for: scratch.paneID))
+      let deferred = DeferredPaneBridge { [address = scratch.address] in
+        try await attacher.open(terminalID: address, size: $0)
+      }
+      let output = ReadBack()
+      output.start(deferred.output, on: deferred)
+
+      // Typed ahead of the size, as someone who just chose the pane does.
+      try await deferred.send(text: "echo he''ld\r")
+      try await Task.sleep(for: .milliseconds(300))
+      #expect(try await size(of: scratch) == before, "attached before a size came")
+
+      try await deferred.resize(to: measured)
+      try await waitUntil("the held echo") { output.text.contains("held\r\n") }
+      #expect(try await size(of: scratch) == [47, 19])
+
+      // A later size is a RESIZE on the same viewer.
+      try await deferred.resize(to: TerminalSize(columns: 47, rows: 22))
+      try await waitUntil("the second size") { sizes(in: heard.text).count >= 2 }
+
+      let seen = sizes(in: heard.text)
+      print("size events: \(seen)")
+      #expect(seen.first == [47, 19], "first resize seen: \(seen)")
+      #expect(!seen.contains([80, 24]))
+      await events.close()
+      await deferred.release()
+    }
+  }
+
+  /// The `[cols, rows]` of every `size` event in `hc events --json`'s lines.
+  private func sizes(in events: String) -> [[Int]] {
+    events.split(separator: "\n").compactMap { line in
+      guard
+        let message = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
+        let event = message["params"] as? [String: Any],
+        event["type"] as? String == "size",
+        let data = event["data"] as? [String: Any],
+        let columns = data["cols"] as? Int,
+        let rows = data["rows"] as? Int
+      else { return nil }
+      return [columns, rows]
+    }
+  }
+
   @Test("the composer types through a 0x0 viewer without moving the size")
   func composer() async throws {
     try await withScratchCore { scratch in

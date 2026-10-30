@@ -789,15 +789,28 @@ final class ConnectionModel {
   /// **A core pane's failure never reaches `phase`.** `.failed` says the host is unusable, and
   /// one terminal refusing an attach says nothing about the host. Its next step is the
   /// scene's: a kept terminal mid-restart refuses every attach until its shell is up.
+  ///
+  /// - Parameter measuredSize: what a terminal view measured, for a core pane, which attaches
+  ///   at that size or not at all. `nil` hands back a `DeferredPaneBridge`, which attaches
+  ///   when the view reports one. A bridge command ignores this: its frames repaint on a
+  ///   resize, so opening at `size` costs nothing.
+  /// - Parameter sizeDeadline: how long that attach may wait.
   func openPaneBridge(
     paneID: String,
     terminalID: String,
     size: TerminalSize,
+    measuredSize: TerminalSize? = nil,
+    sizeDeadline: Duration = DeferredPaneBridge.defaultSizeDeadline,
     takeover: Bool = false,
     recordsFailure: Bool = true
   ) async -> (any PaneBridge)? {
     if let attacher = herdr?.paneAttacher(for: paneID) {
-      return try? await attacher.open(terminalID: terminalID, size: size)
+      guard let measuredSize else {
+        return DeferredPaneBridge(sizeDeadline: sizeDeadline) {
+          try await attacher.open(terminalID: terminalID, size: $0)
+        }
+      }
+      return try? await attacher.open(terminalID: terminalID, size: measuredSize)
     }
     guard let client = bridgeClient() else { return nil }
     do {

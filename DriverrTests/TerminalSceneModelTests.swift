@@ -1,6 +1,7 @@
 import DriverrCore
 import DriverrHerdr
 import DriverrSSH
+import DriverrTerm
 import Foundation
 import Testing
 import UIKit
@@ -118,6 +119,8 @@ struct TerminalSceneModelTests {
     herdr: (any HerdrControl)? = nil,
     notifications: NotificationCenter = NotificationCenter(),
     wait: @escaping ReconnectWaiter = { try? await Task.sleep(for: $0) },
+    openSettlingWindow: Duration = TerminalSession.defaultOpenSettlingWindow,
+    coreSizeDeadline: Duration = DeferredPaneBridge.defaultSizeDeadline,
     responder: @escaping @Sendable (String) -> Data?
   ) async -> (TerminalSceneModel, FakeSSHTransport) {
     let (model, transport) = await makeConnection(
@@ -130,6 +133,8 @@ struct TerminalSceneModelTests {
       model: model,
       initialTarget: initialTarget,
       wait: wait,
+      openSettlingWindow: openSettlingWindow,
+      coreSizeDeadline: coreSizeDeadline,
       notifications: notifications
     )
     if let surface { scene.show(surface) }
@@ -226,25 +231,151 @@ struct TerminalSceneModelTests {
     _ attacher: FakeCoreAttacher,
     surface: PaneSurface? = .terminal,
     agent: Agent? = nil,
-    wait: @escaping ReconnectWaiter = { _ in }
+    wait: @escaping ReconnectWaiter = { _ in },
+    coreSizeDeadline: Duration = DeferredPaneBridge.defaultSizeDeadline
   ) async -> (TerminalSceneModel, FakeSSHTransport) {
     await makeScene(
       initialTarget: .pane(id: "core:t7"),
       surface: surface,
       herdr: FakeControl(tree: tree(withCorePane: "core:t7", agent: agent), attacher: attacher),
       wait: wait,
+      openSettlingWindow: .zero,
+      coreSizeDeadline: coreSizeDeadline,
       responder: Self.everythingPaints
     )
   }
 
-  /// A viewer's far end is a test's to hold, so nothing here waits on a clock.
+  /// What the hosted terminal view measures on a phone, and not `viewportSize`'s default.
+  private static let measured = TerminalSize(columns: 52, rows: 48)
+
+  /// A viewer's far end is a test's to hold, so nothing here waits on a clock. No view is laid
+  /// out here, so a terminal's first attach is told its size as a view would.
   private func opened(
     _ scene: TerminalSceneModel,
     _ attacher: FakeCoreAttacher
   ) async throws -> FakeCoreViewer {
     scene.start()
     await scene.settle()
+    if attacher.log.isEmpty {
+      try #require(scene.currentSession).resize(to: Self.measured)
+      await waitUntilSignalled("the attach") { !attacher.viewers.isEmpty }
+    }
     return try #require(attacher.latest)
+  }
+
+  // Pinned, because the deferral below must not reach it.
+  @Test("a herdr pane still opens at once, at the default size, with no view up")
+  func aHerdrPaneDoesNotWaitForASize() async {
+    let (scene, transport) = await makeScene(responder: Self.everythingPaints)
+    scene.start()
+    await scene.settle()
+
+    #expect((await transport.streamLog).contains { $0.contains("--cols 80 --rows 24") })
+  }
+
+  /// At the default the desk reflows twice, and the history arrives at the wrong width.
+  @Test("a scene's first core attach waits for the view, and attaches at what it measured")
+  func theFirstAttachWaitsForTheMeasuredSize() async throws {
+    let attacher = FakeCoreAttacher()
+    let (scene, _) = await coreScene(attacher)
+    scene.start()
+    await scene.settle()
+
+    #expect(attacher.log.isEmpty)
+    #expect(scene.currentRole == .controller, "no entry, so no view to measure")
+
+    try #require(scene.currentSession).resize(to: Self.measured)
+    await waitUntilSignalled("the attach") { !attacher.viewers.isEmpty }
+
+    #expect(attacher.sizes == [Self.measured])
+    #expect(try #require(attacher.latest).resizes.isEmpty, "the attach carried the size")
+  }
+
+  /// SwiftTerm's own `sizeChanged`, through `DriverrTerminalView`, with no hand on the session.
+  @Test("a real view's first layout is what the attach gets", arguments: [
+    (CGSize(width: 402, height: 874), 52, 48),
+    // SwiftTerm's default grid, where it reports nothing of its own.
+    (CGSize(width: 620, height: 460), 80, 25),
+  ])
+  func aRealViewSizesTheAttach(window size: CGSize, columns: Int, rows: Int) async throws {
+    let attacher = FakeCoreAttacher()
+    let (scene, _) = await coreScene(attacher)
+    scene.start()
+    await scene.settle()
+
+    let session = try #require(scene.currentSession)
+    let window = HostedProbe.window(
+      DriverrTerminalView(session: session, wantsKeyboardFocus: false), size: size)
+    await waitUntilSignalled("the attach") { !attacher.viewers.isEmpty }
+
+    #expect(attacher.sizes.map(\.columns) == [columns])
+    #expect(attacher.sizes.map(\.rows) == [rows])
+    withExtendedLifetime(window) {}
+  }
+
+  @Test("what is typed while the attach waits goes out behind it")
+  func typingAheadOfTheAttach() async throws {
+    let attacher = FakeCoreAttacher()
+    let (scene, _) = await coreScene(attacher)
+    scene.start()
+    await scene.settle()
+    let session = try #require(scene.currentSession)
+
+    session.send(text: "ls")
+    session.resize(to: Self.measured)
+    await waitUntilSignalled("the keys") { attacher.latest?.sent == Data("ls".utf8) }
+  }
+
+  @Test("a size carried from the last pane attaches at once")
+  func aCarriedSizeAttachesAtOnce() async throws {
+    let attacher = FakeCoreAttacher()
+    let (scene, _) = await makeScene(
+      herdr: FakeControl(tree: treeWithACorePane, attacher: attacher),
+      responder: Self.everythingPaints
+    )
+    scene.start()
+    await scene.settle()
+    try #require(scene.currentSession).resize(to: Self.measured)
+
+    scene.select(.pane(id: "core:t7"))
+    await scene.settle()
+
+    #expect(attacher.sizes == [Self.measured])
+  }
+
+  /// The failure a view that never lays out has: it must end, and in words.
+  @Test("a view that reports no size ends in the open's own sentence, and Retry starts over")
+  func noSizeInTime() async throws {
+    let attacher = FakeCoreAttacher()
+    let (scene, _) = await coreScene(attacher, coreSizeDeadline: .milliseconds(10))
+    scene.start()
+    await waitUntil("the sentence") { scene.notice != nil }
+    await scene.settle()
+
+    #expect(scene.notice == .failed(.channelFailed(reason: "The pane could not be opened.")))
+    #expect(attacher.log.isEmpty)
+    #expect(scene.currentRole == .ended)
+    #expect(scene.model.phase == .connected)
+
+    // Installed, not left in `pending`, where it would have no view to hear from.
+    scene.retryOpen()
+    await scene.settle()
+    #expect(scene.currentRole == .controller)
+  }
+
+  @Test("leaving before the size comes attaches nothing")
+  func leavingBeforeTheSize() async throws {
+    let attacher = FakeCoreAttacher()
+    let (scene, _) = await coreScene(attacher)
+    scene.start()
+    await scene.settle()
+    let session = try #require(scene.currentSession)
+
+    scene.close()
+    await scene.settle()
+    session.resize(to: Self.measured)
+
+    #expect(attacher.log.isEmpty)
   }
 
   /// Bridge commands go through the control's binary, past `CombinedControl`'s routing, so
@@ -337,6 +468,7 @@ struct TerminalSceneModelTests {
     let (scene, _) = await coreScene(attacher, surface: .chat, agent: agent)
     let observer = try await opened(scene, attacher)
     let session = try #require(scene.currentSession)
+    session.resize(to: Self.measured)
 
     session.send(text: "\u{1b}[I")
     session.send(text: "k")
@@ -359,11 +491,14 @@ struct TerminalSceneModelTests {
     let agent = FakeControl.seededTree.pane(id: "w1:p1")?.agent
     let (scene, _) = await coreScene(attacher, surface: .chat, agent: agent)
     let observer = try await opened(scene, attacher)
+    // A warm view is laid out behind the chat, so it has already measured.
+    try #require(scene.currentSession).resize(to: Self.measured)
 
     scene.show(.terminal)
     await scene.settle()
 
     #expect(attacher.log == ["observe t7", "open t7"])
+    #expect(attacher.sizes == [Self.measured])
     #expect(scene.currentRole == .controller)
     #expect(observer.releaseCount == 1)
   }
@@ -398,18 +533,29 @@ struct TerminalSceneModelTests {
   /// One terminal refusing an attach says nothing about the host, and `.failed` would.
   @Test("a core open that fails leaves the connection alone, and offers a Retry")
   func aFailedCoreOpen() async throws {
-    let attacher = FakeCoreAttacher(refusals: 1)
+    let attacher = FakeCoreAttacher(refusals: 2)
     let (scene, _) = await coreScene(attacher)
+    let refused = TerminalSceneModel.Notice.failed(
+      .channelFailed(reason: "The pane could not be opened."))
     scene.start()
     await scene.settle()
 
+    // The first attach is held for its size, so it fails from the stream.
+    try #require(scene.currentSession).resize(to: Self.measured)
+    await waitUntil("the sentence") { scene.notice != nil }
     #expect(scene.model.phase == .connected)
-    #expect(scene.notice == .failed(.channelFailed(reason: "The pane could not be opened.")))
+    #expect(scene.notice == refused)
+
+    // A Retry has the size, so it fails from the open.
+    scene.retryOpen()
+    await scene.settle()
+    #expect(scene.model.phase == .connected)
+    #expect(scene.notice == refused)
 
     scene.retryOpen()
     await scene.settle()
     #expect(scene.notice == nil)
-    #expect(attacher.log == ["open t7", "open t7"])
+    #expect(attacher.log == ["open t7", "open t7", "open t7"])
   }
 
   @Test("a program that finished gets the closed banner and no retry")
@@ -502,6 +648,7 @@ struct TerminalSceneModelTests {
     try #require(attacher.latest).paint("$ ")
     await waitUntil("the paint") { scene.currentRole == .controller }
     #expect(scene.notice == nil)
+    #expect(Set(attacher.sizes) == [Self.measured], "a retry fell back to the default size")
     // The next tick finds it painted, and stops there.
     ticks.grant(1)
     await scene.settle()
@@ -517,7 +664,7 @@ struct TerminalSceneModelTests {
     let control = FakeControl(tree: treeWithACorePane, attacher: attacher)
     let (scene, _) = await makeScene(
       initialTarget: .pane(id: "core:t7"), herdr: control, wait: { await ticks.wait($0) },
-      responder: Self.everythingPaints)
+      openSettlingWindow: .zero, responder: Self.everythingPaints)
     let viewer = try await opened(scene, attacher)
 
     attacher.refuseNext(100)

@@ -39,6 +39,9 @@ public enum TerminalCloseReason: Error, Equatable, Sendable {
   /// is up. Until then an attach is refused as unavailable. Sent as a CLOSE frame with
   /// `finished_ms` null.
   case lost
+  /// A core viewer held back for its size never attached: no size came in time, or the core
+  /// refused the attach. Said by `DeferredPaneBridge`, not the far side, so the pane may be fine.
+  case neverAttached
   /// A reason string this build does not recognise, kept verbatim.
   case other(String)
   /// The stream stopped with no `terminal.closed` record: the transport dropped, or the

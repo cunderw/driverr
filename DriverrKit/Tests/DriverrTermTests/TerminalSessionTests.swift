@@ -97,7 +97,8 @@ private final class TestFeed {
       // hop, which hid a reorder between clicks.
       click: scrollable ? { @Sendable cell async in recorder.record(click: cell) } : nil,
       focus: raw ? { @Sendable gained async in recorder.record(focus: gained) } : nil,
-      consumed: raw ? { @Sendable in recorder.record(consumed: $0) } : nil
+      consumed: raw ? { @Sendable in recorder.record(consumed: $0) } : nil,
+      awaitsFirstSize: raw
     )
   }
 
@@ -1249,6 +1250,44 @@ struct TerminalSessionRawStreamTests {
     feed.emit("after!!")
     await waitUntil { rendered == 13 }
     #expect(feed.consumed == [6, 7])
+  }
+
+  /// SwiftTerm says nothing about a grid that lands on its own default, and a core attach
+  /// holding for a size would wait out its deadline.
+  @Test("a feed that is waiting for a size hears the first grid, as a resize")
+  func firstGridReachesAWaitingFeed() async {
+    let feed = TestFeed(raw: true)
+    let session = TerminalSession(feed: feed.feed, openSettlingWindow: .zero)
+    session.start()
+
+    session.firstGridMeasured(TerminalSize(columns: 80, rows: 25))
+
+    await waitUntil { !feed.sizes.isEmpty }
+    #expect(feed.sizes == [TerminalSize(columns: 80, rows: 25)])
+  }
+
+  @Test("a first grid says nothing once a size has been reported")
+  func firstGridAfterAReport() async {
+    let feed = TestFeed(raw: true)
+    let session = TerminalSession(feed: feed.feed, openSettlingWindow: .zero)
+    session.start()
+
+    session.resize(to: TerminalSize(columns: 52, rows: 48))
+    session.firstGridMeasured(TerminalSize(columns: 80, rows: 25))
+
+    await waitUntil { !feed.sizes.isEmpty }
+    #expect(feed.sizes == [TerminalSize(columns: 52, rows: 48)])
+  }
+
+  /// A pty and a herdr pane stay as they were: no report at SwiftTerm's default grid.
+  @Test("a feed that is not waiting ignores the first grid")
+  func firstGridIgnored() {
+    let session = TerminalSession(feed: TestFeed().feed)
+    session.start()
+
+    session.firstGridMeasured(TerminalSize(columns: 80, rows: 25))
+
+    #expect(session.reportedSize == nil)
   }
 
   @Test("a focus change is sent once, in order with what was typed")

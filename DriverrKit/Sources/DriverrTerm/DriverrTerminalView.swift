@@ -86,6 +86,7 @@
       view.keyboardNotice = keyboardNotice
       view.copyNotice = copyNotice
       view.focusChanged = { [session] in session.focus($0) }
+      view.firstLayout = { [coordinator = context.coordinator] in coordinator.firstLayout(of: $0) }
 
       // A pane's history lives in herdr, so a drag becomes `terminal.scroll` and the
       // scroll view is turned off. A pty keeps SwiftTerm's local scrollback.
@@ -295,18 +296,27 @@
       public func sizeChanged(source: TerminalView, newCols: Int, newRows: Int) {
         let session = session
         MainActor.assumeIsolated {
-          // Pixels as well as cells: image protocols such as sixel and kitty size from
-          // the pixel pair, and 0 means "unspecified".
-          let scale = source.window?.screen.scale ?? source.traitCollection.displayScale
-          session.resize(
-            to: TerminalSize(
-              columns: newCols,
-              rows: newRows,
-              pixelWidth: Int((source.bounds.width * scale).rounded()),
-              pixelHeight: Int((source.bounds.height * scale).rounded())
-            )
-          )
+          session.resize(to: Self.size(of: source, columns: newCols, rows: newRows))
         }
+      }
+
+      @MainActor
+      func firstLayout(of view: TerminalView) {
+        let grid = view.getTerminal()
+        session.firstGridMeasured(Self.size(of: view, columns: grid.cols, rows: grid.rows))
+      }
+
+      /// Pixels as well as cells: image protocols such as sixel and kitty size from the pixel
+      /// pair, and 0 means "unspecified".
+      @MainActor
+      private static func size(of view: TerminalView, columns: Int, rows: Int) -> TerminalSize {
+        let scale = view.window?.screen.scale ?? view.traitCollection.displayScale
+        return TerminalSize(
+          columns: columns,
+          rows: rows,
+          pixelWidth: Int((view.bounds.width * scale).rounded()),
+          pixelHeight: Int((view.bounds.height * scale).rounded())
+        )
       }
 
       public func setTerminalTitle(source: TerminalView, title: String) {
@@ -569,6 +579,10 @@
     override public func layoutSubviews() {
       super.layoutSubviews()
       reportAccessoryRowPosition()
+      if let firstLayout, !bounds.isEmpty {
+        self.firstLayout = nil
+        firstLayout(self)
+      }
     }
 
     /// Reports the accessory row's top edge in the app window's coordinates, the space of
@@ -612,6 +626,10 @@
 
     /// Told when this view gains or loses the keyboard. `TerminalFeed.focus` is what wants it.
     var focusChanged: ((Bool) -> Void)?
+
+    /// Told once, after the first layout that gave this view a size. See
+    /// `TerminalSession.firstGridMeasured(_:)`.
+    var firstLayout: ((DriverrTerminalUIView) -> Void)?
 
     /// Set between `wantsKeyboardFocus` turning off and the resign it schedules, so a tap in
     /// that gap does not click.

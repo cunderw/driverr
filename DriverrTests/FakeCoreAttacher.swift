@@ -11,6 +11,7 @@ final class FakeCoreAttacher: PaneAttacher, @unchecked Sendable {
   private var refusals: Int
   private var opened: [FakeCoreViewer] = []
   private var requests: [String] = []
+  private var openSizes: [TerminalSize] = []
 
   /// - Parameter refusals: how many attaches are refused, as a core refuses one while a kept
   ///   terminal waits for its new shell.
@@ -20,6 +21,8 @@ final class FakeCoreAttacher: PaneAttacher, @unchecked Sendable {
 
   /// Every attach asked for, refused ones included: `open t7`, `observe t7`.
   var log: [String] { lock.withLock { requests } }
+  /// The size of every `open` asked for, refused ones included.
+  var sizes: [TerminalSize] { lock.withLock { openSizes } }
   var viewers: [FakeCoreViewer] { lock.withLock { opened } }
   var latest: FakeCoreViewer? { viewers.last }
 
@@ -28,7 +31,8 @@ final class FakeCoreAttacher: PaneAttacher, @unchecked Sendable {
   }
 
   func open(terminalID: String, size: TerminalSize) async throws -> any PaneBridge {
-    try attach("open \(terminalID)")
+    lock.withLock { openSizes.append(size) }
+    return try attach("open \(terminalID)")
   }
 
   func observe(terminalID: String, size: TerminalSize) async throws -> any PaneObserver {

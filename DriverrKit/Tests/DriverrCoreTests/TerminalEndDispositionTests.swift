@@ -278,4 +278,18 @@ struct TerminalEndDispositionTests {
       ) == .closed
     )
   }
+
+  @Test("a viewer that never attached gets a sentence and a Retry, however things stand")
+  func aViewerThatNeverAttached() {
+    for paneIsStillInTree in [true, false] {
+      #expect(
+        TerminalEndDisposition.forSessionThatEnded(
+          reason: .neverAttached,
+          statedByHerdr: false,
+          paneIsStillInTree: paneIsStillInTree,
+          reattachAttempts: 0
+        ) == .failed(message: "The pane could not be opened.")
+      )
+    }
+  }
 }
