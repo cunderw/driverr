@@ -116,6 +116,37 @@ struct DeferredPaneBridgeTests {
     #expect(attacher.far.log == ["bytes ab", "focus true", "bytes c"])
   }
 
+  @Test("nothing is held once the bridge is over", arguments: [true, false])
+  func nothingHeldOnceOver(released: Bool) async throws {
+    let attacher = Attacher()
+    let bridge = bridge(attacher, deadline: .milliseconds(1))
+    if released {
+      await bridge.release()
+    } else {
+      #expect(await ending(of: bridge) as? TerminalCloseReason == .neverAttached)
+    }
+
+    try await bridge.send(bytes: Data("late".utf8))
+
+    #expect(bridge.heldByteCount == 0)
+  }
+
+  @Test("held input stops at the cap, at a write's edge, and what was kept still goes out")
+  func heldInputCap() async throws {
+    let attacher = Attacher()
+    let bridge = bridge(attacher)
+    let kept = Data(repeating: 0x61, count: DeferredPaneBridge.heldInputLimit - 1)
+
+    try await bridge.send(bytes: kept)
+    try await bridge.send(bytes: Data("bc".utf8))
+    #expect(bridge.heldByteCount == kept.count)
+
+    try await bridge.send(bytes: Data("d".utf8))
+    try await bridge.resize(to: measured)
+
+    #expect(attacher.far.log == ["bytes " + String(decoding: kept, as: UTF8.self) + "d"])
+  }
+
   @Test("output, its end and credit pass through")
   func passesThrough() async throws {
     let attacher = Attacher()
@@ -158,10 +189,11 @@ struct DeferredPaneBridgeTests {
   @Test("a size in time stops the deadline")
   func deadlineCancelled() async throws {
     let attacher = Attacher()
-    let bridge = bridge(attacher, deadline: .milliseconds(50))
+    // Far longer than init to resize can take, however busy the machine.
+    let bridge = bridge(attacher, deadline: .seconds(1))
     try await bridge.resize(to: measured)
 
-    try await Task.sleep(for: .milliseconds(100))
+    try await Task.sleep(for: .milliseconds(1100))
     attacher.far.continuation.finish()
 
     #expect(await ending(of: bridge) == nil)

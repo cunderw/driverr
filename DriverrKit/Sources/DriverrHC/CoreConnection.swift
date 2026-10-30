@@ -50,7 +50,8 @@ actor CoreConnection {
   /// Frames for a channel nobody holds yet, kept while an open is outstanding.
   ///
   /// The core queues a stream's first paint before it queues the reply naming the channel,
-  /// so the paint can arrive first. Bounded by the stream's starting credit.
+  /// so the paint can arrive first. Each stream's share is bounded by its starting credit, and
+  /// the whole is held only while an open is outstanding, which is for good if none is answered.
   private var earlyFrames: [UInt32: [CoreFrame]] = [:]
   /// `openChannel` calls whose deadline passed. Their reply can still arrive, and it names a
   /// viewer the core is holding. See `adoptChannel`.

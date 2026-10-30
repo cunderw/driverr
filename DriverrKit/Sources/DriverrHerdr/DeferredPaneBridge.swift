@@ -9,7 +9,8 @@ import Foundation
 /// so the feed is built over this, and **the first `resize(to:)` is the attach**. That is
 /// `TerminalSession`'s first flush, after the keyboard has settled, so one open is one size.
 ///
-/// Input and focus that arrive first are held and go out behind the attach.
+/// Input and focus that arrive first are held and go out behind the attach, up to
+/// `heldInputLimit`.
 ///
 /// **Bounded.** A view that reports no size, or an attach that fails, ends `output` with
 /// `.neverAttached`, because nothing else would ever say so.
@@ -26,6 +27,11 @@ public final class DeferredPaneBridge: PaneBridge, RawTerminalStream, @unchecked
   /// Long enough for a view's first layout and `TerminalSession`'s settling window on a busy
   /// main thread, and short of `TerminalSceneModel.defaultStepDeadline`.
   public static let defaultSizeDeadline: Duration = .seconds(8)
+  /// How much typed input is held for an attach that has not happened.
+  ///
+  /// Typing fits many times over, and so does an ordinary paste. Past it a write is dropped
+  /// whole, not split, so what the program gets never ends partway through a keystroke.
+  static let heldInputLimit = 64 * 1024
 
   public let output: AsyncThrowingStream<Data, any Error>
 
@@ -122,6 +128,16 @@ public final class DeferredPaneBridge: PaneBridge, RawTerminalStream, @unchecked
     continuation.finish(throwing: TerminalCloseReason.neverAttached)
   }
 
+  /// How much input is waiting, so a test can see what was kept.
+  var heldByteCount: Int { lock.withLock { heldInput.count } }
+
+  private var isHolding: Bool {
+    switch state {
+    case .waitingForSize, .attaching: true
+    case .attached, .over: false
+    }
+  }
+
   private var attached: (any PaneBridge)? {
     guard case .attached(let bridge) = state else { return nil }
     return bridge
@@ -133,7 +149,9 @@ public final class DeferredPaneBridge: PaneBridge, RawTerminalStream, @unchecked
 
   public func send(bytes: Data) async throws {
     let bridge: (any PaneBridge)? = lock.withLock {
-      if attached == nil { heldInput.append(bytes) }
+      if isHolding, heldInput.count + bytes.count <= Self.heldInputLimit {
+        heldInput.append(bytes)
+      }
       return attached
     }
     try await bridge?.send(bytes: bytes)
@@ -141,7 +159,7 @@ public final class DeferredPaneBridge: PaneBridge, RawTerminalStream, @unchecked
 
   public func focus(_ gained: Bool) async throws {
     let bridge: (any PaneBridge)? = lock.withLock {
-      if attached == nil { heldFocus = gained }
+      if isHolding { heldFocus = gained }
       return attached
     }
     try await (bridge as? any RawTerminalStream)?.focus(gained)

@@ -82,8 +82,9 @@ public final class TerminalSession {
   /// keyboard frame. Without the wait an open sends two sizes, for example `50x18` then
   /// `50x22`, and a herdr pane reflows the user's desk twice. 400 ms was too short.
   ///
-  /// The stream already opened at `TerminalSceneModel.viewportSize`, and `reportedSize`
-  /// reads `pendingSize`, so nothing waits on this delay.
+  /// A bridge stream already opened at `TerminalSceneModel.viewportSize`, and `reportedSize`
+  /// reads `pendingSize`, so nothing waits on this delay. A held core attach does: this first
+  /// size is what it attaches at. See `DeferredPaneBridge`.
   public static let defaultOpenSettlingWindow = Duration.milliseconds(1000)
 
   /// How long to wait for a scroll's frame before assuming none is coming.

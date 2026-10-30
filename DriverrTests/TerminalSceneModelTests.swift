@@ -214,6 +214,21 @@ struct TerminalSceneModelTests {
   /// The seeded session with a core terminal beside it, as `CombinedControl` merges them.
   private var treeWithACorePane: SessionTree { tree(withCorePane: "core:t7") }
 
+  /// Two terminals with no agent, so each opens on its terminal surface.
+  private var treeWithTwoCorePanes: SessionTree {
+    let panes = ["t7", "t8"].map {
+      Pane(
+        id: CorePaneID.id(forAddress: $0), tabID: "core:tab", workspaceID: "core:workspace",
+        title: $0, terminalID: $0)
+    }
+    let tab = DriverrCore.Tab(
+      id: "core:tab", workspaceID: "core:workspace", number: 1, label: "Terminals",
+      isAutoNamed: true, panes: panes)
+    let workspace = Workspace(
+      id: "core:workspace", number: 1, label: "herdr-core", tabs: [tab])
+    return SessionTree(workspaces: [workspace])
+  }
+
   /// `agent` is what gives a pane a chat surface.
   private func tree(withCorePane id: String, agent: Agent? = nil) -> SessionTree {
     let pane = Pane(
@@ -649,8 +664,9 @@ struct TerminalSceneModelTests {
     await waitUntil("the paint") { scene.currentRole == .controller }
     #expect(scene.notice == nil)
     #expect(Set(attacher.sizes) == [Self.measured], "a retry fell back to the default size")
-    // The next tick finds it painted, and stops there.
-    ticks.grant(1)
+    // The next tick finds it painted, and stops there. Every tick is granted, because `settle`
+    // waits for this task, and a regression must fail here rather than park past the limit.
+    ticks.grant(61)
     await scene.settle()
     #expect(attacher.log.count == 4, "an attempt after the paint")
   }
@@ -673,7 +689,7 @@ struct TerminalSceneModelTests {
 
     await control.update(to: FakeControl.seededTree)
     await scene.model.session?.refresh()
-    ticks.grant(1)
+    ticks.grant(61)
     await waitUntil("the banner") { scene.notice == .closed }
     await scene.settle()
 
@@ -709,10 +725,68 @@ struct TerminalSceneModelTests {
     await waitUntil("the first wait") { ticks.asked.count == 1 }
 
     scene.close()
-    ticks.grant(5)
+    ticks.grant(61)
     await scene.settle()
 
     #expect(attacher.log == ["open t7"])
+  }
+
+  /// `surface(for:)` is `.terminal` for a pane with no agent, whether or not anyone is looking,
+  /// so a warm pane must not take that as leave to open a typing viewer. A core crash ends
+  /// every warm pane at once, and each would take the size and hold it.
+  @Test(
+    "a warm core pane comes back watching, whichever way it ended",
+    arguments: [TerminalCloseReason.lost, .streamEnded]
+  )
+  func aWarmPaneComesBackAsAnObserver(ending reason: TerminalCloseReason) async throws {
+    let attacher = FakeCoreAttacher()
+    let ticks = Ticks()
+    let (scene, _) = await makeScene(
+      initialTarget: .pane(id: "core:t7"),
+      herdr: FakeControl(tree: treeWithTwoCorePanes, attacher: attacher),
+      wait: { await ticks.wait($0) },
+      openSettlingWindow: .zero,
+      responder: Self.everythingPaints
+    )
+    _ = try await opened(scene, attacher)
+
+    scene.select(.pane(id: "core:t8"))
+    await scene.settle()
+    #expect(attacher.log == ["open t7", "observe t7", "open t8"])
+
+    try #require(attacher.viewers.dropFirst().first).end(reason)
+    await waitUntil("the entry ending") { scene.role(for: .pane(id: "core:t7")) == .ended }
+    ticks.grant(61)
+    await waitUntilSignalled("the way back") { attacher.log.count == 4 }
+    await scene.settle()
+
+    #expect(attacher.log.last == "observe t7")
+    #expect(scene.role(for: .pane(id: "core:t7")) == .observer)
+  }
+
+  /// A bridge command opens a stream, so a reattach that fails ends again and meets
+  /// `TerminalEndDisposition`'s bound. A refused core attach opens nothing, so there is no
+  /// second end, and without this the pane would say "The session ended." with nothing to tap.
+  @Test("a reattach the core refuses says so, with a Retry that works")
+  func aRefusedReattachSaysSo() async throws {
+    let attacher = FakeCoreAttacher()
+    let (scene, _) = await coreScene(attacher)
+    let viewer = try await opened(scene, attacher)
+
+    attacher.refuseNext(1)
+    viewer.end(.streamEnded)
+    await waitUntilSignalled("the attempt") { attacher.log.count == 2 }
+    await scene.settle()
+
+    #expect(
+      scene.notice
+        == .failed(.channelFailed(reason: TerminalEndDisposition.reattachFailedMessage)))
+    #expect(scene.model.phase == .connected)
+
+    scene.retryOpen()
+    await scene.settle()
+    #expect(scene.notice == nil)
+    #expect(attacher.log.count == 3)
   }
 
   @Test("a stream the connection dropped reattaches once, as a TUI pane does")

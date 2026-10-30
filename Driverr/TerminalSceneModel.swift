@@ -699,7 +699,15 @@ final class TerminalSceneModel {
   ///   that died during suspension with the loss not yet recorded, and `openPaneBridge`
   ///   would mark the connection `.failed`, replacing the loss so the reconnect never
   ///   starts. `aReattachReclaimsOurOwnController(order: .streamEndFirst)` catches it.
+  ///
+  /// **A warm core pane comes back watching.** `surface(for:)` says what a pane shows when
+  /// looked at, not that anyone is, and a core's typing viewer takes the terminal's size as it
+  /// opens. One crash ends every warm pane at once, so each would take the size and hold it.
   private func openSurface(for target: TerminalTarget, automatic: Bool = false) async {
+    if automatic, target != current, case .pane(let id) = target, CorePaneID.isCore(id) {
+      await openObserver(for: target)
+      return
+    }
     switch surface(for: target) {
     case .terminal: await openController(for: target, takeover: false, automatic: automatic)
     case .chat: await readOnly(target)
@@ -938,7 +946,9 @@ final class TerminalSceneModel {
       )
     else {
       // An automatic reattach fails silently; see `openSurface`. The last frame stays. A
-      // reattach that opens and then ends again meets `TerminalEndDisposition`'s bound.
+      // bridge command opens a stream, so a reattach that fails ends again and meets
+      // `TerminalEndDisposition`'s bound. A refused core attach opens nothing, so
+      // `reattach(_:generation:)` says so itself and `awaitRestart` goes on trying.
       guard !automatic else { return }
       notices[target] = .failed(
         model.failure ?? .channelFailed(reason: "The pane could not be opened.")
@@ -1172,6 +1182,14 @@ final class TerminalSceneModel {
       // Re-checked after the queue: a `close()` or a loss in between makes the open wrong.
       guard !self.isClosed, self.linkGeneration == generation else { return }
       await self.openSurface(for: target, automatic: true)
+      // A refused core attach opens no stream, so no second end will reach the bound, and
+      // nothing else would offer a Retry.
+      if case .pane(let id) = target, CorePaneID.isCore(id), self.role(for: target) == .ended,
+        self.pending[target] == nil, self.notices[target] == nil
+      {
+        self.notices[target] = .failed(
+          .channelFailed(reason: TerminalEndDisposition.reattachFailedMessage))
+      }
     }
   }
 

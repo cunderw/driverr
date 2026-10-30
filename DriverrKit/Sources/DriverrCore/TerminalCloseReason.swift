@@ -1,12 +1,13 @@
-/// Why a bridge session ended, including the two cases herdr never stated.
+/// Why a bridge session ended, including the cases herdr never stated.
 ///
 /// Here because `DriverrHerdr` decodes it and the app decides what to show, and neither may
 /// use the other's types. The mapping from herdr's `reason` string happens in
 /// `DriverrHerdr`.
 ///
-/// Every case except `.streamEnded` and `.processFailed` comes from a `terminal.closed`
-/// record or a core's CLOSE frame. Those two are read off the channel: a stream that stopped silently, and the
-/// bridge process's exit status. See `.streamEnded` for why the split matters.
+/// Every case except `.streamEnded`, `.processFailed` and `.neverAttached` comes from a
+/// `terminal.closed` record or a core's CLOSE frame. The first two are read off the channel:
+/// a stream that stopped silently, and the bridge process's exit status. See `.streamEnded`
+/// for why the split matters. `.neverAttached` is said on this side.
 ///
 /// An `Error` so `PaneBridge.output` and `PaneObserver.output` can throw it. `.paneClosed`
 /// finishes the stream cleanly instead; the others need a reaction.
