@@ -131,16 +131,14 @@ struct CombinedControlTests {
     #expect(try await combined.snapshot() == tuiTree)
   }
 
-  @Test(
-    "a TUI with nothing running gives way to the core's tree",
-    arguments: [
-      HerdrAvailability.serverNotRunning(version: "0.9.1"),
-      HerdrAvailability.notInstalled,
-    ]
-  )
-  func tuiHasNothing(answer: HerdrAvailability) async throws {
+  @Test("a TUI with no session running gives way to the core's tree")
+  func tuiHasNothing() async throws {
     let combined = control(
-      tui: Side(binaryPath: "herdr", snapshotFailure: tuiFailure, answer: answer),
+      tui: Side(
+        binaryPath: "herdr",
+        snapshotFailure: tuiFailure,
+        answer: .serverNotRunning(version: "0.9.1")
+      ),
       core: Side(binaryPath: "hc", tree: coreTree)
     )
     #expect(try await combined.snapshot() == coreTree)
@@ -149,11 +147,13 @@ struct CombinedControlTests {
   /// A failed poll must stay a failure. Passed over, it clears `SessionModel.lastFailure`, and
   /// `ConnectionModel.apply` forgets every TUI pane's transcript, screen, draft and surface.
   @Test(
-    "a TUI that is up and failed a poll stays a failure, even with a core to show",
+    "a TUI that failed a poll stays a failure, even with a core to show",
     arguments: [
       HerdrAvailability.ready(version: "0.9.1", protocolVersion: 22),
       HerdrAvailability.tooOld(version: "0.7.0", protocolVersion: 16),
       HerdrAvailability.statusUnreadable(version: "0.9.1"),
+      // Also what `CLIControl.availability` answers when its status command fails to run.
+      HerdrAvailability.notInstalled,
     ]
   )
   func tuiPollFails(answer: HerdrAvailability) async {
