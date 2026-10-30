@@ -42,11 +42,25 @@ struct ProvenanceCaptionLayoutTests {
     )
   }
 
+  /// A herdr-core Claude's caption, which carries the other scope phrase of that length.
+  private func recordHeader() -> TranscriptHeader {
+    TranscriptHeader(
+      agentName: "Claude",
+      source: TranscriptSource(
+        file: TranscriptFile(path: "/x/s.jsonl", sizeInBytes: 1, age: 0),
+        provenance: .reportedByHerdr(sessionID: "s"),
+        directory: "/x"
+      ),
+      session: AgentSession(
+        agent: "claude", kind: "id", value: "s", source: AgentSession.claudeRecordSource)
+    )
+  }
+
   /// The caption's frame when the row is laid out at `width`.
-  private func captionFrame(at width: CGFloat) -> CGRect {
+  private func captionFrame(at width: CGFloat, header: TranscriptHeader? = nil) -> CGRect {
     var caption = CGRect.zero
     let window = HostedProbe.window(
-      ProvenanceRow(header: widestHeader(), onCaptionFrame: { caption = $0 }),
+      ProvenanceRow(header: header ?? widestHeader(), onCaptionFrame: { caption = $0 }),
       size: CGSize(width: width, height: HostedProbe.phone.height)
     )
     withExtendedLifetime(window) {}
@@ -90,6 +104,14 @@ struct ProvenanceCaptionLayoutTests {
   @Test("the whole caption renders at 1032 pt without a context count, age included")
   func theCaptionSurvivesOnThePad() {
     expectTheCaptionIsWhole(at: HostedProbe.pad.width, on: "pad")
+  }
+
+  @Test("Claude's record fits on the phone too")
+  func theRecordCaptionSurvivesOnThePhone() {
+    let clamped = captionFrame(at: HostedProbe.phone.width, header: recordHeader())
+    let wanted = captionFrame(at: Self.unclamped, header: recordHeader())
+    #expect(wanted.width > 0)
+    #expect(clamped.width >= wanted.width - 0.5)
   }
 
   /// Lays out a row without a context count; `theCountSurvives` measures the row with one.

@@ -204,7 +204,11 @@ enum CoreSnapshotMapper {
 
   private static func session(_ id: String) -> AgentSession {
     AgentSession(
-      agent: TranscriptAgent.claude.rawValue, kind: "id", value: id, source: "claude:sessions")
+      agent: TranscriptAgent.claude.rawValue,
+      kind: "id",
+      value: id,
+      source: AgentSession.claudeRecordSource
+    )
   }
 
   /// The most urgent agent under these panes, or `nil` when none has one. herdr-core rolls

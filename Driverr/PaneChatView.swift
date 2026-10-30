@@ -1,4 +1,5 @@
 import DriverrCore
+import DriverrHerdr
 import SwiftUI
 import UIKit
 
@@ -207,7 +208,7 @@ struct PaneChatView: View {
     if isShowingSubagent { return false }
     if isShowingScreen { return true }
     if case .unavailable(let resolution) = shown.state {
-      return resolution.isUnreadableAgentKind
+      return resolution.isUnreadableAgentKind && canReadScreen
     }
     return false
   }
@@ -275,6 +276,10 @@ struct PaneChatView: View {
   private var blockedKind: AgentBlockedKind? {
     isShowingSubagent ? nil : model.pane.agent?.blockedKind
   }
+
+  /// Whether a captured screen can be drawn for this pane. Driverr has not implemented
+  /// `CoreControl.readScreen`, so on a herdr-core terminal `Show the Screen` would only fail.
+  private var canReadScreen: Bool { !CorePaneID.isCore(model.pane.id) }
 
   /// `onSendReply`, or `nil` while a sub-agent is shown: a chip there would answer the pane.
   /// `nil` also turns off the reply band and the screen-question read.
@@ -444,7 +449,7 @@ struct PaneChatView: View {
     // Not while the composer is collapsed, like the band in `TerminalScreen.surfaceSegment`.
     // A landscape phone with the keyboard up leaves this surface about 100 pt, and without
     // this row the rest fits. The row returns with the keyboard's dismissal or rotation.
-    if agentStatus == .blocked && !isComposerCollapsed {
+    if agentStatus == .blocked && !isComposerCollapsed && canReadScreen {
       HStack {
         Spacer(minLength: 0)
         showScreenButton(isProminent: false)
@@ -996,7 +1001,11 @@ struct PaneChatView: View {
     TimelineView(.periodic(from: .now, by: Self.ageTick)) { context in
       ProvenanceRow(
         header: TranscriptHeader(
-          agentName: agentName, source: source, contextUsage: contextUsage, asOf: context.date
+          agentName: agentName,
+          source: source,
+          session: model.pane.agent?.session,
+          contextUsage: contextUsage,
+          asOf: context.date
         ),
         horizontalInset: chatGutter
       )
@@ -1016,7 +1025,9 @@ struct PaneChatView: View {
   private func notice(for resolution: TranscriptResolution) -> some View {
     switch resolution {
     case .absent(let absence):
-      centred(TranscriptNotice(absence: absence, agentStatus: agentStatus))
+      centred(
+        TranscriptNotice(
+          absence: absence, agentStatus: agentStatus, canReadScreen: canReadScreen))
     case .ambiguous(let directory, let candidates):
       // The one place nothing is drawn behind what is on screen. Behind it would be a guessed,
       // possibly wrong, conversation.
@@ -1173,7 +1184,7 @@ struct PaneChatView: View {
       .buttonStyle(.borderedProminent)
       .accessibilityIdentifier("pane.chat.chooseFile")
     }
-    if notice.offersScreen(inSubagentChat: isShowingSubagent) {
+    if notice.offersScreen(inSubagentChat: isShowingSubagent, canReadScreen: canReadScreen) {
       showScreenButton(isProminent: isProminent)
     }
   }

@@ -58,10 +58,14 @@ public struct TranscriptHeader: Equatable, Sendable {
   /// The page's context count, drawn beside `caption`, never inside it. With a count, the
   /// phone elides the middle of the caption, and the count must not be what it eats.
   public let contextUsage: ContextUsage?
+  /// Whether the session id came from Claude Code's own record, not from herdr.
+  private let isFromClaudeRecord: Bool
 
+  /// `session` is the pane's, because `provenance` does not say who named the session.
   public init(
     agentName: String,
     source: TranscriptSource,
+    session: AgentSession? = nil,
     contextUsage: ContextUsage? = nil,
     asOf now: Date = Date()
   ) {
@@ -71,6 +75,7 @@ public struct TranscriptHeader: Equatable, Sendable {
     fileName = source.file.name
     age = source.age(asOf: now)
     self.contextUsage = contextUsage
+    isFromClaudeRecord = session?.source == AgentSession.claudeRecordSource
   }
 
   /// The whole pinned row as one line: the kind of match and how fresh the file is.
@@ -84,7 +89,8 @@ public struct TranscriptHeader: Equatable, Sendable {
     switch provenance {
     // A continued session reads the same: Claude Code named the successor itself, so the
     // match is as exact as herdr's.
-    case .reportedByHerdr, .continuedFromHerdrSession: scope = "reported by herdr"
+    case .reportedByHerdr, .continuedFromHerdrSession:
+      scope = isFromClaudeRecord ? "from Claude's record" : "reported by herdr"
     // Keep this short. A longer phrase pushed the age off the end of the row on a phone.
     case .matchedByDirectory: scope = "matched by directory"
     case .chosenByHand: scope = "you picked this file"
@@ -156,7 +162,7 @@ extension TranscriptResolution {
 /// or a refusal.
 ///
 /// One type because `Show the Screen` is the way out of every one of them, and it always
-/// works. A failure with no way out is a dead end.
+/// works where Driverr can read the pane's screen. A failure with no way out is a dead end.
 public struct TranscriptNotice: Equatable, Sendable {
   /// `nil` where the notice sits under turns that did parse, so it does not read as a
   /// heading over the conversation.
@@ -194,9 +200,10 @@ public struct TranscriptNotice: Equatable, Sendable {
   }
 
   /// Never over a sub-agent's chat, because the captured screen is the pane's, not the
-  /// sub-agent's.
-  public func offersScreen(inSubagentChat: Bool) -> Bool {
-    offersScreen && !inSubagentChat
+  /// sub-agent's. Never where Driverr cannot read the pane's screen, because the button would
+  /// only fail: it has not implemented that for a herdr-core terminal.
+  public func offersScreen(inSubagentChat: Bool, canReadScreen: Bool) -> Bool {
+    offersScreen && !inSubagentChat && canReadScreen
   }
 
   /// The exits' titles, kept with the rest of the screen's copy.
@@ -250,7 +257,12 @@ public struct TranscriptNotice: Equatable, Sendable {
   /// finished agent has had its prompt, so a missing file is a fault. A blocked agent keeps
   /// the wait, because a new Claude on its trust prompt reports blocked before any prompt
   /// (`FakeControl.treeWithUnstartedAgent`). No default, so a call site cannot forget it.
-  public init(absence: TranscriptAbsence, agentStatus: AgentStatus?) {
+  ///
+  /// `canReadScreen` is `offersScreen(inSubagentChat:canReadScreen:)`'s, so no sentence names
+  /// a button that is not drawn.
+  public init(absence: TranscriptAbsence, agentStatus: AgentStatus?, canReadScreen: Bool = true) {
+    let leftTheDirectory = "If this pane has left the directory the agent started in,"
+    let fileWillNotAppear = "the file will not appear here"
     switch absence {
     case .noSessionFiles(let directory) where Self.hasHadAPrompt(agentStatus),
       .reportedSessionMissing(_, let directory) where Self.hasHadAPrompt(agentStatus):
@@ -261,9 +273,9 @@ public struct TranscriptNotice: Equatable, Sendable {
       self.init(
         title: "The session file is missing",
         message:
-          "The agent has started, but Driverr found no session file for \(directory). If "
-          + "this pane has left the directory the agent started in, use "
-          + "\(Self.showScreenTitle).",
+          "The agent has started, but Driverr found no session file for \(directory). "
+          + "\(leftTheDirectory) "
+          + (canReadScreen ? "use \(Self.showScreenTitle)." : "\(fileWillNotAppear)."),
         offersRetry: true,
         symbolName: "exclamationmark.triangle"
       )
@@ -319,14 +331,14 @@ public struct TranscriptNotice: Equatable, Sendable {
         title: "No session file yet",
         message:
           "The agent has not written its session file for \(directory) yet. Send a message "
-          + "below to start the conversation. If this pane has left the directory the agent "
-          + "started in, the file will not appear here, so use \(Self.showScreenTitle).",
+          + "below to start the conversation. \(leftTheDirectory) \(fileWillNotAppear)"
+          + (canReadScreen ? ", so use \(Self.showScreenTitle)." : "."),
         offersRetry: true,
         symbolName: "text.bubble"
       )
     case .agentOnAddedMachine(let agent, let machine):
-      // No `Show the Screen`: a core does not read a terminal's screen yet, so the button
-      // would only fail. No retry either, because the answer cannot change.
+      // No `Show the Screen`: Driverr has not implemented reading a core terminal's screen,
+      // so the button would only fail. No retry either, because the answer cannot change.
       self.init(
         title: "\(agent) is running on \(machine)",
         message:

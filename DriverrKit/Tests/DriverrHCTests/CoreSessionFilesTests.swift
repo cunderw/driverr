@@ -70,6 +70,22 @@ struct CoreSessionFilesTests {
         == AgentSession(agent: "claude", kind: "id", value: "first", source: "claude:sessions"))
   }
 
+  /// The mapper's word for it has to be the one `TranscriptHeader` looks for.
+  @Test("a chat on a session read here credits Claude's record")
+  func caption() async throws {
+    let stream = stream(claude("t1", pid: 101))
+    stream.files = [path(101): record(pid: 101, id: "first")]
+    let pane = try await control(stream).snapshot().pane(id: "core:t1")
+    let source = TranscriptSource(
+      file: TranscriptFile(path: "/x/first.jsonl", sizeInBytes: 1, age: nil),
+      provenance: .reportedByHerdr(sessionID: "first"),
+      directory: "/srv"
+    )
+    let header = TranscriptHeader(
+      agentName: "Claude", source: source, session: pane?.agent?.session)
+    #expect(header.caption == "Claude session · from Claude's record")
+  }
+
   /// `.key` files sit beside the records, so anything broader than one exact name would read
   /// a stranger's.
   @Test("only a local Claude is read for, and only its one exact file")

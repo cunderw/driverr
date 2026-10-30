@@ -10,8 +10,12 @@ public struct AgentSession: Hashable, Sendable {
   /// What `value` is. Only `id` is interpreted; anything else is carried.
   public let kind: String
   public let value: String
-  /// Where it came from, such as `herdr:claude` or `claude:sessions`.
+  /// Where it came from, such as `herdr:claude` or `claudeRecordSource`.
   public let source: String?
+
+  /// `source` for an id read from Claude Code's own record of its process, which herdr played
+  /// no part in. `TranscriptHeader` says so.
+  public static let claudeRecordSource = "claude:sessions"
 
   public init(agent: String, kind: String, value: String, source: String? = nil) {
     self.agent = agent
