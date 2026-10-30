@@ -57,11 +57,11 @@ final class TerminalSceneModel {
     case local
   }
 
-  /// Something the scene has to say about the current target. One value, so two cannot be
-  /// on screen at once.
   /// Why a herdr-core terminal does not open. See `refusingCorePane`.
   static let coreUnavailable = "Driverr can't open a herdr-core terminal yet."
 
+  /// Something the scene has to say about the current target. One value, so two cannot be
+  /// on screen at once.
   enum Notice: Equatable {
     /// Another client already controls this pane. Offers Take over, the one deliberate
     /// use of `--takeover`.
@@ -703,7 +703,8 @@ final class TerminalSceneModel {
   /// Opens the read-only half for a target that has nothing open.
   ///
   /// Silent about failure, like `ConnectionModel.observePane`: the reader did not ask for an
-  /// observer, and an unobservable pane still has a conversation to read.
+  /// observer, and an unobservable pane still has a conversation to read. The one exception
+  /// is a core pane, which `makeObserver` refuses with a notice. See `refusingCorePane`.
   private func openObserver(for target: TerminalTarget) async {
     guard !isClosed else { return }
     // **`.ended` counts as nothing open.** Otherwise a chat pane whose observe stream ended
