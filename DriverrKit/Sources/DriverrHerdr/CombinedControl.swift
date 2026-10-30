@@ -59,7 +59,7 @@ public struct CombinedControl: HerdrControl {
   /// The core failing returns the TUI's tree, and both failing throws the TUI's error, which
   /// is the one with a next step.
   ///
-  /// **The TUI failing returns the core's tree only when the TUI has nothing to show**, so a
+  /// **The TUI failing returns the core's tree only when no session is running**, so a
   /// stopped session does not hide a running core. Any other failure is rethrown. A failed
   /// poll passed over as a tree clears `SessionModel.lastFailure`, and `ConnectionModel.apply`
   /// then forgets every TUI pane's transcript, screen, draft and surface.
@@ -76,18 +76,19 @@ public struct CombinedControl: HerdrControl {
     case (.success(let tree), .failure):
       return tree
     case (.failure(let failure), .success(let tree)):
-      guard await tuiHasNothingToShow() else { throw failure }
+      guard await tuiHasNoSession() else { throw failure }
       return tree
     case (.failure(let failure), .failure):
       throw failure
     }
   }
 
-  private func tuiHasNothingToShow() async -> Bool {
-    switch await tui.availability() {
-    case .serverNotRunning, .notInstalled: true
-    default: false
-    }
+  /// Not `.notInstalled`, which `CLIControl.availability` also answers when its status
+  /// command fails to run. This control exists only where herdr was found at connect, so that
+  /// is the likelier cause, and a failure on screen costs less than the drafts it would lose.
+  private func tuiHasNoSession() async -> Bool {
+    if case .serverNotRunning = await tui.availability() { return true }
+    return false
   }
 
   /// | TUI | core | answer |
