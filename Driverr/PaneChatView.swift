@@ -117,7 +117,8 @@ struct PaneChatView: View {
   /// The agent's own name, so the header never calls a Codex session a Claude one.
   let agentName: String
   /// The pane's captured screen, the exit from every chat failure. Held here so Show the
-  /// Screen always works with nothing installed.
+  /// Screen always works with nothing installed, on any pane but a herdr-core one, which
+  /// offers no such exit. See `canReadScreen`.
   let screen: PaneScreenModel
 
   /// Taps a reply chip under a pending turn. `nil` for a shell pane; see `sendReply`.
@@ -202,7 +203,8 @@ struct PaneChatView: View {
   /// Either the reader took Show the Screen from a chat failure, or the agent is one this build
   /// has no reader for. For those agents there was never a conversation, so a notice would
   /// present a normal state as an error (`TranscriptAbsence.isUnreadableAgentKind`). Every
-  /// other absence keeps its notice, because something expected is missing.
+  /// other absence keeps its notice, because something expected is missing. On a herdr-core
+  /// pane such an agent keeps its notice too, because there is no screen to draw instead.
   private var showsCapturedScreen: Bool {
     // The captured screen is the pane's, so a sub-agent's chat never offers it.
     if isShowingSubagent { return false }
@@ -444,7 +446,8 @@ struct PaneChatView: View {
       AgentStopRow(stop: stop, horizontalInset: chatGutter)
     }
     // Show the Screen is reachable from a readable chat on a blocked pane, not only from a
-    // failure, so the reader never has to switch to Terminal to see a prompt.
+    // failure, so the reader never has to switch to Terminal to see a prompt. A herdr-core
+    // pane has no such row, because `canReadScreen` is false there.
     //
     // Not while the composer is collapsed, like the band in `TerminalScreen.surfaceSegment`.
     // A landscape phone with the keyboard up leaves this surface about 100 pt, and without
@@ -1294,8 +1297,9 @@ struct PaneChatView: View {
     .accessibilityIdentifier("pane.chat.picker.candidate.\(index)")
   }
 
-  /// The exit that needs nothing installed and always works. It shows the captured screen on
-  /// the Chat side of the segment.
+  /// The exit that needs nothing installed and always works where it is drawn, which is
+  /// never on a herdr-core pane (`canReadScreen`). It shows the captured screen on the Chat
+  /// side of the segment.
   private func showScreenButton(isProminent: Bool) -> some View {
     Button { isShowingScreen = true } label: {
       BorderedButtonLabel(TranscriptNotice.showScreenTitle)
