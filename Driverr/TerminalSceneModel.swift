@@ -57,9 +57,6 @@ final class TerminalSceneModel {
     case local
   }
 
-  /// Why a herdr-core terminal does not open. See `refusingCorePane`.
-  static let coreUnavailable = "Driverr can't open a herdr-core terminal yet."
-
   /// Something the scene has to say about the current target. One value, so two cannot be
   /// on screen at once.
   enum Notice: Equatable {
@@ -125,6 +122,8 @@ final class TerminalSceneModel {
   /// Targets whose reattach is in flight. The screen reads it only to stay quiet, so
   /// "The session ended." is not printed over the last frame during the round trip.
   private(set) var reattaching: Set<TerminalTarget> = []
+  /// Kept terminals being retried until their new shell answers. See `awaitRestart(of:generation:)`.
+  private var restarts: [TerminalTarget: Task<Void, Never>] = [:]
   /// Controllers that are open but have not painted yet. The observer they will replace
   /// is still on screen.
   private var pending: [TerminalTarget: Entry] = [:]
@@ -139,6 +138,9 @@ final class TerminalSceneModel {
   /// The size to open the next stream at: the phone's real size. The desk reflow is
   /// accepted for the one pane being typed into.
   private var viewportSize = TerminalSize(columns: 80, rows: 24)
+  /// Whether `viewportSize` came from a terminal view, not the default above. See
+  /// `measuredSize(for:)`.
+  private var viewportIsMeasured = false
 
   /// Everything `select`, `takeOver` and `close` start, serialised.
   ///
@@ -150,6 +152,16 @@ final class TerminalSceneModel {
   /// How long one step may run before the chain stops waiting for it; see `enqueue`.
   /// Injected so a test can assert the recovery quickly.
   private let stepDeadline: Duration
+  /// How long a controller's session holds its first size. Injected, like `stepDeadline`,
+  /// because a core attach waits on it.
+  private let openSettlingWindow: Duration
+  /// How long a core attach may wait for a terminal view to report a size.
+  private let coreSizeDeadline: Duration
+
+  /// How often a lost terminal is tried, and how many times. About a minute more than the
+  /// core's own backoff reaches, so a slow recovery is still caught.
+  private static let restartInterval: Duration = .seconds(2)
+  private static let restartAttempts = 60
 
   /// The same as `PaneComposerCopy.sendDeadline`: how long a herdr command that is not
   /// coming back may hold the app. Generous on purpose, because abandoning a slow open
@@ -224,6 +236,8 @@ final class TerminalSceneModel {
     initialTarget: TerminalTarget,
     wait: @escaping ReconnectWaiter = { try? await Task.sleep(for: $0) },
     stepDeadline: Duration = TerminalSceneModel.defaultStepDeadline,
+    openSettlingWindow: Duration = TerminalSession.defaultOpenSettlingWindow,
+    coreSizeDeadline: Duration = DeferredPaneBridge.defaultSizeDeadline,
     notifications: NotificationCenter = .default
   ) {
     self.host = host
@@ -231,6 +245,8 @@ final class TerminalSceneModel {
     self.initialTarget = initialTarget
     self.wait = wait
     self.stepDeadline = stepDeadline
+    self.openSettlingWindow = openSettlingWindow
+    self.coreSizeDeadline = coreSizeDeadline
     self.notifications = notifications
     memoryWarnings = notifications.addObserver(
       forName: UIApplication.didReceiveMemoryWarningNotification,
@@ -460,7 +476,10 @@ final class TerminalSceneModel {
     // size forward for the next stream.
     if let leaving = warm.current, let session = session(for: leaving) {
       warm.setScrolledRows(session.scrolledRows, for: leaving)
-      if let size = session.reportedSize { viewportSize = size }
+      if let size = session.reportedSize {
+        viewportSize = size
+        viewportIsMeasured = true
+      }
     }
 
     // Recorded here too, because in-scene switches (the sheet, keyboard shortcuts, the
@@ -607,6 +626,7 @@ final class TerminalSceneModel {
     paneThumbnails?.close()
     reconnectWork?.cancel()
     reconnectWork = nil
+    stopAwaitingRestarts()
     let all = entries
     let opening = Array(pending.values)
     entries = []
@@ -658,6 +678,7 @@ final class TerminalSceneModel {
       // backoff and leaving the scene must not queue behind that. Its re-open goes through
       // the chain, so the loop catches it.
       await reconnectWork?.value
+      for restart in Array(restarts.values) { await restart.value }
       if generation == workGeneration { return }
     }
   }
@@ -678,7 +699,15 @@ final class TerminalSceneModel {
   ///   that died during suspension with the loss not yet recorded, and `openPaneBridge`
   ///   would mark the connection `.failed`, replacing the loss so the reconnect never
   ///   starts. `aReattachReclaimsOurOwnController(order: .streamEndFirst)` catches it.
+  ///
+  /// **A warm core pane comes back watching.** `surface(for:)` says what a pane shows when
+  /// looked at, not that anyone is, and a core's typing viewer takes the terminal's size as it
+  /// opens. One crash ends every warm pane at once, so each would take the size and hold it.
   private func openSurface(for target: TerminalTarget, automatic: Bool = false) async {
+    if automatic, target != current, case .pane(let id) = target, CorePaneID.isCore(id) {
+      await openObserver(for: target)
+      return
+    }
     switch surface(for: target) {
     case .terminal: await openController(for: target, takeover: false, automatic: automatic)
     case .chat: await readOnly(target)
@@ -703,8 +732,7 @@ final class TerminalSceneModel {
   /// Opens the read-only half for a target that has nothing open.
   ///
   /// Silent about failure, like `ConnectionModel.observePane`: the reader did not ask for an
-  /// observer, and an unobservable pane still has a conversation to read. The one exception
-  /// is a core pane, which `makeObserver` refuses with a notice. See `refusingCorePane`.
+  /// observer, and an unobservable pane still has a conversation to read.
   private func openObserver(for target: TerminalTarget) async {
     guard !isClosed else { return }
     // **`.ended` counts as nothing open.** Otherwise a chat pane whose observe stream ended
@@ -725,9 +753,9 @@ final class TerminalSceneModel {
   /// after that would never be handed back.
   private func makeObserver(for target: TerminalTarget) async -> Entry? {
     guard !isClosed else { return nil }
-    guard case .pane(let paneID) = target, !refusingCorePane(paneID),
-      let terminalID = terminalID(for: paneID),
-      let observer = await model.observePane(terminalID: terminalID, size: viewportSize)
+    guard case .pane(let paneID) = target, let terminalID = terminalID(for: paneID),
+      let observer = await model.observePane(
+        paneID: paneID, terminalID: terminalID, size: viewportSize)
     else { return nil }
     // Checked again after the await. The stream is open on the host by now, so it is
     // released, not dropped.
@@ -820,6 +848,7 @@ final class TerminalSceneModel {
     notices[target] = nil
     reattachAttempts[target] = nil
     reattaching.remove(target)
+    restarts.removeValue(forKey: target)?.cancel()
     guard let index = entries.firstIndex(where: { $0.target == target }) else { return }
     await release(entries.remove(at: index))
   }
@@ -863,10 +892,11 @@ final class TerminalSceneModel {
       )
 
     case .pane(let paneID):
-      guard let pane = pane(id: paneID), !refusingCorePane(paneID) else { return }
+      guard let pane = pane(id: paneID) else { return }
       if let terminalID = pane.terminalID {
         await openBridge(
           target: target,
+          paneID: paneID,
           terminalID: terminalID,
           takeover: takeover,
           automatic: automatic
@@ -897,33 +927,28 @@ final class TerminalSceneModel {
     }
   }
 
-  /// Whether this is a herdr-core terminal, which nothing here can open until #18, with a
-  /// notice on it if so.
-  ///
-  /// Both bridge commands are built from the control's binary, past `CombinedControl`'s
-  /// routing, so without this a core address reaches `herdr terminal session control`.
-  private func refusingCorePane(_ paneID: String) -> Bool {
-    guard CorePaneID.isCore(paneID) else { return false }
-    notices[.pane(id: paneID)] = .failed(.herdrCommandFailed(reason: Self.coreUnavailable))
-    return true
-  }
-
   private func openBridge(
     target: TerminalTarget,
+    paneID: String,
     terminalID: String,
     takeover: Bool,
     automatic: Bool = false
   ) async {
     guard
       let bridge = await model.openPaneBridge(
+        paneID: paneID,
         terminalID: terminalID,
         size: viewportSize,
+        measuredSize: measuredSize(for: target),
+        sizeDeadline: coreSizeDeadline,
         takeover: takeover,
         recordsFailure: !automatic
       )
     else {
       // An automatic reattach fails silently; see `openSurface`. The last frame stays. A
-      // reattach that opens and then ends again meets `TerminalEndDisposition`'s bound.
+      // bridge command opens a stream, so a reattach that fails ends again and meets
+      // `TerminalEndDisposition`'s bound. A refused core attach opens nothing, so
+      // `reattach(_:generation:)` says so itself and `awaitRestart` goes on trying.
       guard !automatic else { return }
       notices[target] = .failed(
         model.failure ?? .channelFailed(reason: "The pane could not be opened.")
@@ -932,7 +957,7 @@ final class TerminalSceneModel {
     }
 
     let (feed, pump) = controllerFeed(bridge: bridge, target: target)
-    let session = TerminalSession(feed: feed)
+    let session = TerminalSession(feed: feed, openSettlingWindow: openSettlingWindow)
     session.start()
     let opened = Entry(
       id: nextID(),
@@ -950,7 +975,9 @@ final class TerminalSceneModel {
       return
     }
 
-    if keepsPaintingUntilPromoted(target) {
+    // A deferred attach goes straight in: only a view can report the size it is waiting for,
+    // and an entry in `pending` has no view.
+    if keepsPaintingUntilPromoted(target), !(bridge is DeferredPaneBridge) {
       // The existing emulator keeps painting until this controller's first frame. See
       // `controllerPainted`.
       //
@@ -973,6 +1000,15 @@ final class TerminalSceneModel {
     if rows > 0 { session.restoreScroll(rows: rows) }
   }
 
+  /// The size a terminal view measured to open `target` at, or `nil` if none has yet.
+  ///
+  /// The entry's own first, which is the one laid out in this slot, then one carried from the
+  /// last pane. `viewportSize` alone is not enough: nothing writes it until a switch, so a
+  /// reattach on the first pane of a scene would be back at the default.
+  private func measuredSize(for target: TerminalTarget) -> TerminalSize? {
+    entry(for: target)?.session.reportedSize ?? (viewportIsMeasured ? viewportSize : nil)
+  }
+
   /// Whether what is on screen for `target` stays until the opening controller paints.
   ///
   /// True for an observer and for an `.ended` entry, since both hold a real last frame.
@@ -980,8 +1016,12 @@ final class TerminalSceneModel {
   /// view, with no banner. Through `pending`, `controllerPainted` swaps on herdr's first
   /// frame. `switchingToAnObservedPaneSwapsOnTheFirstFrame` and
   /// `aReattachKeepsTheLastFrameUntilTheNewOnePaints` cover the two cases.
+  ///
+  /// **Not a core observer.** Its bytes arrive at the terminal's width, not the phone's, so
+  /// what it shows is garbled and blank for one round trip beats keeping it up.
   private func keepsPaintingUntilPromoted(_ target: TerminalTarget) -> Bool {
     guard let role = entry(for: target)?.role else { return false }
+    if role == .observer, case .pane(let id) = target, CorePaneID.isCore(id) { return false }
     return role == .observer || role == .ended
   }
 
@@ -1069,7 +1109,8 @@ final class TerminalSceneModel {
       //
       // The `detached` receipt for our own `terminal.release` never gets here: both feeds
       // drop it on `Task.isCancelled`.
-      case .paneClosed, .other, .streamEnded, .detached, .serverShuttingDown, .processFailed:
+      case .paneClosed, .other, .streamEnded, .detached, .serverShuttingDown, .processFailed,
+        .lost, .neverAttached:
         switch TerminalEndDisposition.forSessionThatEnded(
           reason: reason,
           statedByHerdr: statedByHerdr,
@@ -1080,6 +1121,7 @@ final class TerminalSceneModel {
         case .failed(let message):
           notices[target] = .failed(.channelFailed(reason: message))
         case .reattach: reattach(target, generation: generation)
+        case .awaitRestart: awaitRestart(of: target, generation: generation)
         }
       }
     }
@@ -1105,12 +1147,13 @@ final class TerminalSceneModel {
   /// Whether a close reason came from a `terminal.closed` record herdr wrote.
   ///
   /// `.streamEnded` (no record) and `.processFailed` (the exit status) come from the channel,
-  /// not from herdr. This is a fact about the record only; `TerminalEndDisposition` decides
-  /// what it means.
+  /// and `.neverAttached` from this side, not from herdr. This is a fact about the record only;
+  /// `TerminalEndDisposition` decides what it means.
   private static func statedByHerdr(_ reason: TerminalCloseReason) -> Bool {
     switch reason {
-    case .streamEnded, .processFailed: return false
-    case .refused, .takenOver, .paneClosed, .detached, .serverShuttingDown, .other: return true
+    case .streamEnded, .processFailed, .neverAttached: return false
+    case .refused, .takenOver, .paneClosed, .detached, .serverShuttingDown, .lost, .other:
+      return true
     }
   }
 
@@ -1139,6 +1182,48 @@ final class TerminalSceneModel {
       // Re-checked after the queue: a `close()` or a loss in between makes the open wrong.
       guard !self.isClosed, self.linkGeneration == generation else { return }
       await self.openSurface(for: target, automatic: true)
+      // A refused core attach opens no stream, so no second end will reach the bound, and
+      // nothing else would offer a Retry.
+      if case .pane(let id) = target, CorePaneID.isCore(id), self.role(for: target) == .ended,
+        self.pending[target] == nil, self.notices[target] == nil
+      {
+        self.notices[target] = .failed(
+          .channelFailed(reason: TerminalEndDisposition.reattachFailedMessage))
+      }
+    }
+  }
+
+  /// Keeps trying a kept terminal that lost its program, until its new shell answers.
+  ///
+  /// **A timer, not `treeChanged()`.** `.onChange` fires only on a change, and a lost terminal
+  /// stays in the tree, so a restart inside one poll would never be seen. Runs until the
+  /// entry stops being `.ended`, the pane leaves the tree, or the link changes.
+  ///
+  /// An attempt refused as unavailable is silent and counts against nothing, because that is
+  /// what the wait is. The sentence stays up until a frame clears it, in `streamPainted`.
+  private func awaitRestart(of target: TerminalTarget, generation: Int) {
+    notices[target] = .failed(
+      .channelFailed(reason: TerminalEndDisposition.awaitingRestartMessage))
+    restarts[target]?.cancel()
+    restarts[target] = Task { [weak self, wait] in
+      for _ in 0..<Self.restartAttempts {
+        await wait(Self.restartInterval)
+        guard let self, !Task.isCancelled else { return }
+        guard !isClosed, linkGeneration == generation,
+          entry(for: target)?.role == .ended
+        else { return }
+        guard paneIsStillInTree(target) else {
+          notices[target] = .closed
+          return
+        }
+        // Untargeted, so a timeout writes no notice over the one up. Awaited, so a slow host
+        // gets one attempt at a time and the chain does not fill with them.
+        enqueue { [weak self] in await self?.openSurface(for: target, automatic: true) }
+        await work.value
+      }
+      guard let self, !Task.isCancelled, entry(for: target)?.role == .ended else { return }
+      notices[target] = .failed(
+        .channelFailed(reason: TerminalEndDisposition.reattachFailedMessage))
     }
   }
 
@@ -1176,6 +1261,7 @@ final class TerminalSceneModel {
     // user left. Bumped before the drop, so every end from here on is stale.
     linkGeneration += 1
     dropEverySession()
+    stopAwaitingRestarts()
     notices = [:]
     // The link explains every end, so none counts against the reattach budget.
     reattachAttempts = [:]
@@ -1290,6 +1376,11 @@ final class TerminalSceneModel {
     }
   }
 
+  private func stopAwaitingRestarts() {
+    for restart in restarts.values { restart.cancel() }
+    restarts = [:]
+  }
+
   // MARK: - Feeds
 
   /// The controller's frames, tapped on the way past for two things a `TerminalSession`
@@ -1356,6 +1447,15 @@ final class TerminalSceneModel {
       }
     }
 
+    if let raw = bridge as? any RawTerminalStream {
+      let feed = TerminalFeed(
+        raw: raw,
+        output: stream,
+        send: { try await bridge.send(bytes: $0) },
+        resize: { try await bridge.resize(to: $0) }
+      )
+      return (feed, pump)
+    }
     let feed = TerminalFeed(
       output: stream,
       send: { try await bridge.send(bytes: $0) },
@@ -1425,9 +1525,32 @@ final class TerminalSceneModel {
       }
     }
 
+    let send: @Sendable (Data) async throws -> Void = { @MainActor [weak self] data in
+      // Promoted, so this session is the controller now, and `accept` would hand the bytes
+      // straight back to it.
+      if case .controller(let bridge)? = self?.entry(for: target)?.attachment,
+        bridge as AnyObject === observer as AnyObject
+      {
+        try await bridge.send(bytes: data)
+      } else {
+        self?.accept(data, from: target)
+      }
+    }
+    if let raw = observer as? any RawTerminalStream {
+      // Credit as usual, and `focus`, which an observer ignores, so that SwiftTerm's report of
+      // a paint's `?1004h` is dropped rather than held and typed at the controller. A size
+      // goes through too: a core ignores it from an observer, and a promotion needs it.
+      let feed = TerminalFeed(
+        raw: raw,
+        output: stream,
+        send: send,
+        resize: { try await (observer as? any PaneBridge)?.resize(to: $0) }
+      )
+      return (feed, pump)
+    }
     let feed = TerminalFeed(
       output: stream,
-      send: { @MainActor [weak self] data in self?.accept(data, from: target) },
+      send: send,
       resize: { _ in },
       close: {},
       scroll: nil,
@@ -1528,6 +1651,52 @@ final class TerminalSceneModel {
     if actions?.didClose == true { paneWasClosed = true }
     adoptNewPane()
     rebuildActions(for: current)
+    promoteObserverLeftOnItsTerminal()
+    demoteViewerLeftBehindItsChat()
+  }
+
+  /// Watches a core pane again if an agent has started in it, so the chat is on screen.
+  ///
+  /// `surface(for:)` turned to `.chat` with nobody asking, and a viewer that has typed would go
+  /// on holding the terminal's size while only the conversation is read. Only a core pane,
+  /// which is the only place a promotion leaves one. `show(_:)` covers the segment.
+  private func demoteViewerLeftBehindItsChat() {
+    let target = current
+    guard case .pane(let id) = target, CorePaneID.isCore(id), surface(for: target) == .chat,
+      entry(for: target)?.role == .controller
+    else { return }
+    enqueue(on: target) { [weak self] in await self?.openSurface(for: target) }
+  }
+
+  /// Makes the pane on screen typable if its chat has just gone from under an observer.
+  ///
+  /// When an agent quits, `surface(for:)` turns to `.terminal` with nobody asking, so the pane
+  /// shows a terminal on a stream that cannot type, and a tap would raise the keyboard on it.
+  /// Only the current pane: a warm one opens when it is chosen, and a host can lose every
+  /// agent at once. A notice stops this asking again on every tree, and Retry opens the pane
+  /// as any open does.
+  private func promoteObserverLeftOnItsTerminal() {
+    let target = current
+    guard notices[target] == nil, surface(for: target) == .terminal,
+      let watched = entry(for: target), watched.role == .observer,
+      case .observer(let observer) = watched.attachment,
+      let promotable = observer as? any PromotableObserver
+    else { return }
+
+    enqueue(on: target) { [weak self] in
+      // Rechecked, because an agent can start while this waits its turn.
+      guard let self, !isClosed, entry(for: target)?.id == watched.id,
+        entry(for: target)?.role == .observer, surface(for: target) == .terminal
+      else { return }
+      guard let bridge = try? await promotable.promote() else {
+        notices[target] = .failed(.channelFailed(reason: "The pane could not be opened."))
+        return
+      }
+      guard let index = entries.firstIndex(where: { $0.id == watched.id }) else { return }
+      entries[index].role = .controller
+      entries[index].attachment = .controller(bridge)
+      flushHeld(to: entries[index].session, for: target)
+    }
   }
 
   /// Where to send someone whose pane has gone: the nearest live pane.

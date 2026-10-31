@@ -15,14 +15,33 @@ public struct TerminalFeed: Sendable {
   public var close: @Sendable () async -> Void
   /// How to scroll, when scrolling is **not** this side's job.
   ///
-  /// `nil` for a pty, whose scrollback lives in the local emulator. A herdr pane's history
-  /// lives in herdr, so a drag becomes a message sent through this.
+  /// A herdr pane's history lives in herdr, so a drag becomes a message sent through this.
+  /// `nil` for a pty or a core terminal: the emulator holds the scrollback, and a full-screen
+  /// program holds its own, so a drag goes where `TerminalDragRoute` says.
   public var scroll: (@Sendable (ScrollDirection, Int) async throws -> Void)?
   /// Where a tap's click goes, when the far side decides whether it is one.
   ///
   /// `nil` for a pty, where `TerminalMouseClick` encodes the click locally. A herdr pane's
   /// emulator never sees the mouse mode, so the tap goes to herdr as a cell.
   public var click: (@Sendable (TerminalCell) async throws -> Void)?
+  /// Whether this terminal has the keyboard, when the far side wants to be told directly.
+  ///
+  /// `nil` for a pty and a herdr pane. When set, SwiftTerm's own `CSI I` and `CSI O` reports
+  /// are dropped. See `TerminalSession.send(_:)`.
+  public var focus: (@Sendable (Bool) async throws -> Void)?
+  /// Takes how many bytes just reached the renderer, when the far side paces itself on that.
+  ///
+  /// `nil` for a pty and a herdr pane. Never waits: the session calls it as it renders.
+  public var consumed: (@Sendable (Int) -> Void)?
+  /// Told when the emulator comes back to the normal screen, when the far side may never have
+  /// painted that screen.
+  ///
+  /// `nil` for a pty and a herdr pane. Never waits: the session calls it as it renders.
+  public var leftAlternateScreen: (@Sendable () -> Void)?
+  /// Whether the far side is waiting to hear a size, so one must always come.
+  ///
+  /// See `TerminalSession.firstGridMeasured(_:)`.
+  public var awaitsFirstSize: Bool
 
   public init(
     output: AsyncThrowingStream<Data, any Error>,
@@ -30,7 +49,11 @@ public struct TerminalFeed: Sendable {
     resize: @escaping @Sendable (TerminalSize) async throws -> Void,
     close: @escaping @Sendable () async -> Void,
     scroll: (@Sendable (ScrollDirection, Int) async throws -> Void)? = nil,
-    click: (@Sendable (TerminalCell) async throws -> Void)? = nil
+    click: (@Sendable (TerminalCell) async throws -> Void)? = nil,
+    focus: (@Sendable (Bool) async throws -> Void)? = nil,
+    consumed: (@Sendable (Int) -> Void)? = nil,
+    leftAlternateScreen: (@Sendable () -> Void)? = nil,
+    awaitsFirstSize: Bool = false
   ) {
     self.output = output
     self.send = send
@@ -38,6 +61,10 @@ public struct TerminalFeed: Sendable {
     self.close = close
     self.scroll = scroll
     self.click = click
+    self.focus = focus
+    self.consumed = consumed
+    self.leftAlternateScreen = leftAlternateScreen
+    self.awaitsFirstSize = awaitsFirstSize
   }
 
   /// A feed for an `observe` stream: everything but reading is inert.

@@ -1,6 +1,7 @@
 import DriverrCore
 import DriverrHerdr
 import DriverrSSH
+import DriverrTerm
 import Foundation
 import Testing
 import UIKit
@@ -117,6 +118,9 @@ struct TerminalSceneModelTests {
     ptyGreeting: String? = nil,
     herdr: (any HerdrControl)? = nil,
     notifications: NotificationCenter = NotificationCenter(),
+    wait: @escaping ReconnectWaiter = { try? await Task.sleep(for: $0) },
+    openSettlingWindow: Duration = TerminalSession.defaultOpenSettlingWindow,
+    coreSizeDeadline: Duration = DeferredPaneBridge.defaultSizeDeadline,
     responder: @escaping @Sendable (String) -> Data?
   ) async -> (TerminalSceneModel, FakeSSHTransport) {
     let (model, transport) = await makeConnection(
@@ -128,6 +132,9 @@ struct TerminalSceneModelTests {
       host: host,
       model: model,
       initialTarget: initialTarget,
+      wait: wait,
+      openSettlingWindow: openSettlingWindow,
+      coreSizeDeadline: coreSizeDeadline,
       notifications: notifications
     )
     if let surface { scene.show(surface) }
@@ -205,10 +212,28 @@ struct TerminalSceneModelTests {
   // MARK: - A core pane
 
   /// The seeded session with a core terminal beside it, as `CombinedControl` merges them.
-  private var treeWithACorePane: SessionTree {
+  private var treeWithACorePane: SessionTree { tree(withCorePane: "core:t7") }
+
+  /// Two terminals with no agent, so each opens on its terminal surface.
+  private var treeWithTwoCorePanes: SessionTree {
+    let panes = ["t7", "t8"].map {
+      Pane(
+        id: CorePaneID.id(forAddress: $0), tabID: "core:tab", workspaceID: "core:workspace",
+        title: $0, terminalID: $0)
+    }
+    let tab = DriverrCore.Tab(
+      id: "core:tab", workspaceID: "core:workspace", number: 1, label: "Terminals",
+      isAutoNamed: true, panes: panes)
+    let workspace = Workspace(
+      id: "core:workspace", number: 1, label: "herdr-core", tabs: [tab])
+    return SessionTree(workspaces: [workspace])
+  }
+
+  /// `agent` is what gives a pane a chat surface.
+  private func tree(withCorePane id: String, agent: Agent? = nil) -> SessionTree {
     let pane = Pane(
-      id: "core:t7", tabID: "core:tab", workspaceID: "core:workspace", title: "t7",
-      terminalID: "t7")
+      id: id, tabID: "core:tab", workspaceID: "core:workspace", title: "t7", agent: agent,
+      terminalID: CorePaneID.address(of: id))
     let tab = DriverrCore.Tab(
       id: "core:tab", workspaceID: "core:workspace", number: 1, label: "Terminals",
       isAutoNamed: true, panes: [pane])
@@ -217,22 +242,197 @@ struct TerminalSceneModelTests {
     return SessionTree(workspaces: FakeControl.seededTree.workspaces + [workspace])
   }
 
-  /// Every bridge command is built from the control's binary, past `CombinedControl`, so
-  /// without a guard a core address reaches `herdr terminal session control`.
-  @Test("a core pane runs no bridge command and says why, and a herdr pane beside it opens")
-  func aCorePaneOpensNoBridge() async {
-    let (scene, transport) = await makeScene(
+  private func coreScene(
+    _ attacher: FakeCoreAttacher,
+    surface: PaneSurface? = .terminal,
+    agent: Agent? = nil,
+    wait: @escaping ReconnectWaiter = { _ in },
+    coreSizeDeadline: Duration = DeferredPaneBridge.defaultSizeDeadline
+  ) async -> (TerminalSceneModel, FakeSSHTransport) {
+    await makeScene(
       initialTarget: .pane(id: "core:t7"),
-      herdr: FakeControl(tree: treeWithACorePane),
+      surface: surface,
+      herdr: FakeControl(tree: tree(withCorePane: "core:t7", agent: agent), attacher: attacher),
+      wait: wait,
+      openSettlingWindow: .zero,
+      coreSizeDeadline: coreSizeDeadline,
+      responder: Self.everythingPaints
+    )
+  }
+
+  /// What the hosted terminal view measures on a phone, and not `viewportSize`'s default.
+  private static let measured = TerminalSize(columns: 52, rows: 48)
+
+  /// A viewer's far end is a test's to hold, so nothing here waits on a clock. No view is laid
+  /// out here, so a terminal's first attach is told its size as a view would.
+  private func opened(
+    _ scene: TerminalSceneModel,
+    _ attacher: FakeCoreAttacher
+  ) async throws -> FakeCoreViewer {
+    scene.start()
+    await scene.settle()
+    if attacher.log.isEmpty {
+      try #require(scene.currentSession).resize(to: Self.measured)
+      await waitUntilSignalled("the attach") { !attacher.viewers.isEmpty }
+    }
+    return try #require(attacher.latest)
+  }
+
+  // Pinned, because the deferral below must not reach it.
+  @Test("a herdr pane still opens at once, at the default size, with no view up")
+  func aHerdrPaneDoesNotWaitForASize() async {
+    let (scene, transport) = await makeScene(responder: Self.everythingPaints)
+    scene.start()
+    await scene.settle()
+
+    #expect((await transport.streamLog).contains { $0.contains("--cols 80 --rows 24") })
+  }
+
+  /// At the default the desk reflows twice, and the history arrives at the wrong width.
+  @Test("a scene's first core attach waits for the view, and attaches at what it measured")
+  func theFirstAttachWaitsForTheMeasuredSize() async throws {
+    let attacher = FakeCoreAttacher()
+    let (scene, _) = await coreScene(attacher)
+    scene.start()
+    await scene.settle()
+
+    #expect(attacher.log.isEmpty)
+    #expect(scene.currentRole == .controller, "no entry, so no view to measure")
+
+    try #require(scene.currentSession).resize(to: Self.measured)
+    await waitUntilSignalled("the attach") { !attacher.viewers.isEmpty }
+
+    #expect(attacher.sizes == [Self.measured])
+    #expect(try #require(attacher.latest).resizes.isEmpty, "the attach carried the size")
+  }
+
+  /// SwiftTerm's own `sizeChanged`, through `DriverrTerminalView`, with no hand on the session.
+  @Test("a real view's first layout is what the attach gets", arguments: [
+    (CGSize(width: 402, height: 874), 52, 48),
+    // SwiftTerm's default grid, where it reports nothing of its own.
+    (CGSize(width: 620, height: 460), 80, 25),
+  ])
+  func aRealViewSizesTheAttach(window size: CGSize, columns: Int, rows: Int) async throws {
+    let attacher = FakeCoreAttacher()
+    let (scene, _) = await coreScene(attacher)
+    scene.start()
+    await scene.settle()
+
+    let session = try #require(scene.currentSession)
+    let window = HostedProbe.window(
+      DriverrTerminalView(session: session, wantsKeyboardFocus: false), size: size)
+    await waitUntilSignalled("the attach") { !attacher.viewers.isEmpty }
+
+    #expect(attacher.sizes.map(\.columns) == [columns])
+    #expect(attacher.sizes.map(\.rows) == [rows])
+    withExtendedLifetime(window) {}
+  }
+
+  /// The emulator, the session and the scene's feed in one path, because a stream that painted
+  /// on the alternate screen depends on all three to get the normal screen back.
+  @Test("a real view leaving the alternate screen tells the viewer, once per exit")
+  func aRealViewReportsLeavingTheAlternateScreen() async throws {
+    let attacher = FakeCoreAttacher()
+    let (scene, _) = await coreScene(attacher)
+    scene.start()
+    await scene.settle()
+    let session = try #require(scene.currentSession)
+    let window = HostedProbe.window(
+      DriverrTerminalView(session: session, wantsKeyboardFocus: false))
+    await waitUntilSignalled("the attach") { !attacher.viewers.isEmpty }
+    let viewer = try #require(attacher.latest)
+
+    // A paint goes through the normal screen on its way to the alternate one.
+    viewer.paint("\u{1b}[?1047l\u{1b}[?1049h")
+    viewer.paint("top")
+    viewer.paint("\u{1b}[?1049l$ ")
+    await waitUntilSignalled("the exit") { viewer.leftAlternateScreenCount == 1 }
+
+    viewer.paint("more")
+    await waitUntilSignalled("the credit") { viewer.consumedByteCount >= 26 }
+    #expect(viewer.leftAlternateScreenCount == 1)
+    withExtendedLifetime(window) {}
+  }
+
+  @Test("what is typed while the attach waits goes out behind it")
+  func typingAheadOfTheAttach() async throws {
+    let attacher = FakeCoreAttacher()
+    let (scene, _) = await coreScene(attacher)
+    scene.start()
+    await scene.settle()
+    let session = try #require(scene.currentSession)
+
+    session.send(text: "ls")
+    session.resize(to: Self.measured)
+    await waitUntilSignalled("the keys") { attacher.latest?.sent == Data("ls".utf8) }
+  }
+
+  @Test("a size carried from the last pane attaches at once")
+  func aCarriedSizeAttachesAtOnce() async throws {
+    let attacher = FakeCoreAttacher()
+    let (scene, _) = await makeScene(
+      herdr: FakeControl(tree: treeWithACorePane, attacher: attacher),
       responder: Self.everythingPaints
     )
     scene.start()
     await scene.settle()
+    try #require(scene.currentSession).resize(to: Self.measured)
 
-    #expect(scene.notice == .failed(.herdrCommandFailed(reason: TerminalSceneModel.coreUnavailable)))
+    scene.select(.pane(id: "core:t7"))
+    await scene.settle()
+
+    #expect(attacher.sizes == [Self.measured])
+  }
+
+  /// The failure a view that never lays out has: it must end, and in words.
+  @Test("a view that reports no size ends in the open's own sentence, and Retry starts over")
+  func noSizeInTime() async throws {
+    let attacher = FakeCoreAttacher()
+    let (scene, _) = await coreScene(attacher, coreSizeDeadline: .milliseconds(10))
+    scene.start()
+    await waitUntil("the sentence") { scene.notice != nil }
+    await scene.settle()
+
+    #expect(scene.notice == .failed(.channelFailed(reason: "The pane could not be opened.")))
+    #expect(attacher.log.isEmpty)
+    #expect(scene.currentRole == .ended)
+    #expect(scene.model.phase == .connected)
+
+    // Installed, not left in `pending`, where it would have no view to hear from.
+    scene.retryOpen()
+    await scene.settle()
+    #expect(scene.currentRole == .controller)
+  }
+
+  @Test("leaving before the size comes attaches nothing")
+  func leavingBeforeTheSize() async throws {
+    let attacher = FakeCoreAttacher()
+    let (scene, _) = await coreScene(attacher)
+    scene.start()
+    await scene.settle()
+    let session = try #require(scene.currentSession)
+
+    scene.close()
+    await scene.settle()
+    session.resize(to: Self.measured)
+
+    #expect(attacher.log.isEmpty)
+  }
+
+  /// Bridge commands go through the control's binary, past `CombinedControl`'s routing, so
+  /// this is what would reach `herdr terminal session control` with a core's address.
+  @Test("a core pane opens through its attacher with no bridge command, and a herdr pane beside it still does")
+  func aCorePaneOpensThroughItsAttacher() async throws {
+    let attacher = FakeCoreAttacher()
+    let (scene, transport) = await coreScene(attacher)
+    _ = try await opened(scene, attacher)
+
+    #expect(attacher.log == ["open t7"])
+    #expect(scene.notice == nil)
+    #expect(scene.currentRole == .controller)
     #expect(!(await transport.streamLog).contains { $0.contains("t7") })
 
-    // The same scene on the same host still reaches herdr, so the empty log means the guard.
+    // The same scene on the same host still reaches herdr, so the empty log means the routing.
     // `w1:p1` is an agent pane, which would otherwise open on chat, with an observer.
     scene.select(.pane(id: "w1:p1"))
     scene.show(.terminal)
@@ -241,19 +441,541 @@ struct TerminalSceneModelTests {
     #expect(!(await transport.streamLog).contains { $0.contains("t7") })
   }
 
-  @Test("a core pane on the chat surface runs no observer either")
-  func aCorePaneOpensNoObserver() async {
-    let (scene, transport) = await makeScene(
-      initialTarget: .pane(id: "core:t7"),
-      surface: .chat,
-      herdr: FakeControl(tree: treeWithACorePane),
-      responder: Self.everythingPaints
-    )
+  @Test("a core pane on the chat surface observes through its attacher")
+  func aCorePaneObservesThroughItsAttacher() async throws {
+    let attacher = FakeCoreAttacher()
+    let agent = FakeControl.seededTree.pane(id: "w1:p1")?.agent
+    let (scene, transport) = await coreScene(attacher, surface: .chat, agent: agent)
+    _ = try await opened(scene, attacher)
+
+    #expect(attacher.log == ["observe t7"])
+    #expect(scene.notice == nil)
+    #expect(scene.currentRole == .observer)
+    #expect(!(await transport.streamLog).contains { $0.contains("terminal session") })
+  }
+
+  /// A core's stream is a pty's: the history is in the emulator, and a tap is encoded locally.
+  @Test("a core pane scrolls and clicks locally, and types through its viewer")
+  func aCorePaneIsLocal() async throws {
+    let attacher = FakeCoreAttacher()
+    let (scene, _) = await coreScene(attacher)
+    let viewer = try await opened(scene, attacher)
+    let session = try #require(scene.currentSession)
+
+    #expect(!session.scrollsRemotely)
+    #expect(!session.clicksRemotely)
+
+    session.send(text: "ls\r")
+    await waitUntilSignalled("the keys") { viewer.sent == Data("ls\r".utf8) }
+  }
+
+  /// The burst test's other half. The scene's own pump sits between the attachment and the
+  /// session, and crediting there would leave an unbounded stream ahead of the main thread.
+  @Test("bytes are credited as the session renders them, through the scene's own feed")
+  func creditPassesThroughTheScene() async throws {
+    let attacher = FakeCoreAttacher()
+    let (scene, _) = await coreScene(attacher)
+    let viewer = try await opened(scene, attacher)
+    let session = try #require(scene.currentSession)
+
+    var creditedBeforeRendering: Int?
+    session.attach { _ in creditedBeforeRendering = viewer.consumedByteCount }
+
+    viewer.paint("12345")
+    await waitUntilSignalled("the credit") { viewer.consumedByteCount == 5 }
+
+    #expect(creditedBeforeRendering == 0)
+  }
+
+  @Test("a core feed tells its viewer about focus, and a focus report is not typed")
+  func focusReachesTheViewer() async throws {
+    let attacher = FakeCoreAttacher()
+    let (scene, _) = await coreScene(attacher)
+    let viewer = try await opened(scene, attacher)
+    let session = try #require(scene.currentSession)
+
+    session.send(text: "\u{1b}[I")
+    session.focus(true)
+    await waitUntilSignalled("the focus") { viewer.focusChanges == [true] }
+    #expect(viewer.sent.isEmpty)
+  }
+
+  /// A paint carrying `?1004h` makes the emulator report focus at once. Held, it would be
+  /// typed into the program as soon as a controller opened.
+  @Test("an observer's focus report is not held for the controller")
+  func observerFocusReportIsNotHeld() async throws {
+    let attacher = FakeCoreAttacher()
+    let agent = FakeControl.seededTree.pane(id: "w1:p1")?.agent
+    let (scene, _) = await coreScene(attacher, surface: .chat, agent: agent)
+    let observer = try await opened(scene, attacher)
+    let session = try #require(scene.currentSession)
+    session.resize(to: Self.measured)
+
+    session.send(text: "\u{1b}[I")
+    session.send(text: "k")
+    // Both must be held, not on their way, or the report reaches the controller's own session
+    // on its own, and that session drops it. Nothing signals a write reaching `held`.
+    try await Task.sleep(for: .milliseconds(100))
+    scene.show(.terminal)
+    await scene.settle()
+
+    let controller = try #require(attacher.latest)
+    #expect(controller !== observer)
+    await waitUntilSignalled("the held key") { !controller.sent.isEmpty }
+    #expect(controller.sent == Data("k".utf8))
+  }
+
+  /// An observer's bytes are at the terminal's width, so its frame is not worth keeping up.
+  @Test("promoting a core observer swaps at once, not on the controller's first frame")
+  func aCoreObserverPromotesAtOnce() async throws {
+    let attacher = FakeCoreAttacher()
+    let agent = FakeControl.seededTree.pane(id: "w1:p1")?.agent
+    let (scene, _) = await coreScene(attacher, surface: .chat, agent: agent)
+    let observer = try await opened(scene, attacher)
+    // A warm view is laid out behind the chat, so it has already measured.
+    try #require(scene.currentSession).resize(to: Self.measured)
+
+    scene.show(.terminal)
+    await scene.settle()
+
+    #expect(attacher.log == ["observe t7", "open t7"])
+    #expect(attacher.sizes == [Self.measured])
+    #expect(scene.currentRole == .controller)
+    #expect(observer.releaseCount == 1)
+  }
+
+  @Test("demoting a core controller opens the observer before the CLOSE")
+  func demotingAKeepsWatching() async throws {
+    let attacher = FakeCoreAttacher()
+    let agent = FakeControl.seededTree.pane(id: "w1:p1")?.agent
+    let (scene, _) = await coreScene(attacher, agent: agent)
+    let controller = try await opened(scene, attacher)
+
+    scene.show(.chat)
+    await scene.settle()
+
+    #expect(attacher.log == ["open t7", "observe t7"])
+    #expect(scene.currentRole == .observer)
+    #expect(controller.releaseCount == 1)
+  }
+
+  @Test("leaving the scene hands every core viewer back")
+  func leavingReleases() async throws {
+    let attacher = FakeCoreAttacher()
+    let (scene, _) = await coreScene(attacher)
+    let viewer = try await opened(scene, attacher)
+
+    scene.close()
+    await scene.settle()
+
+    #expect(viewer.releaseCount == 1)
+  }
+
+  /// One terminal refusing an attach says nothing about the host, and `.failed` would.
+  @Test("a core open that fails leaves the connection alone, and offers a Retry")
+  func aFailedCoreOpen() async throws {
+    let attacher = FakeCoreAttacher(refusals: 2)
+    let (scene, _) = await coreScene(attacher)
+    let refused = TerminalSceneModel.Notice.failed(
+      .channelFailed(reason: "The pane could not be opened."))
     scene.start()
     await scene.settle()
 
-    #expect(scene.notice == .failed(.herdrCommandFailed(reason: TerminalSceneModel.coreUnavailable)))
-    #expect(!(await transport.streamLog).contains { $0.contains("terminal session") })
+    // The first attach is held for its size, so it fails from the stream.
+    try #require(scene.currentSession).resize(to: Self.measured)
+    await waitUntil("the sentence") { scene.notice != nil }
+    #expect(scene.model.phase == .connected)
+    #expect(scene.notice == refused)
+
+    // A Retry has the size, so it fails from the open.
+    scene.retryOpen()
+    await scene.settle()
+    #expect(scene.model.phase == .connected)
+    #expect(scene.notice == refused)
+
+    scene.retryOpen()
+    await scene.settle()
+    #expect(scene.notice == nil)
+    #expect(attacher.log == ["open t7", "open t7", "open t7"])
+  }
+
+  @Test("a program that finished gets the closed banner and no retry")
+  func aFinishedTerminalCloses() async throws {
+    let attacher = FakeCoreAttacher()
+    let (scene, _) = await coreScene(attacher)
+    let viewer = try await opened(scene, attacher)
+
+    viewer.end()
+    await waitUntil("the banner") { scene.notice == .closed }
+    await scene.settle()
+
+    #expect(attacher.log == ["open t7"])
+    #expect(scene.currentRole == .ended)
+  }
+
+  @Test("a core that stopped says so, and no retry follows")
+  func aStoppedCore() async throws {
+    let attacher = FakeCoreAttacher()
+    let (scene, _) = await coreScene(attacher)
+    let viewer = try await opened(scene, attacher)
+
+    viewer.end(.serverShuttingDown)
+    await waitUntil("the sentence") { scene.notice != nil }
+    await scene.settle()
+
+    #expect(
+      scene.notice
+        == .failed(.channelFailed(reason: TerminalEndDisposition.serverStoppedMessage)))
+    #expect(attacher.log == ["open t7"])
+  }
+
+  // MARK: - A kept terminal that lost its program
+
+  private var waitingForAShell: TerminalSceneModel.Notice {
+    .failed(.channelFailed(reason: TerminalEndDisposition.awaitingRestartMessage))
+  }
+
+  /// One tick of the wait a loss starts, released by the test.
+  @MainActor
+  private final class Ticks {
+    private(set) var asked: [Duration] = []
+    private var granted = 0
+    private var parked: [CheckedContinuation<Void, Never>] = []
+
+    func grant(_ count: Int) {
+      granted += count
+      while granted > 0, !parked.isEmpty {
+        granted -= 1
+        parked.removeFirst().resume()
+      }
+    }
+
+    func wait(_ delay: Duration) async {
+      asked.append(delay)
+      Waker.signalShared()
+      guard granted == 0 else {
+        granted -= 1
+        return
+      }
+      await withCheckedContinuation { parked.append($0) }
+    }
+  }
+
+  @Test("a loss waits for the new shell, quietly through refusals, then reattaches on the paint")
+  func aLostTerminalReattaches() async throws {
+    let attacher = FakeCoreAttacher()
+    let ticks = Ticks()
+    let (scene, _) = await coreScene(attacher, wait: { await ticks.wait($0) })
+    let first = try await opened(scene, attacher)
+
+    attacher.refuseNext(2)
+    first.end(.lost)
+    await waitUntil("the sentence") { scene.notice == waitingForAShell }
+    await waitUntil("the first wait") { ticks.asked.count == 1 }
+    #expect(ticks.asked == [.seconds(2)])
+    #expect(scene.currentRole == .ended)
+
+    ticks.grant(2)
+    await waitUntil("the third wait") { ticks.asked.count == 3 }
+    await waitUntilSignalled("two refusals") { attacher.log.count == 3 }
+    #expect(scene.notice == waitingForAShell, "a refusal said something")
+    #expect(scene.model.phase == .connected)
+
+    ticks.grant(1)
+    await waitUntilSignalled("the new shell") { attacher.log.count == 4 }
+    await waitUntilSignalled("a viewer") { attacher.viewers.count == 2 }
+    #expect(scene.notice == waitingForAShell, "cleared before anything painted")
+
+    try #require(attacher.latest).paint("$ ")
+    await waitUntil("the paint") { scene.currentRole == .controller }
+    #expect(scene.notice == nil)
+    #expect(Set(attacher.sizes) == [Self.measured], "a retry fell back to the default size")
+    // The next tick finds it painted, and stops there. Every tick is granted, because `settle`
+    // waits for this task, and a regression must fail here rather than park past the limit.
+    ticks.grant(61)
+    await scene.settle()
+    #expect(attacher.log.count == 4, "an attempt after the paint")
+    #expect(ticks.asked.count == 4, "the retries went on after the paint")
+  }
+
+  /// `.onChange` fires only on a change, and a restart can fall inside one poll, so nothing
+  /// from the tree can be what ends this.
+  @Test("a lost terminal that leaves the tree is closed, and the retries stop")
+  func aLostTerminalLeaves() async throws {
+    let attacher = FakeCoreAttacher()
+    let ticks = Ticks()
+    let control = FakeControl(tree: treeWithACorePane, attacher: attacher)
+    let (scene, _) = await makeScene(
+      initialTarget: .pane(id: "core:t7"), herdr: control, wait: { await ticks.wait($0) },
+      openSettlingWindow: .zero, responder: Self.everythingPaints)
+    let viewer = try await opened(scene, attacher)
+
+    attacher.refuseNext(100)
+    viewer.end(.lost)
+    await waitUntil("the first wait") { ticks.asked.count == 1 }
+
+    await control.update(to: FakeControl.seededTree)
+    await scene.model.session?.refresh()
+    ticks.grant(61)
+    await waitUntil("the banner") { scene.notice == .closed }
+    await scene.settle()
+
+    #expect(attacher.log == ["open t7"])
+  }
+
+  /// The scene on a core pane with an agent, read from its chat, and the control that can take
+  /// the agent away.
+  private func watchedAgentScene(
+    _ attacher: FakeCoreAttacher
+  ) async throws -> (TerminalSceneModel, FakeControl, FakeCoreViewer) {
+    let agent = FakeControl.seededTree.pane(id: "w1:p1")?.agent
+    let control = FakeControl(
+      tree: tree(withCorePane: "core:t7", agent: agent), attacher: attacher)
+    let (scene, _) = await makeScene(
+      initialTarget: .pane(id: "core:t7"), surface: .chat, herdr: control,
+      openSettlingWindow: .zero, responder: Self.everythingPaints)
+    let observer = try await opened(scene, attacher)
+    #expect(scene.currentRole == .observer)
+    return (scene, control, observer)
+  }
+
+  private func agentReturns(_ scene: TerminalSceneModel, _ control: FakeControl) async {
+    await control.update(
+      to: tree(withCorePane: "core:t7", agent: FakeControl.seededTree.pane(id: "w1:p1")?.agent))
+    await scene.model.session?.refresh()
+    scene.treeChanged()
+    await scene.settle()
+  }
+
+  private func agentQuits(_ scene: TerminalSceneModel, _ control: FakeControl) async {
+    await control.update(to: tree(withCorePane: "core:t7"))
+    await scene.model.session?.refresh()
+    scene.treeChanged()
+    await scene.settle()
+  }
+
+  /// With no agent the pane has no chat, so the keyboard comes up on a terminal an observer
+  /// cannot type into. Every keystroke would be held for a controller nothing is opening.
+  @Test("an observer whose agent quits starts typing where it stands")
+  func anObserverLeftOnTheTerminalIsPromoted() async throws {
+    let attacher = FakeCoreAttacher()
+    let (scene, control, observer) = try await watchedAgentScene(attacher)
+    let session = try #require(scene.currentSession)
+
+    session.send(text: "before")
+    await agentQuits(scene, control)
+
+    #expect(observer.promotionCount == 1)
+    #expect(scene.currentRole == .controller)
+    #expect(scene.currentSession === session, "a new view would take the size from a desk")
+    #expect(attacher.log == ["observe t7"])
+
+    session.send(text: "after")
+    await waitUntilSignalled("the keys") { observer.sent == Data("beforeafter".utf8) }
+    session.resize(to: TerminalSize(columns: 52, rows: 22))
+    await waitUntilSignalled("the size") { !observer.resizes.isEmpty }
+  }
+
+  @Test("a tree change with the observer already promoted, or still on chat, does nothing")
+  func promotionHappensOnce() async throws {
+    let attacher = FakeCoreAttacher()
+    let (scene, control, observer) = try await watchedAgentScene(attacher)
+
+    scene.treeChanged()
+    await scene.settle()
+    #expect(observer.promotionCount == 0)
+
+    await agentQuits(scene, control)
+    scene.treeChanged()
+    await scene.settle()
+    #expect(observer.promotionCount == 1)
+  }
+
+  @Test("a refused promotion says so, and Retry opens the terminal")
+  func aRefusedPromotion() async throws {
+    let attacher = FakeCoreAttacher()
+    let (scene, control, observer) = try await watchedAgentScene(attacher)
+    observer.refusePromotion()
+
+    await agentQuits(scene, control)
+
+    #expect(scene.notice == .failed(.channelFailed(reason: "The pane could not be opened.")))
+    #expect(scene.currentRole == .observer)
+
+    scene.treeChanged()
+    await scene.settle()
+    #expect(observer.promotionCount == 1, "asked again on a tree change")
+
+    // What the view behind the chat measured, so the Retry attaches at once.
+    try #require(scene.currentSession).resize(to: Self.measured)
+    scene.retryOpen()
+    await scene.settle()
+    #expect(attacher.log == ["observe t7", "open t7"])
+    #expect(scene.currentRole == .controller)
+  }
+
+  /// The chat is what is on screen again, so a controller behind it would hold the size for
+  /// nothing.
+  @Test("a promoted pane whose agent comes back is watched again")
+  func aSecondAgentDemotesThePromotedViewer() async throws {
+    let attacher = FakeCoreAttacher()
+    let (scene, control, observer) = try await watchedAgentScene(attacher)
+    await agentQuits(scene, control)
+    #expect(scene.currentRole == .controller)
+
+    await agentReturns(scene, control)
+
+    #expect(scene.currentRole == .observer)
+    #expect(attacher.log == ["observe t7", "observe t7"])
+    #expect(observer.releaseCount == 1)
+  }
+
+  /// The step waits its turn in the chain, and the agent can be back by then.
+  @Test("a promotion still queued when the agent comes back does not run")
+  func aQueuedPromotionRechecksTheSurface() async throws {
+    let attacher = FakeCoreAttacher()
+    let (scene, control, observer) = try await watchedAgentScene(attacher)
+    observer.gatePromotion()
+    observer.refusePromotion()
+
+    await control.update(to: tree(withCorePane: "core:t7"))
+    await scene.model.session?.refresh()
+    scene.treeChanged()
+    await waitUntilSignalled("the first promotion") { observer.promotionCount == 1 }
+    // Behind the first in the chain, because the notice that would stop it is not up yet.
+    scene.treeChanged()
+    await control.update(
+      to: tree(withCorePane: "core:t7", agent: FakeControl.seededTree.pane(id: "w1:p1")?.agent))
+    await scene.model.session?.refresh()
+    observer.openPromotionGate()
+    await scene.settle()
+
+    #expect(observer.promotionCount == 1)
+  }
+
+  /// Nobody is looking at it, and every pane on a host can lose its agent at once.
+  @Test("a warm observer whose agent quits stays an observer")
+  func aWarmObserverIsNotPromoted() async throws {
+    let attacher = FakeCoreAttacher()
+    let (scene, control, observer) = try await watchedAgentScene(attacher)
+    scene.select(.pane(id: "w1:p1"))
+    await scene.settle()
+
+    await control.update(to: tree(withCorePane: "core:t7"))
+    await scene.model.session?.refresh()
+    scene.treeChanged()
+    await scene.settle()
+
+    #expect(observer.promotionCount == 0)
+    #expect(scene.role(for: .pane(id: "core:t7")) == .observer)
+  }
+
+  @Test("a shell that never comes ends in a sentence and a Retry")
+  func aLostTerminalGivesUp() async throws {
+    let attacher = FakeCoreAttacher()
+    let (scene, _) = await coreScene(attacher)
+    let viewer = try await opened(scene, attacher)
+
+    attacher.refuseNext(1000)
+    viewer.end(.lost)
+    await waitUntil("the wait") { scene.notice == waitingForAShell }
+    await scene.settle()
+
+    #expect(
+      scene.notice
+        == .failed(.channelFailed(reason: TerminalEndDisposition.reattachFailedMessage)))
+    #expect(attacher.log.count == 61)
+  }
+
+  @Test("leaving a lost terminal stops the retries")
+  func leavingStopsTheRetries() async throws {
+    let attacher = FakeCoreAttacher()
+    let ticks = Ticks()
+    let (scene, _) = await coreScene(attacher, wait: { await ticks.wait($0) })
+    let viewer = try await opened(scene, attacher)
+
+    attacher.refuseNext(100)
+    viewer.end(.lost)
+    await waitUntil("the first wait") { ticks.asked.count == 1 }
+
+    scene.close()
+    ticks.grant(61)
+    await scene.settle()
+
+    #expect(attacher.log == ["open t7"])
+  }
+
+  /// `surface(for:)` is `.terminal` for a pane with no agent, whether or not anyone is looking,
+  /// so a warm pane must not take that as leave to open a typing viewer. A core crash ends
+  /// every warm pane at once, and each would take the size and hold it.
+  @Test(
+    "a warm core pane comes back watching, whichever way it ended",
+    arguments: [TerminalCloseReason.lost, .streamEnded]
+  )
+  func aWarmPaneComesBackAsAnObserver(ending reason: TerminalCloseReason) async throws {
+    let attacher = FakeCoreAttacher()
+    let ticks = Ticks()
+    let (scene, _) = await makeScene(
+      initialTarget: .pane(id: "core:t7"),
+      herdr: FakeControl(tree: treeWithTwoCorePanes, attacher: attacher),
+      wait: { await ticks.wait($0) },
+      openSettlingWindow: .zero,
+      responder: Self.everythingPaints
+    )
+    _ = try await opened(scene, attacher)
+
+    scene.select(.pane(id: "core:t8"))
+    await scene.settle()
+    #expect(attacher.log == ["open t7", "observe t7", "open t8"])
+
+    try #require(attacher.viewers.dropFirst().first).end(reason)
+    await waitUntil("the entry ending") { scene.role(for: .pane(id: "core:t7")) == .ended }
+    ticks.grant(61)
+    await waitUntilSignalled("the way back") { attacher.log.count == 4 }
+    await scene.settle()
+
+    #expect(attacher.log.last == "observe t7")
+    #expect(scene.role(for: .pane(id: "core:t7")) == .observer)
+  }
+
+  /// A bridge command opens a stream, so a reattach that fails ends again and meets
+  /// `TerminalEndDisposition`'s bound. A refused core attach opens nothing, so there is no
+  /// second end, and without this the pane would say "The session ended." with nothing to tap.
+  @Test("a reattach the core refuses says so, with a Retry that works")
+  func aRefusedReattachSaysSo() async throws {
+    let attacher = FakeCoreAttacher()
+    let (scene, _) = await coreScene(attacher)
+    let viewer = try await opened(scene, attacher)
+
+    attacher.refuseNext(1)
+    viewer.end(.streamEnded)
+    await waitUntilSignalled("the attempt") { attacher.log.count == 2 }
+    await scene.settle()
+
+    #expect(
+      scene.notice
+        == .failed(.channelFailed(reason: TerminalEndDisposition.reattachFailedMessage)))
+    #expect(scene.model.phase == .connected)
+
+    scene.retryOpen()
+    await scene.settle()
+    #expect(scene.notice == nil)
+    #expect(attacher.log.count == 3)
+  }
+
+  @Test("a stream the connection dropped reattaches once, as a TUI pane does")
+  func aDroppedConnectionReattaches() async throws {
+    let attacher = FakeCoreAttacher()
+    let (scene, _) = await coreScene(attacher)
+    let viewer = try await opened(scene, attacher)
+
+    viewer.end(.streamEnded)
+    await waitUntilSignalled("the reattach") { attacher.log.count == 2 }
+    await scene.settle()
+    try #require(attacher.latest).paint("$ ")
+    await waitUntil("the paint") { scene.currentRole == .controller }
+
+    #expect(scene.notice == nil)
   }
 
   /// A bounded step goes on running into a scene that has moved past it. `demote` opens a

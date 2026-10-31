@@ -95,8 +95,7 @@ struct AppEnvironment {
     // name, whose first command reports `herdrNotInstalled`.
     //
     // herdr-core stays out of Release until #21, because every push to `main` uploads to
-    // TestFlight and a tap guard would not cover the pane sheet, the switcher, the shortcuts
-    // or a remembered pane: all of them reach `openBridge`, which only the TUI can serve.
+    // TestFlight and a core host cannot yet do everything a pane offers.
     makeHerdrControl: { transport in
       let run: CommandRunner = { try await transport.execChannel(command: $0) }
       #if DEBUG

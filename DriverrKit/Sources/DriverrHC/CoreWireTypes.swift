@@ -36,6 +36,65 @@ struct CoreFileReadResult: Decodable, Sendable {
   let text: String
 }
 
+/// Just enough of a reply to find the stream it opened.
+struct CoreChannelResult: Decodable, Sendable {
+  let channel: UInt32?
+}
+
+/// `terminal.attach`.
+///
+/// `display` is left out on purpose, and no FACTS frame is ever sent. With none, the core's
+/// `set_display` keeps what the desk reported, and FACTS would count as activity and take the
+/// size.
+struct CoreAttachParams: Encodable, Sendable {
+  let terminal: String
+  var cols: Int
+  var rows: Int
+  /// Watch only. The core drops an observer's input and never takes its size.
+  var observe = false
+  /// Scrollback lines to paint first. The core skips them on the alternate screen.
+  var history = 0
+  /// Sets the size only once active again. `false` makes the attach itself active.
+  var resumed = false
+}
+
+struct CoreAttachResult: Decodable, Sendable {
+  /// The fields of `Terminal` that decide how to type into it.
+  struct Attached: Decodable, Sendable {
+    /// The key that submits, when the program's template says. `nil` is Enter.
+    let submit: String?
+    /// How long to wait between a paste and that key, when the template says.
+    let pasteGapMilliseconds: Int?
+
+    private enum CodingKeys: String, CodingKey {
+      case submit
+      case pasteGapMilliseconds = "paste_gap_ms"
+    }
+  }
+
+  let channel: UInt32
+  let terminal: Attached?
+}
+
+/// The JSON a core's CLOSE frame carries, or nothing, for the receipt of our own.
+struct CoreCloseRecord: Decodable, Sendable {
+  let reason: String?
+  /// A kept terminal lost its program: `finished_ms` is there, and `null`. The record stays
+  /// live, and a new shell is on the way.
+  let isLoss: Bool
+
+  private enum CodingKeys: String, CodingKey {
+    case reason
+    case finishedAt = "finished_ms"
+  }
+
+  init(from decoder: any Decoder) throws {
+    let record = try decoder.container(keyedBy: CodingKeys.self)
+    reason = try record.decodeIfPresent(String.self, forKey: .reason)
+    isLoss = record.contains(.finishedAt) ? try record.decodeNil(forKey: .finishedAt) : false
+  }
+}
+
 struct CoreHelloParams: Encodable, Sendable {
   let framed: Bool
   let generation: Int

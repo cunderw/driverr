@@ -12,6 +12,11 @@ public enum CorePaneID {
     prefix + address
   }
 
+  /// The address `id(forAddress:)` was given, which is what the core calls the terminal.
+  public static func address(of id: String) -> String {
+    String(id.dropFirst(isCore(id) ? prefix.count : 0))
+  }
+
   public static func isCore(_ id: String) -> Bool {
     id.hasPrefix(prefix)
   }
@@ -45,8 +50,8 @@ public struct CombinedControl: HerdrControl {
     return CombinedControl(tui: tui, core: core)
   }
 
-  /// The TUI's, because `ConnectionModel.bridgeClient` runs this binary, and no core pane
-  /// gets that far. See `TerminalSceneModel.refusingCorePane`.
+  /// The TUI's, because `ConnectionModel.bridgeClient` runs this binary, and a core pane
+  /// opens through `paneAttacher(for:)` instead.
   public var binaryPath: String { tui.binaryPath }
 
   /// Binds the TUI side. `Host.herdrSocketPath` names a herdr session, which a core is not.
@@ -114,6 +119,10 @@ public struct CombinedControl: HerdrControl {
 
   public func attachCommand(for pane: Pane) -> String {
     side(for: pane.id).attachCommand(for: pane)
+  }
+
+  public func paneAttacher(for paneID: String) -> (any PaneAttacher)? {
+    side(for: paneID).paneAttacher(for: paneID)
   }
 
   public func sendText(paneID: String, text: String) async throws {

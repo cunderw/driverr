@@ -41,6 +41,11 @@ public final class TerminalSession {
   /// How much output is waiting for a renderer, so a test can tell "not read yet" from
   /// "buffered".
   var bufferedByteCount: Int { pending.count }
+  /// Where the emulator is, as the view last said. See `alternateScreenChanged(_:)`.
+  private var isOnAlternateScreen = false
+  /// The last focus sent to the far side, so a repeat grant costs nothing. A grant counts as
+  /// activity on a core, so a repeat would not be free.
+  private var lastSentFocus: Bool?
   /// The last size actually sent to the far side, so an identical repeat costs nothing.
   private var lastSentSize: TerminalSize?
   /// The newest size the renderer has reported but that has not been sent yet.
@@ -79,8 +84,9 @@ public final class TerminalSession {
   /// keyboard frame. Without the wait an open sends two sizes, for example `50x18` then
   /// `50x22`, and a herdr pane reflows the user's desk twice. 400 ms was too short.
   ///
-  /// The stream already opened at `TerminalSceneModel.viewportSize`, and `reportedSize`
-  /// reads `pendingSize`, so nothing waits on this delay.
+  /// A bridge stream already opened at `TerminalSceneModel.viewportSize`, and `reportedSize`
+  /// reads `pendingSize`, so nothing waits on this delay. A held core attach does: this first
+  /// size is what it attaches at. See `DeferredPaneBridge`.
   public static let defaultOpenSettlingWindow = Duration.milliseconds(1000)
 
   /// How long to wait for a scroll's frame before assuming none is coming.
@@ -160,7 +166,7 @@ public final class TerminalSession {
     guard !pending.isEmpty else { return }
     let buffered = pending
     pending.removeAll()
-    sink(buffered[...])
+    render(buffered[...], with: sink)
   }
 
   /// Stops rendering without touching the connection. Later bytes are buffered for the
@@ -191,6 +197,9 @@ public final class TerminalSession {
     case .closed, .failed: return
     case .idle, .running: break
     }
+    // Told through `focus(_:)` when the feed takes that. SwiftTerm's report on top would say
+    // it twice, and as typed bytes a focus-out would count as activity and take the size.
+    if feed.focus != nil, Self.isFocusReport(bytes) { return }
     let data = Data(bytes)
     outbox.yield { [feed] in
       // A failed write means the channel is gone, and the pump reports that.
@@ -200,6 +209,22 @@ public final class TerminalSession {
 
   public func send(text: String) {
     send(ArraySlice(Array(text.utf8)))
+  }
+
+  /// SwiftTerm's two focus reports, whole. Anything else a program asked for goes out.
+  private static func isFocusReport(_ bytes: ArraySlice<UInt8>) -> Bool {
+    bytes.elementsEqual([0x1B, 0x5B, 0x49]) || bytes.elementsEqual([0x1B, 0x5B, 0x4F])
+  }
+
+  /// Tells the far side whether this terminal has the keyboard, if it wants to know.
+  public func focus(_ gained: Bool) {
+    guard let focus = feed.focus, gained != lastSentFocus else { return }
+    switch state {
+    case .closed, .failed: return
+    case .idle, .running: break
+    }
+    lastSentFocus = gained
+    outbox.yield { try? await focus(gained) }
   }
 
   /// Tells the far side the window changed, once the sizes stop moving.
@@ -220,6 +245,21 @@ public final class TerminalSession {
       try? await Task.sleep(for: window)
       self?.flushResize()
     }
+  }
+
+  /// The renderer's first layout, at this grid.
+  ///
+  /// SwiftTerm reports a size only when it differs from its own default grid, so a view that
+  /// lands on exactly 80x25 reports nothing, and a feed holding an attach for a size would
+  /// wait out its deadline. A feed that is not waiting ignores this.
+  public func firstGridMeasured(_ size: TerminalSize) {
+    guard feed.awaitsFirstSize, reportedSize == nil else { return }
+    resize(to: size)
+  }
+
+  /// Whether the renderer is on its alternate screen. Only the emulator knows, so the view says.
+  public func alternateScreenChanged(_ isActive: Bool) {
+    isOnAlternateScreen = isActive
   }
 
   /// The newest size the renderer reported, whether or not it has reached the far side.
@@ -303,12 +343,26 @@ public final class TerminalSession {
     let bytes = [UInt8](chunk)
     guard !bytes.isEmpty else { return }
     if let sink {
-      sink(bytes[...])
+      render(bytes[...], with: sink)
     } else {
       pending.append(contentsOf: bytes)
     }
     // Any chunk answers the scroll in flight. See `scroll(_:lines:)`.
     if scrollAwaitingFrame { openScrollGate(answered: true) }
+  }
+
+  /// One chunk through the renderer.
+  ///
+  /// Leaving the alternate screen is judged across the whole chunk, because a repaint there
+  /// goes through the normal screen on its way back.
+  private func render(
+    _ bytes: ArraySlice<UInt8>,
+    with sink: @MainActor (ArraySlice<UInt8>) -> Void
+  ) {
+    let wasOnAlternateScreen = isOnAlternateScreen
+    sink(bytes)
+    feed.consumed?(bytes.count)
+    if wasOnAlternateScreen, !isOnAlternateScreen { feed.leftAlternateScreen?() }
   }
 
   private func finish(with error: (any Error)?) {

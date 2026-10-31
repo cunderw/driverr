@@ -69,6 +69,48 @@ public protocol PaneObserver: Sendable {
   func release() async
 }
 
+/// A pane whose bytes are the program's own, with no frames around them.
+///
+/// herdr-core's attach stream, and so a pane that behaves like a pty: the local emulator holds
+/// its history and modes, so a drag and a tap are worked out here. A `PaneBridge` or
+/// `PaneObserver` that is also this says so, and the feed built from it has no `scroll` or
+/// `click`.
+public protocol RawTerminalStream: Sendable {
+  /// This many bytes have reached the emulator, so the far side may send more.
+  ///
+  /// Never waits. Called from the same turn that rendered them.
+  func consumed(_ bytes: Int)
+  /// Whether this viewer has the keyboard. It reaches a program that asked for focus events.
+  func focus(_ gained: Bool) async throws
+  /// The emulator went from the alternate screen back to the normal one.
+  ///
+  /// A stream that first painted on the alternate screen has told the emulator nothing about
+  /// the normal one, so that screen is blank until something paints it. Never waits.
+  func leftAlternateScreen()
+}
+
+/// Opens a pane without a bridge command, for a backend that holds its own connection.
+///
+/// See `HerdrControl.paneAttacher(for:)`.
+public protocol PaneAttacher: Sendable {
+  /// A viewer that can type, and that takes the terminal's size as it opens.
+  func open(terminalID: String, size: TerminalSize) async throws -> any PaneBridge
+  func observe(terminalID: String, size: TerminalSize) async throws -> any PaneObserver
+}
+
+/// An observer that can start typing where it stands, on the same stream and the same emulator.
+///
+/// For a pane left on its terminal by something the phone did not do, such as its agent
+/// quitting. A new viewer would mean a new view, whose first size would take the terminal's
+/// size from a desk with nothing typed.
+public protocol PromotableObserver: PaneObserver {
+  /// Becomes a viewer that can type, or throws and stays an observer.
+  ///
+  /// Not active: the terminal's size stays with whoever holds it until someone touches this
+  /// viewer. A size reported before then is kept and goes out with the first touch.
+  func promote() async throws -> any PaneBridge
+}
+
 /// Opens panes through herdr's control bridge.
 public struct TerminalBridgeClient: Sendable {
   private let binaryPath: String

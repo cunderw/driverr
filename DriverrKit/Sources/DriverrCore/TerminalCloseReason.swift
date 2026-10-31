@@ -1,12 +1,13 @@
-/// Why a bridge session ended, including the two cases herdr never stated.
+/// Why a bridge session ended, including the cases herdr never stated.
 ///
 /// Here because `DriverrHerdr` decodes it and the app decides what to show, and neither may
 /// use the other's types. The mapping from herdr's `reason` string happens in
 /// `DriverrHerdr`.
 ///
-/// Every case except `.streamEnded` and `.processFailed` comes from a `terminal.closed`
-/// record. Those two are read off the channel: a stream that stopped silently, and the
-/// bridge process's exit status. See `.streamEnded` for why the split matters.
+/// Every case except `.streamEnded`, `.processFailed` and `.neverAttached` comes from a
+/// `terminal.closed` record or a core's CLOSE frame. The first two are read off the channel:
+/// a stream that stopped silently, and the bridge process's exit status. See `.streamEnded`
+/// for why the split matters. `.neverAttached` is said on this side.
 ///
 /// An `Error` so `PaneBridge.output` and `PaneObserver.output` can throw it. `.paneClosed`
 /// finishes the stream cleanly instead; the others need a reaction.
@@ -33,6 +34,15 @@ public enum TerminalCloseReason: Error, Equatable, Sendable {
   /// Every pane on the host ends and none was closed. There is nothing to reattach to until
   /// herdr is back, so this neither reattaches nor claims a close. The token is back.
   case serverShuttingDown
+  /// herdr-core lost a kept terminal's program, and a new shell is on the way.
+  ///
+  /// The terminal is still listed, so this is not a close, and it reattaches once the shell
+  /// is up. Until then an attach is refused as unavailable. Sent as a CLOSE frame with
+  /// `finished_ms` null.
+  case lost
+  /// A core viewer held back for its size never attached: no size came in time, or the core
+  /// refused the attach. Said by `DeferredPaneBridge`, not the far side, so the pane may be fine.
+  case neverAttached
   /// A reason string this build does not recognise, kept verbatim.
   case other(String)
   /// The stream stopped with no `terminal.closed` record: the transport dropped, or the
