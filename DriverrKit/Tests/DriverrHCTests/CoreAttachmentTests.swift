@@ -13,10 +13,11 @@ struct CoreAttachmentTests {
   private func attached(
     _ stream: FakeCoreStream,
     observe: Bool = false,
-    history: Int = 0
+    history: Int = 0,
+    deadline: Duration? = nil
   ) async throws -> (CoreAttachment, CoreConnection) {
     stream.replies["terminal.attach"] = .result(FakeCoreStream.attached(channel: 4))
-    let connection = CoreConnection(stream: stream, callDeadline: patient)
+    let connection = CoreConnection(stream: stream, callDeadline: deadline ?? patient)
     #expect(await connection.handshake() == .ready(version: "0.1.14"))
     let attachment = try await CoreAttachment.open(
       on: connection,
@@ -345,9 +346,10 @@ struct CoreAttachmentTests {
   }
 
   private func alternatePainted(
-    _ stream: FakeCoreStream
+    _ stream: FakeCoreStream,
+    deadline: Duration? = nil
   ) async throws -> (CoreAttachment, AsyncThrowingStream<Data, any Error>.Iterator) {
-    let (attachment, _) = try await attached(stream, history: 500)
+    let (attachment, _) = try await attached(stream, history: 500, deadline: deadline)
     var iterator = attachment.output.makeAsyncIterator()
     stream.writeMessage(paint(alternate: true), onChannel: 4)
     _ = try #require(try await iterator.next())
@@ -464,5 +466,79 @@ struct CoreAttachmentTests {
       stream.streamFrames.contains { $0.kind == .credit }
     }
     #expect(stream.streamFrames.filter { $0.kind == .credit }.map(\.channel) == [5])
+  }
+
+  private func creditChannels(_ stream: FakeCoreStream) -> [UInt32] {
+    stream.streamFrames.filter { $0.kind == .credit }.map(\.channel)
+  }
+
+  /// Bytes held during the repaint may be all the window had, so no later `consumed` would
+  /// ever send them, and the core would wait for good.
+  @Test("a repaint the core refuses still returns the credit it held")
+  func creditAfterARefusedRepaint() async throws {
+    let stream = FakeCoreStream()
+    let (attachment, _) = try await alternatePainted(stream)
+    stream.replies["terminal.attach"] = .error("lost, waiting for its new shell")
+    stream.holdsReplies = true
+
+    attachment.leftAlternateScreen()
+    try await waitUntil("the second attach") { attachCount(stream) == 2 }
+    attachment.consumed(CoreAttachment.creditBatch)
+    #expect(creditChannels(stream).isEmpty, "held until the attach settles")
+    stream.flushHeld()
+
+    await attachment.repaintSettled()
+    try await waitUntil("the credit") { !creditChannels(stream).isEmpty }
+    #expect(creditChannels(stream) == [4])
+  }
+
+  @Test("a repaint nobody answers still returns the credit it held")
+  func creditAfterATimedOutRepaint() async throws {
+    let stream = FakeCoreStream()
+    let (attachment, _) = try await alternatePainted(stream, deadline: .milliseconds(300))
+    stream.replies["terminal.attach"] = .silent
+
+    attachment.leftAlternateScreen()
+    try await waitUntil("the second attach") { attachCount(stream) == 2 }
+    attachment.consumed(CoreAttachment.creditBatch)
+
+    await attachment.repaintSettled()
+    try await waitUntil("the credit") { !creditChannels(stream).isEmpty }
+    #expect(creditChannels(stream) == [4])
+  }
+
+  /// A repaint for falling behind has no history, so only a channel's first paint can say the
+  /// emulator holds it. This one lands while the program exits, under a flood.
+  @Test("a fall-behind paint of the normal screen does not stand in for the history")
+  func fallBehindPaintIsNotTheHistory() async throws {
+    let stream = FakeCoreStream()
+    var (attachment, iterator) = try await alternatePainted(stream)
+    stream.writeMessage(paint(alternate: false), onChannel: 4)
+    _ = try #require(try await iterator.next())
+    stream.replies["terminal.attach"] = .result(FakeCoreStream.attached(channel: 5))
+
+    attachment.leftAlternateScreen()
+
+    await attachment.repaintSettled()
+    #expect(attachCount(stream) == 2)
+    let params = try #require(try stream.params(of: "terminal.attach").last)
+    #expect(params["history"] as? Int == 500)
+  }
+
+  /// The emulator has its history from the first paint and its screen from this one.
+  @Test("a fall-behind paint of the normal screen is enough once the history is there")
+  func fallBehindPaintAfterTheHistory() async throws {
+    let stream = FakeCoreStream()
+    let (attachment, _) = try await attached(stream, history: 500)
+    var iterator = attachment.output.makeAsyncIterator()
+    for alternate in [false, true, false] {
+      stream.writeMessage(paint(alternate: alternate), onChannel: 4)
+      _ = try #require(try await iterator.next())
+    }
+
+    attachment.leftAlternateScreen()
+
+    await attachment.repaintSettled()
+    #expect(attachCount(stream) == 1)
   }
 }

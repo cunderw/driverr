@@ -167,15 +167,18 @@ final class CoreAttachment: PaneBridge, PaneObserver, RawTerminalStream, @unchec
       as: CoreAttachResult.self,
       handler: delivery.handler(generation: next.generation)
     )
-    let settled: (unused: UInt32?, credit: Int?) = lock.withLock {
+    // Credit held meanwhile goes out here whether or not the attach worked. It may be all
+    // the window had, and then no later `consumed` would come to send it.
+    let settled: (unused: UInt32?, credit: (bytes: Int, channel: UInt32)?) = lock.withLock {
       isRepainting = false
-      guard let opened else { return (nil, nil) }
-      guard !isReleased else { return (opened.channel, nil) }
-      defer { channel = opened.channel }
-      return (channel, takeDueCredit())
+      guard !isReleased else { return (opened?.channel, nil) }
+      let replaced = opened.map { _ in channel }
+      if let opened { channel = opened.channel }
+      return (replaced, takeDueCredit().map { ($0, channel) })
     }
-    guard let opened else { return }
-    if let credit = settled.credit { await connection.credit(credit, toChannel: opened.channel) }
+    if let credit = settled.credit {
+      await connection.credit(credit.bytes, toChannel: credit.channel)
+    }
     if let unused = settled.unused { await connection.closeChannel(unused) }
   }
 
@@ -221,7 +224,9 @@ private final class CoreViewerDelivery: @unchecked Sendable {
   private let lock = NSLock()
   private var generation = 0
   private var paintedAlternateScreen = false
-  private var paintedNormalScreen = false
+  private var holdsHistoryNow = false
+  /// The channel whose first paint has been seen, by generation.
+  private var paintedGeneration = -1
 
   init() {
     (output, continuation) = AsyncThrowingStream.makeStream(
@@ -234,8 +239,8 @@ private final class CoreViewerDelivery: @unchecked Sendable {
     continuation.finish()
   }
 
-  /// Whether a paint has given the emulator the normal screen, and with it the history.
-  var holdsHistory: Bool { lock.withLock { paintedNormalScreen } }
+  /// Whether the emulator has the history: a channel's first paint carried it.
+  var holdsHistory: Bool { lock.withLock { holdsHistoryNow } }
 
   /// Answers once for each paint on the alternate screen.
   func takePaintedAlternateScreen() -> Bool {
@@ -261,7 +266,7 @@ private final class CoreViewerDelivery: @unchecked Sendable {
       case .connectionEnded:
         continuation.finish(throwing: TerminalCloseReason.streamEnded)
       case .frame(let frame) where frame.kind == .data:
-        continuation.yield(prepared(frame.payload))
+        continuation.yield(prepared(frame.payload, generation: generation))
       case .frame(let frame) where frame.kind == .close:
         let reason = CoreAttachment.closeReason(from: frame.payload)
         if reason == .paneClosed {
@@ -275,11 +280,19 @@ private final class CoreViewerDelivery: @unchecked Sendable {
     }
   }
 
-  private func prepared(_ bytes: Data) -> Data {
+  /// Only a channel's first paint can hold the history. A repaint for falling behind has none,
+  /// so one of the normal screen is no answer to a stream that never had it.
+  private func prepared(_ bytes: Data, generation: Int) -> Data {
     guard let paint = CorePaint(bytes) else { return bytes }
     lock.withLock {
-      paintedAlternateScreen = paint.isOnAlternateScreen
-      if !paint.isOnAlternateScreen { paintedNormalScreen = true }
+      let isFirst = generation != paintedGeneration
+      paintedGeneration = generation
+      if paint.isOnAlternateScreen {
+        paintedAlternateScreen = true
+      } else if isFirst || holdsHistoryNow {
+        holdsHistoryNow = true
+        paintedAlternateScreen = false
+      }
     }
     return paint.bytes
   }
