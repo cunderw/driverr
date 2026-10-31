@@ -2,7 +2,7 @@ import DriverrCore
 import DriverrHerdr
 import Foundation
 
-/// Turns `terminal.list` into the tree the app draws.
+/// Turns a core's terminals into the tree the app draws.
 ///
 /// **Labels build the groups.** A core is flat terminals. The desktop app labels the ones it
 /// opens with `herdr.space` and `herdr.tab`, and those are the workspaces and tabs. Anything
