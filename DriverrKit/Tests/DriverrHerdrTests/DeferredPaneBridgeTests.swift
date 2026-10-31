@@ -31,6 +31,7 @@ private final class FarSide: PaneBridge, RawTerminalStream, @unchecked Sendable 
   func click(_ cell: TerminalCell) async throws {}
   func focus(_ gained: Bool) async throws { note("focus \(gained)") }
   func consumed(_ bytes: Int) { lock.withLock { consumedBytes += bytes } }
+  func leftAlternateScreen() { note("left alternate screen") }
   func release() async {
     note("release")
     continuation.finish()
@@ -185,6 +186,18 @@ struct DeferredPaneBridgeTests {
     await #expect(throws: TerminalCloseReason.lost) { _ = try await iterator.next() }
     bridge.consumed(5)
     #expect(attacher.far.consumedByteCount == 5)
+  }
+
+  @Test("leaving the alternate screen reaches an attached viewer, and is lost on none")
+  func leftAlternateScreen() async throws {
+    let attacher = Attacher()
+    let bridge = bridge(attacher)
+
+    bridge.leftAlternateScreen()
+    try await bridge.resize(to: measured)
+    bridge.leftAlternateScreen()
+
+    #expect(attacher.far.log == ["left alternate screen"])
   }
 
   @Test("a clean end stays clean")

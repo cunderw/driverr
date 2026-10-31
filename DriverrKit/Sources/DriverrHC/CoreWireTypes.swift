@@ -48,8 +48,8 @@ struct CoreChannelResult: Decodable, Sendable {
 /// size.
 struct CoreAttachParams: Encodable, Sendable {
   let terminal: String
-  let cols: Int
-  let rows: Int
+  var cols: Int
+  var rows: Int
   /// Watch only. The core drops an observer's input and never takes its size.
   var observe = false
   /// Scrollback lines to paint first. The core skips them on the alternate screen.

@@ -291,6 +291,27 @@ struct CoreAttachOverSSHTests {
     }
   }
 
+  /// The paint of a full-screen program skips the shell behind it, so only a second attach can
+  /// bring that back. A real core, because this depends on the wording of its paint.
+  @Test("attached during a full-screen program, leaving it paints the shell and its history")
+  func repaintAfterAFullScreenProgram() async throws {
+    try await withScratchCore(runs: "sh -c 'seq 1 300; top; exec sh'") { scratch in
+      try await Task.sleep(for: .milliseconds(500))
+      let (bridge, output) = try await attach(scratch)
+      try await waitUntil("top's paint") { output.text.contains("\u{1b}[?1049h") }
+      #expect(!output.text.contains("\r\n150\r\n"), "the paint held the shell's history")
+      #expect(!output.text.contains("\u{1b}[?1049l"), "the paint would turn autowrap off")
+
+      _ = try await scratch.hc("keys \(scratch.address) q")
+      try await waitUntil("top leaving") { output.text.contains("\u{1b}[?1049l") }
+      (bridge as? any RawTerminalStream)?.leftAlternateScreen()
+
+      try await waitUntil("the shell's history") { output.text.contains("\r\n150\r\n") }
+      try await bridge.send(text: "echo sti''ll-typing\r")
+      try await waitUntil("the echo") { output.text.contains("still-typing\r\n") }
+    }
+  }
+
   @Test("the composer types through a 0x0 viewer without moving the size")
   func composer() async throws {
     try await withScratchCore { scratch in

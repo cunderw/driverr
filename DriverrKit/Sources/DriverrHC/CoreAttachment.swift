@@ -18,81 +18,54 @@ final class CoreAttachment: PaneBridge, PaneObserver, RawTerminalStream, @unchec
   /// stall it. One frame per chunk of a burst would be a write per chunk on the shared link.
   static let creditBatch = 64 * 1024
 
-  let output: AsyncThrowingStream<Data, any Error>
+  var output: AsyncThrowingStream<Data, any Error> { delivery.output }
 
   private let connection: CoreConnection
-  private let channel: UInt32
+  private let delivery: CoreViewerDelivery
   private let isObserver: Bool
-  private let continuation: AsyncThrowingStream<Data, any Error>.Continuation
   /// A lock, not an actor: `consumed` runs on the main actor for every chunk and must not wait.
   private let lock = NSLock()
+  private var channel: UInt32
+  /// What an attach for this viewer asks for now, kept for `repaint()`.
+  private var params: CoreAttachParams
+  private var generation = 0
   private var owedCredit = 0
   private var isReleased = false
 
   private init(
-    output: AsyncThrowingStream<Data, any Error>,
-    continuation: AsyncThrowingStream<Data, any Error>.Continuation,
+    delivery: CoreViewerDelivery,
     connection: CoreConnection,
     channel: UInt32,
-    isObserver: Bool
+    params: CoreAttachParams
   ) {
-    self.output = output
-    self.continuation = continuation
+    self.delivery = delivery
     self.connection = connection
     self.channel = channel
-    self.isObserver = isObserver
+    self.params = params
+    isObserver = params.observe
   }
 
   static func open(
     on connection: CoreConnection,
     params: CoreAttachParams
   ) async throws -> CoreAttachment {
-    let (output, continuation) = AsyncThrowingStream.makeStream(
-      of: Data.self,
-      throwing: (any Error).self
-    )
+    let delivery = CoreViewerDelivery()
     do {
       let opened = try await connection.openChannel(
         "terminal.attach",
         params: params,
         as: CoreAttachResult.self,
-        handler: receiver(continuation)
+        handler: delivery.handler(generation: 0)
       )
       return CoreAttachment(
-        output: output,
-        continuation: continuation,
+        delivery: delivery,
         connection: connection,
         channel: opened.channel,
-        isObserver: params.observe
+        params: params
       )
     } catch {
-      continuation.finish()
+      delivery.finish()
       throw error
-    }
-  }
-
-  /// `PaneBridge.output`'s contract: a clean finish for a program that ended, a
-  /// `TerminalCloseReason` for anything else, and `.streamEnded` for a connection that went
-  /// with no CLOSE.
-  private static func receiver(
-    _ continuation: AsyncThrowingStream<Data, any Error>.Continuation
-  ) -> CoreConnection.ChannelHandler {
-    { event in
-      switch event {
-      case .connectionEnded:
-        continuation.finish(throwing: TerminalCloseReason.streamEnded)
-      case .frame(let frame) where frame.kind == .data:
-        continuation.yield(frame.payload)
-      case .frame(let frame) where frame.kind == .close:
-        let reason = closeReason(from: frame.payload)
-        if reason == .paneClosed {
-          continuation.finish()
-        } else {
-          continuation.finish(throwing: reason)
-        }
-      case .frame:
-        break
-      }
     }
   }
 
@@ -121,15 +94,21 @@ final class CoreAttachment: PaneBridge, PaneObserver, RawTerminalStream, @unchec
   }
 
   func send(bytes: Data) async throws {
-    try await connection.write(.data, bytes, toChannel: channel)
+    try await connection.write(.data, bytes, toChannel: currentChannel)
   }
+
+  private var currentChannel: UInt32 { lock.withLock { channel } }
 
   func resize(to size: TerminalSize) async throws {
     var payload = Data()
     for cells in [size.columns, size.rows] {
       withUnsafeBytes(of: UInt16(clamping: cells).littleEndian) { payload.append(contentsOf: $0) }
     }
-    try await connection.write(.resize, payload, toChannel: channel)
+    lock.withLock {
+      params.cols = size.columns
+      params.rows = size.rows
+    }
+    try await connection.write(.resize, payload, toChannel: currentChannel)
   }
 
   /// A drag goes by `TerminalDragRoute` and a tap through `TerminalMouseClick`, so a feed over
@@ -140,24 +119,173 @@ final class CoreAttachment: PaneBridge, PaneObserver, RawTerminalStream, @unchec
   func focus(_ gained: Bool) async throws {
     // An observer's focus means nothing to the core.
     guard !isObserver else { return }
-    try await connection.write(.focus, Data([gained ? 1 : 0]), toChannel: channel)
+    try await connection.write(.focus, Data([gained ? 1 : 0]), toChannel: currentChannel)
+  }
+
+  /// Attaches again if this stream's paint held nothing of the normal screen.
+  ///
+  /// The core skips a shell's screen and history in a paint on the alternate screen, so the
+  /// emulator has nothing behind `top`. Only a paint brings them back, and only an attach
+  /// brings a paint. A stream that saw the program start has it all already.
+  func leftAlternateScreen() {
+    guard !isObserver, delivery.takePaintedAlternateScreen() else { return }
+    Task { await repaint() }
+  }
+
+  /// A second channel into the same output, so the emulator and its keyboard stay as they are.
+  ///
+  /// The old channel delivers until the new one's first frame, whose paint covers anything cut
+  /// off. If the attach is refused, the old channel stays and the screen stays blank until the
+  /// next open.
+  private func repaint() async {
+    let next: (params: CoreAttachParams, generation: Int)? = lock.withLock {
+      guard !isReleased else { return nil }
+      generation += 1
+      return (params, generation)
+    }
+    guard let next,
+      let opened = try? await connection.openChannel(
+        "terminal.attach",
+        params: next.params,
+        as: CoreAttachResult.self,
+        handler: delivery.handler(generation: next.generation)
+      )
+    else { return }
+
+    let unused: UInt32 = lock.withLock {
+      guard !isReleased else { return opened.channel }
+      defer {
+        channel = opened.channel
+        owedCredit = 0
+      }
+      return channel
+    }
+    await connection.closeChannel(unused)
   }
 
   func consumed(_ bytes: Int) {
-    let due: Int? = lock.withLock {
+    let due: (bytes: Int, channel: UInt32)? = lock.withLock {
       guard !isReleased else { return nil }
       owedCredit += bytes
       guard owedCredit >= Self.creditBatch else { return nil }
       defer { owedCredit = 0 }
-      return owedCredit
+      return (owedCredit, channel)
     }
     guard let due else { return }
-    Task { [connection, channel] in await connection.credit(due, toChannel: channel) }
+    Task { [connection] in await connection.credit(due.bytes, toChannel: due.channel) }
   }
 
   func release() async {
-    lock.withLock { isReleased = true }
+    let channel: UInt32 = lock.withLock {
+      isReleased = true
+      return self.channel
+    }
     await connection.closeChannel(channel)
+    delivery.finish()
+  }
+}
+
+/// Where a viewer's channels deliver.
+///
+/// Made ahead of the first channel, because a paint can arrive before the reply naming it.
+/// `generation` tells a replacement channel from the one it replaces: the first frame of a
+/// later generation ends the earlier one.
+private final class CoreViewerDelivery: @unchecked Sendable {
+  let output: AsyncThrowingStream<Data, any Error>
+
+  private let continuation: AsyncThrowingStream<Data, any Error>.Continuation
+  private let lock = NSLock()
+  private var generation = 0
+  private var paintedAlternateScreen = false
+
+  init() {
+    (output, continuation) = AsyncThrowingStream.makeStream(
+      of: Data.self,
+      throwing: (any Error).self
+    )
+  }
+
+  func finish() {
     continuation.finish()
+  }
+
+  /// Answers once for each paint on the alternate screen.
+  func takePaintedAlternateScreen() -> Bool {
+    lock.withLock {
+      defer { paintedAlternateScreen = false }
+      return paintedAlternateScreen
+    }
+  }
+
+  /// `PaneBridge.output`'s contract: a clean finish for a program that ended, a
+  /// `TerminalCloseReason` for anything else, and `.streamEnded` for a connection that went
+  /// with no CLOSE.
+  func handler(generation: Int) -> CoreConnection.ChannelHandler {
+    { [self] event in
+      let isCurrent: Bool = lock.withLock {
+        guard generation >= self.generation else { return false }
+        self.generation = generation
+        return true
+      }
+      guard isCurrent else { return }
+
+      switch event {
+      case .connectionEnded:
+        continuation.finish(throwing: TerminalCloseReason.streamEnded)
+      case .frame(let frame) where frame.kind == .data:
+        continuation.yield(prepared(frame.payload))
+      case .frame(let frame) where frame.kind == .close:
+        let reason = CoreAttachment.closeReason(from: frame.payload)
+        if reason == .paneClosed {
+          continuation.finish()
+        } else {
+          continuation.finish(throwing: reason)
+        }
+      case .frame:
+        break
+      }
+    }
+  }
+
+  private func prepared(_ bytes: Data) -> Data {
+    guard let paint = CorePaint(bytes) else { return bytes }
+    lock.withLock { paintedAlternateScreen = paint.isOnAlternateScreen }
+    return paint.bytes
+  }
+}
+
+/// A first paint, or the repaint a viewer gets for falling behind, which opens the same way.
+/// The core's wording of one matters only here.
+///
+/// A paint starts a frame, because the core queues it onto an empty backlog, and its opening
+/// reset fits in that frame.
+struct CorePaint {
+  private static let opening = Data("\u{1b}[!p".utf8)
+  private static let endOfReset = Data("\u{1b}[?47l\u{1b}[H\u{1b}[2J".utf8)
+  private static let leavingWithRestore = Data("\u{1b}[?1049l".utf8)
+  private static let leaving = Data("\u{1b}[?1047l".utf8)
+  private static let enteringAlternateScreen = Data("\u{1b}[?1049h".utf8)
+
+  let bytes: Data
+  /// Whether this paint is of a full-screen program, so it holds nothing of the normal screen.
+  let isOnAlternateScreen: Bool
+
+  /// `nil` for a frame that is not a paint.
+  ///
+  /// **`?1049l` becomes `?1047l`, the same length, so credit still adds up.** SwiftTerm's
+  /// `?1049l` restores a cursor, and with it the saved autowrap. Nothing saved one, and the
+  /// paint's own soft reset leaves the saved value off, so every line after a paint would
+  /// clip at the last column. The cursor does not matter: the reset goes on to `CSI H`.
+  init?(_ frame: Data) {
+    guard frame.starts(with: Self.opening),
+      let resetEnd = frame.range(of: Self.endOfReset),
+      let leaving = frame.range(
+        of: Self.leavingWithRestore, in: frame.startIndex..<resetEnd.lowerBound)
+    else { return nil }
+
+    var bytes = frame
+    bytes.replaceSubrange(leaving, with: Self.leaving)
+    self.bytes = bytes
+    isOnAlternateScreen = frame[resetEnd.upperBound...].starts(with: Self.enteringAlternateScreen)
   }
 }

@@ -20,9 +20,11 @@ private final class TestFeed {
     private var _closed = false
     private var _focuses: [Bool] = []
     private var _consumed: [Int] = []
+    private var _leftAlternateScreen = 0
 
     var focuses: [Bool] { lock.withLock { _focuses } }
     var consumed: [Int] { lock.withLock { _consumed } }
+    var leftAlternateScreen: Int { lock.withLock { _leftAlternateScreen } }
     var sent: [Data] { lock.withLock { _sent } }
     var sizes: [TerminalSize] { lock.withLock { _sizes } }
     var scrolls: [(ScrollDirection, Int)] { lock.withLock { _scrolls } }
@@ -59,6 +61,10 @@ private final class TestFeed {
       lock.withLock { _consumed.append(consumed) }
       Waker.signalFromAnywhere()
     }
+    func recordLeftAlternateScreen() {
+      lock.withLock { _leftAlternateScreen += 1 }
+      Waker.signalFromAnywhere()
+    }
   }
 
   let feed: TerminalFeed
@@ -72,6 +78,7 @@ private final class TestFeed {
   var closed: Bool { recorder.closed }
   var focuses: [Bool] { recorder.focuses }
   var consumed: [Int] { recorder.consumed }
+  var leftAlternateScreen: Int { recorder.leftAlternateScreen }
   var sentText: String { String(decoding: sent.reduce(Data(), +), as: UTF8.self) }
 
   /// - Parameter scrollable: stand in for a herdr pane. A pty has no `scroll` or `click`
@@ -98,6 +105,7 @@ private final class TestFeed {
       click: scrollable ? { @Sendable cell async in recorder.record(click: cell) } : nil,
       focus: raw ? { @Sendable gained async in recorder.record(focus: gained) } : nil,
       consumed: raw ? { @Sendable in recorder.record(consumed: $0) } : nil,
+      leftAlternateScreen: raw ? { @Sendable in recorder.recordLeftAlternateScreen() } : nil,
       awaitsFirstSize: raw
     )
   }
@@ -1250,6 +1258,48 @@ struct TerminalSessionRawStreamTests {
     feed.emit("after!!")
     await waitUntil { rendered == 13 }
     #expect(feed.consumed == [6, 7])
+  }
+
+  /// Why `CoreAttachment` rewrites a paint. A core's paint opens with a soft reset and `?1049l`,
+  /// which in SwiftTerm restores a cursor nothing saved, and with it autowrap off.
+  @Test(
+    "a paint that leaves the alternate screen by 1047 keeps autowrap, and by 1049 does not",
+    arguments: [("\u{1b}[?1047l", 2), ("\u{1b}[?1049l", 1)]
+  )
+  func autowrapAfterAPaint(leaving: String, rows: Int) {
+    let delegate = Forwarding()
+    let terminal = Terminal(delegate: delegate, options: TerminalOptions(cols: 40, rows: 20))
+
+    terminal.feed(text: "\u{1b}[!p" + leaving + "\u{1b}[H\u{1b}[2J")
+    terminal.feed(text: String(repeating: "x", count: 50))
+
+    let used = (0..<3).filter { terminal.getLine(row: $0)?.translateToString(trimRight: true) != "" }
+    #expect(used.count == rows)
+    withExtendedLifetime(delegate) {}
+  }
+
+  private final class Forwarding: TerminalDelegate {
+    func send(source: Terminal, data: ArraySlice<UInt8>) {}
+  }
+
+  /// A paint on the alternate screen goes through the normal one on its way, so what counts is
+  /// where the whole chunk ends.
+  @Test("leaving the alternate screen is judged per chunk", arguments: [(false, 1), (true, 0)])
+  func leavingIsJudgedPerChunk(backAgain: Bool, reports: Int) async {
+    let feed = TestFeed(raw: true)
+    let session = TerminalSession(feed: feed.feed)
+    session.start()
+    session.attach { _ in
+      session.alternateScreenChanged(false)
+      if backAgain { session.alternateScreenChanged(true) }
+    }
+    session.alternateScreenChanged(true)
+
+    feed.emit("x")
+    feed.emit("sentinel")
+    await waitUntil { feed.consumed.count == 2 }
+
+    #expect(feed.leftAlternateScreen == reports)
   }
 
   /// SwiftTerm says nothing about a grid that lands on its own default, and a core attach

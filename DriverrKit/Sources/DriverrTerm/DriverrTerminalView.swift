@@ -86,6 +86,7 @@
       view.keyboardNotice = keyboardNotice
       view.copyNotice = copyNotice
       view.focusChanged = { [session] in session.focus($0) }
+      view.alternateScreenChanged = { [session] in session.alternateScreenChanged($0) }
       view.firstLayout = { [coordinator = context.coordinator] in coordinator.firstLayout(of: $0) }
 
       // A pane's history lives in herdr, so a drag becomes `terminal.scroll` and the scroll
@@ -420,6 +421,7 @@
     override public func bufferActivated(source: Terminal) {
       super.bufferActivated(source: source)
       applyDragRoute()
+      alternateScreenChanged?(source.isCurrentBufferAlternate)
     }
 
     /// Refuses SwiftTerm's selection pan while there is no selection.
@@ -687,6 +689,9 @@
 
     /// Told when this view gains or loses the keyboard. `TerminalFeed.focus` is what wants it.
     var focusChanged: ((Bool) -> Void)?
+
+    /// Told which screen the emulator is on, each time that may have changed.
+    var alternateScreenChanged: ((Bool) -> Void)?
 
     /// Told once, after the first layout that gave this view a size. See
     /// `TerminalSession.firstGridMeasured(_:)`.

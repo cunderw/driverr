@@ -82,6 +82,11 @@ public protocol RawTerminalStream: Sendable {
   func consumed(_ bytes: Int)
   /// Whether this viewer has the keyboard. It reaches a program that asked for focus events.
   func focus(_ gained: Bool) async throws
+  /// The emulator went from the alternate screen back to the normal one.
+  ///
+  /// A stream that first painted on the alternate screen has told the emulator nothing about
+  /// the normal one, so that screen is blank until something paints it. Never waits.
+  func leftAlternateScreen()
 }
 
 /// Opens a pane without a bridge command, for a backend that holds its own connection.

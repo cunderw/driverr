@@ -170,6 +170,11 @@ public final class DeferredPaneBridge: PaneBridge, RawTerminalStream, @unchecked
     (bridge as? any RawTerminalStream)?.consumed(bytes)
   }
 
+  public func leftAlternateScreen() {
+    let bridge = lock.withLock { attached }
+    (bridge as? any RawTerminalStream)?.leftAlternateScreen()
+  }
+
   /// A deferred pane is a raw stream, whose scrollback and clicks are local.
   public func scroll(_ direction: ScrollDirection, lines: Int) async throws {}
   public func click(_ cell: TerminalCell) async throws {}

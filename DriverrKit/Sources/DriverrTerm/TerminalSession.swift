@@ -41,6 +41,8 @@ public final class TerminalSession {
   /// How much output is waiting for a renderer, so a test can tell "not read yet" from
   /// "buffered".
   var bufferedByteCount: Int { pending.count }
+  /// Where the emulator is, as the view last said. See `alternateScreenChanged(_:)`.
+  private var isOnAlternateScreen = false
   /// The last focus sent to the far side, so a repeat grant costs nothing. A grant counts as
   /// activity on a core, so a repeat would not be free.
   private var lastSentFocus: Bool?
@@ -164,8 +166,7 @@ public final class TerminalSession {
     guard !pending.isEmpty else { return }
     let buffered = pending
     pending.removeAll()
-    sink(buffered[...])
-    feed.consumed?(buffered.count)
+    render(buffered[...], with: sink)
   }
 
   /// Stops rendering without touching the connection. Later bytes are buffered for the
@@ -256,6 +257,11 @@ public final class TerminalSession {
     resize(to: size)
   }
 
+  /// Whether the renderer is on its alternate screen. Only the emulator knows, so the view says.
+  public func alternateScreenChanged(_ isActive: Bool) {
+    isOnAlternateScreen = isActive
+  }
+
   /// The newest size the renderer reported, whether or not it has reached the far side.
   ///
   /// A reattach can restate it without waiting for a layout pass.
@@ -337,13 +343,26 @@ public final class TerminalSession {
     let bytes = [UInt8](chunk)
     guard !bytes.isEmpty else { return }
     if let sink {
-      sink(bytes[...])
-      feed.consumed?(bytes.count)
+      render(bytes[...], with: sink)
     } else {
       pending.append(contentsOf: bytes)
     }
     // Any chunk answers the scroll in flight. See `scroll(_:lines:)`.
     if scrollAwaitingFrame { openScrollGate(answered: true) }
+  }
+
+  /// One chunk through the renderer.
+  ///
+  /// Leaving the alternate screen is judged across the whole chunk, because a repaint there
+  /// goes through the normal screen on its way back.
+  private func render(
+    _ bytes: ArraySlice<UInt8>,
+    with sink: @MainActor (ArraySlice<UInt8>) -> Void
+  ) {
+    let wasOnAlternateScreen = isOnAlternateScreen
+    sink(bytes)
+    feed.consumed?(bytes.count)
+    if wasOnAlternateScreen, !isOnAlternateScreen { feed.leftAlternateScreen?() }
   }
 
   private func finish(with error: (any Error)?) {

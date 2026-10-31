@@ -33,6 +33,11 @@ public struct TerminalFeed: Sendable {
   ///
   /// `nil` for a pty and a herdr pane. Never waits: the session calls it as it renders.
   public var consumed: (@Sendable (Int) -> Void)?
+  /// Told when the emulator comes back to the normal screen, when the far side may never have
+  /// painted that screen.
+  ///
+  /// `nil` for a pty and a herdr pane. Never waits: the session calls it as it renders.
+  public var leftAlternateScreen: (@Sendable () -> Void)?
   /// Whether the far side is waiting to hear a size, so one must always come.
   ///
   /// See `TerminalSession.firstGridMeasured(_:)`.
@@ -47,6 +52,7 @@ public struct TerminalFeed: Sendable {
     click: (@Sendable (TerminalCell) async throws -> Void)? = nil,
     focus: (@Sendable (Bool) async throws -> Void)? = nil,
     consumed: (@Sendable (Int) -> Void)? = nil,
+    leftAlternateScreen: (@Sendable () -> Void)? = nil,
     awaitsFirstSize: Bool = false
   ) {
     self.output = output
@@ -57,6 +63,7 @@ public struct TerminalFeed: Sendable {
     self.click = click
     self.focus = focus
     self.consumed = consumed
+    self.leftAlternateScreen = leftAlternateScreen
     self.awaitsFirstSize = awaitsFirstSize
   }
 

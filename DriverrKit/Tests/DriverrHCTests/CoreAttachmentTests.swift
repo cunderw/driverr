@@ -12,14 +12,16 @@ struct CoreAttachmentTests {
 
   private func attached(
     _ stream: FakeCoreStream,
-    observe: Bool = false
+    observe: Bool = false,
+    history: Int = 0
   ) async throws -> (CoreAttachment, CoreConnection) {
     stream.replies["terminal.attach"] = .result(FakeCoreStream.attached(channel: 4))
     let connection = CoreConnection(stream: stream, callDeadline: patient)
     #expect(await connection.handshake() == .ready(version: "0.1.14"))
     let attachment = try await CoreAttachment.open(
       on: connection,
-      params: CoreAttachParams(terminal: "t7", cols: 80, rows: 24, observe: observe)
+      params: CoreAttachParams(
+        terminal: "t7", cols: 80, rows: 24, observe: observe, history: history)
     )
     return (attachment, connection)
   }
@@ -190,5 +192,140 @@ struct CoreAttachmentTests {
     #expect(frames <= total / CoreAttachment.creditBatch, "a CREDIT for less than a batch")
     _ = try await connection.call(
       "terminal.list", params: CoreNoParams(), as: CoreListResult.self)
+  }
+
+  // MARK: - What a first paint needs
+
+  /// The reset every paint opens with, as a core 0.1.15 wrote it.
+  private static let paintHead =
+    "\u{1b}[!p\u{1b}[?2026l\u{1b}[?9l\u{1b}[?1000l\u{1b}[?1001l\u{1b}[?1002l\u{1b}[?1003l"
+    + "\u{1b}[?1004l\u{1b}[?1005l\u{1b}[?1006l\u{1b}[?1015l\u{1b}[?1016l\u{1b}[?2004l"
+    + "\u{1b}[?1l\u{1b}[?66l\u{1b}[?2031l\u{1b}[?2048l\u{1b}[=0;1u"
+
+  private func text(of attachment: CoreAttachment) async throws -> String {
+    var iterator = attachment.output.makeAsyncIterator()
+    return String(decoding: try #require(try await iterator.next()), as: UTF8.self)
+  }
+
+  /// In SwiftTerm `?1049l` restores a cursor nothing saved, and the soft reset leaves the saved
+  /// autowrap off, so everything after a paint clips at the last column.
+  /// `TerminalSessionRawStreamTests` holds the emulator's half.
+  @Test("a paint leaves the alternate screen without restoring a cursor, at the same length")
+  func paintKeepsAutowrap() async throws {
+    let stream = FakeCoreStream()
+    let (attachment, _) = try await attached(stream)
+    let tail = "\u{1b}[?1047l\u{1b}[?47l\u{1b}[H\u{1b}[2J$ "
+
+    stream.writeMessage(Self.paintHead + "\u{1b}[?1049l" + tail, onChannel: 4)
+
+    #expect(try await text(of: attachment) == Self.paintHead + "\u{1b}[?1047l" + tail)
+  }
+
+  @Test("a program's own ?1049l in live output is left alone")
+  func liveOutputIsNotAPaint() async throws {
+    let stream = FakeCoreStream()
+    let (attachment, _) = try await attached(stream)
+
+    stream.writeMessage("bye\u{1b}[?1049l", onChannel: 4)
+
+    #expect(try await text(of: attachment) == "bye\u{1b}[?1049l")
+  }
+
+  private func paint(alternate: Bool) -> String {
+    Self.paintHead + "\u{1b}[?1049l\u{1b}[?1047l\u{1b}[?47l\u{1b}[H\u{1b}[2J"
+      + (alternate ? "\u{1b}[?1049h" : "") + "screen"
+  }
+
+  private func attachCount(_ stream: FakeCoreStream) -> Int {
+    stream.methods.filter { $0 == "terminal.attach" }.count
+  }
+
+  /// A paint on the alternate screen carries nothing of the normal one, so a shell behind `top`
+  /// comes back blank until a new attach paints it.
+  @Test("leaving a screen the stream painted on attaches again, with the history and the size")
+  func repaintAfterLeaving() async throws {
+    let stream = FakeCoreStream()
+    let (attachment, _) = try await attached(stream, history: 500)
+    var iterator = attachment.output.makeAsyncIterator()
+    try await attachment.resize(to: TerminalSize(columns: 50, rows: 21))
+    stream.writeMessage(paint(alternate: true), onChannel: 4)
+    _ = try #require(try await iterator.next())
+
+    stream.replies["terminal.attach"] = .after(
+      CoreFrame(channel: 5, kind: .data, payload: Data(paint(alternate: false).utf8)).encoded,
+      then: FakeCoreStream.attached(channel: 5)
+    )
+    attachment.leftAlternateScreen()
+
+    let repainted = try #require(try await iterator.next())
+    #expect(String(decoding: repainted, as: UTF8.self).hasSuffix("screen"))
+    let params = try #require(try stream.params(of: "terminal.attach").last)
+    #expect(params["cols"] as? Int == 50)
+    #expect(params["rows"] as? Int == 21)
+    #expect(params["history"] as? Int == 500)
+
+    // The new viewer is the stream now, and the old one is gone.
+    try await waitUntil("the old CLOSE") {
+      stream.streamFrames.contains { $0.channel == 4 && $0.kind == .close }
+    }
+    stream.writeMessage("late", onChannel: 4)
+    stream.writeMessage("next", onChannel: 5)
+    #expect(try await iterator.next() == Data("next".utf8))
+    try await attachment.send(text: "k")
+    #expect(stream.streamFrames.last == CoreFrame(channel: 5, kind: .data, payload: Data("k".utf8)))
+  }
+
+  /// The shell's history is already in the emulator, and a new attach would paint over a
+  /// screen that has nothing wrong with it.
+  @Test("leaving a screen the stream saw entered attaches nothing")
+  func noRepaintAfterALiveProgram() async throws {
+    let stream = FakeCoreStream()
+    let (attachment, connection) = try await attached(stream)
+    var iterator = attachment.output.makeAsyncIterator()
+    stream.writeMessage(paint(alternate: false), onChannel: 4)
+    _ = try #require(try await iterator.next())
+
+    attachment.leftAlternateScreen()
+
+    _ = try await connection.call(
+      "terminal.list", params: CoreNoParams(), as: CoreListResult.self)
+    #expect(attachCount(stream) == 1)
+  }
+
+  @Test("an observer repaints nothing, because nobody is looking at it")
+  func observerDoesNotRepaint() async throws {
+    let stream = FakeCoreStream()
+    let (attachment, connection) = try await attached(stream, observe: true)
+    var iterator = attachment.output.makeAsyncIterator()
+    stream.writeMessage(paint(alternate: true), onChannel: 4)
+    _ = try #require(try await iterator.next())
+
+    attachment.leftAlternateScreen()
+
+    _ = try await connection.call(
+      "terminal.list", params: CoreNoParams(), as: CoreListResult.self)
+    #expect(attachCount(stream) == 1)
+  }
+
+  /// One paint is one repaint: a later return to the normal screen has a screen to return to.
+  @Test("a second exit from the alternate screen attaches nothing more")
+  func oneRepaintPerPaint() async throws {
+    let stream = FakeCoreStream()
+    let (attachment, connection) = try await attached(stream)
+    var iterator = attachment.output.makeAsyncIterator()
+    stream.writeMessage(paint(alternate: true), onChannel: 4)
+    _ = try #require(try await iterator.next())
+    stream.replies["terminal.attach"] = .after(
+      CoreFrame(channel: 5, kind: .data, payload: Data(paint(alternate: false).utf8)).encoded,
+      then: FakeCoreStream.attached(channel: 5)
+    )
+
+    attachment.leftAlternateScreen()
+    _ = try #require(try await iterator.next())
+    attachment.leftAlternateScreen()
+
+    _ = try await connection.call(
+      "terminal.list", params: CoreNoParams(), as: CoreListResult.self)
+    #expect(attachCount(stream) == 2)
   }
 }

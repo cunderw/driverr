@@ -328,6 +328,32 @@ struct TerminalSceneModelTests {
     withExtendedLifetime(window) {}
   }
 
+  /// The emulator, the session and the scene's feed in one path, because a stream that painted
+  /// on the alternate screen depends on all three to get the normal screen back.
+  @Test("a real view leaving the alternate screen tells the viewer, once per exit")
+  func aRealViewReportsLeavingTheAlternateScreen() async throws {
+    let attacher = FakeCoreAttacher()
+    let (scene, _) = await coreScene(attacher)
+    scene.start()
+    await scene.settle()
+    let session = try #require(scene.currentSession)
+    let window = HostedProbe.window(
+      DriverrTerminalView(session: session, wantsKeyboardFocus: false))
+    await waitUntilSignalled("the attach") { !attacher.viewers.isEmpty }
+    let viewer = try #require(attacher.latest)
+
+    // A paint goes through the normal screen on its way to the alternate one.
+    viewer.paint("\u{1b}[?1047l\u{1b}[?1049h")
+    viewer.paint("top")
+    viewer.paint("\u{1b}[?1049l$ ")
+    await waitUntilSignalled("the exit") { viewer.leftAlternateScreenCount == 1 }
+
+    viewer.paint("more")
+    await waitUntilSignalled("the credit") { viewer.consumedByteCount >= 26 }
+    #expect(viewer.leftAlternateScreenCount == 1)
+    withExtendedLifetime(window) {}
+  }
+
   @Test("what is typed while the attach waits goes out behind it")
   func typingAheadOfTheAttach() async throws {
     let attacher = FakeCoreAttacher()

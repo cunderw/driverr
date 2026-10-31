@@ -59,6 +59,7 @@ extension TerminalFeed {
       close: {},
       focus: { try await raw.focus($0) },
       consumed: { raw.consumed($0) },
+      leftAlternateScreen: { raw.leftAlternateScreen() },
       awaitsFirstSize: true
     )
   }
