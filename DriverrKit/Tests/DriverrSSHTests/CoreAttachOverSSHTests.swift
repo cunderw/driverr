@@ -312,6 +312,29 @@ struct CoreAttachOverSSHTests {
     }
   }
 
+  /// The repaint is not the phone doing anything, so a desk holding the size keeps it.
+  @Test("a repaint leaves the size with the desk")
+  func repaintLeavesTheDeskItsSize() async throws {
+    try await withScratchCore(runs: "sh -c 'seq 1 300; top; exec sh'") { scratch in
+      try await Task.sleep(for: .milliseconds(500))
+      let (phone, output) = try await attach(scratch)
+      try await waitUntil("top's paint") { output.text.contains("\u{1b}[?1049h") }
+
+      let attacher = try #require(scratch.control.paneAttacher(for: scratch.paneID))
+      let desk = try await attacher.open(
+        terminalID: scratch.address, size: TerminalSize(columns: 100, rows: 30))
+      try await waitUntil("the desk's size") { try await size(of: scratch) == [100, 30] }
+
+      _ = try await scratch.hc("keys \(scratch.address) q")
+      try await waitUntil("top leaving") { output.text.contains("\u{1b}[?1049l") }
+      (phone as? any RawTerminalStream)?.leftAlternateScreen()
+      try await waitUntil("the shell's history") { output.text.contains("\r\n150\r\n") }
+
+      #expect(try await size(of: scratch) == [100, 30])
+      await desk.release()
+    }
+  }
+
   @Test("the composer types through a 0x0 viewer without moving the size")
   func composer() async throws {
     try await withScratchCore { scratch in

@@ -31,6 +31,8 @@ final class CoreAttachment: PaneBridge, PaneObserver, RawTerminalStream, @unchec
   private var generation = 0
   private var owedCredit = 0
   private var isReleased = false
+  private var repainting: Task<Void, Never>?
+  private var isRepainting = false
 
   private init(
     delivery: CoreViewerDelivery,
@@ -126,13 +128,23 @@ final class CoreAttachment: PaneBridge, PaneObserver, RawTerminalStream, @unchec
   ///
   /// The core skips a shell's screen and history in a paint on the alternate screen, so the
   /// emulator has nothing behind `top`. Only a paint brings them back, and only an attach
-  /// brings a paint. A stream that saw the program start has it all already.
+  /// brings a paint. A stream that saw the program start and kept up has it all already.
   func leftAlternateScreen() {
     guard !isObserver, delivery.takePaintedAlternateScreen() else { return }
-    Task { await repaint() }
+    let running = Task { await repaint() }
+    lock.withLock { repainting = running }
+  }
+
+  /// Returns once any repaint under way has finished, so a test can say that none happened.
+  func repaintSettled() async {
+    await lock.withLock { repainting }?.value
   }
 
   /// A second channel into the same output, so the emulator and its keyboard stay as they are.
+  ///
+  /// `resumed`, because the phone did nothing: a desk that typed since keeps the size. No
+  /// history when the emulator already has it, which a repaint for falling behind leaves it
+  /// holding, or it would print twice.
   ///
   /// The old channel delivers until the new one's first frame, whose paint covers anything cut
   /// off. If the attach is refused, the old channel stays and the screen stays blank until the
@@ -141,38 +153,50 @@ final class CoreAttachment: PaneBridge, PaneObserver, RawTerminalStream, @unchec
     let next: (params: CoreAttachParams, generation: Int)? = lock.withLock {
       guard !isReleased else { return nil }
       generation += 1
-      return (params, generation)
+      isRepainting = true
+      var repaint = params
+      repaint.resumed = true
+      if delivery.holdsHistory { repaint.history = 0 }
+      return (repaint, generation)
     }
-    guard let next,
-      let opened = try? await connection.openChannel(
-        "terminal.attach",
-        params: next.params,
-        as: CoreAttachResult.self,
-        handler: delivery.handler(generation: next.generation)
-      )
-    else { return }
+    guard let next else { return }
 
-    let unused: UInt32 = lock.withLock {
-      guard !isReleased else { return opened.channel }
-      defer {
-        channel = opened.channel
-        owedCredit = 0
-      }
-      return channel
+    let opened = try? await connection.openChannel(
+      "terminal.attach",
+      params: next.params,
+      as: CoreAttachResult.self,
+      handler: delivery.handler(generation: next.generation)
+    )
+    let settled: (unused: UInt32?, credit: Int?) = lock.withLock {
+      isRepainting = false
+      guard let opened else { return (nil, nil) }
+      guard !isReleased else { return (opened.channel, nil) }
+      defer { channel = opened.channel }
+      return (channel, takeDueCredit())
     }
-    await connection.closeChannel(unused)
+    guard let opened else { return }
+    if let credit = settled.credit { await connection.credit(credit, toChannel: opened.channel) }
+    if let unused = settled.unused { await connection.closeChannel(unused) }
   }
 
   func consumed(_ bytes: Int) {
     let due: (bytes: Int, channel: UInt32)? = lock.withLock {
       guard !isReleased else { return nil }
       owedCredit += bytes
-      guard owedCredit >= Self.creditBatch else { return nil }
-      defer { owedCredit = 0 }
-      return (owedCredit, channel)
+      // Held while the channel is changing: the new paint's bytes are already being rendered,
+      // and credit for them sent to the old channel would be lost to the new one's window.
+      guard !isRepainting, let credit = takeDueCredit() else { return nil }
+      return (credit, channel)
     }
     guard let due else { return }
     Task { [connection] in await connection.credit(due.bytes, toChannel: due.channel) }
+  }
+
+  /// A whole batch of what is owed, if there is one. Call with `lock` held.
+  private func takeDueCredit() -> Int? {
+    guard owedCredit >= Self.creditBatch else { return nil }
+    defer { owedCredit = 0 }
+    return owedCredit
   }
 
   func release() async {
@@ -197,6 +221,7 @@ private final class CoreViewerDelivery: @unchecked Sendable {
   private let lock = NSLock()
   private var generation = 0
   private var paintedAlternateScreen = false
+  private var paintedNormalScreen = false
 
   init() {
     (output, continuation) = AsyncThrowingStream.makeStream(
@@ -208,6 +233,9 @@ private final class CoreViewerDelivery: @unchecked Sendable {
   func finish() {
     continuation.finish()
   }
+
+  /// Whether a paint has given the emulator the normal screen, and with it the history.
+  var holdsHistory: Bool { lock.withLock { paintedNormalScreen } }
 
   /// Answers once for each paint on the alternate screen.
   func takePaintedAlternateScreen() -> Bool {
@@ -249,7 +277,10 @@ private final class CoreViewerDelivery: @unchecked Sendable {
 
   private func prepared(_ bytes: Data) -> Data {
     guard let paint = CorePaint(bytes) else { return bytes }
-    lock.withLock { paintedAlternateScreen = paint.isOnAlternateScreen }
+    lock.withLock {
+      paintedAlternateScreen = paint.isOnAlternateScreen
+      if !paint.isOnAlternateScreen { paintedNormalScreen = true }
+    }
     return paint.bytes
   }
 }
