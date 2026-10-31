@@ -105,7 +105,16 @@ struct TerminalDragRouteTests {
     #expect(dragged(.up, lines: 2, after: output) == expected)
   }
 
-  /// `TerminalMouseClick`'s gate: X10 reports presses of real buttons, and a wheel is not one.
+  /// herdr's order: reporting comes before the screen, so a program in the normal screen that
+  /// asked for the mouse, such as Claude Code without fullscreen, gets the wheel too.
+  @Test("a mouse mode on the normal screen takes a drag as the wheel")
+  func normalScreenMouseModeTakesTheWheel() {
+    let (terminal, _) = terminal(after: shellOutput + "\u{1b}[?1000h\u{1b}[?1006h")
+    #expect(TerminalDragRoute.route(for: terminal) == .wheel)
+  }
+
+  /// X10 reports presses of real buttons. Ghostty's encoder drops a wheel there, so herdr sends
+  /// nothing, and the scrollback stays reachable here.
   @Test("X10 mode on the normal screen stays local")
   func x10StaysLocal() {
     let (terminal, _) = terminal(after: "\u{1b}[?9h")
