@@ -71,8 +71,8 @@ public protocol PaneObserver: Sendable {
 
 /// A pane whose bytes are the program's own, with no frames around them.
 ///
-/// herdr-core's attach stream, and so a pane that behaves like a pty: its history is in the
-/// local emulator and a tap is encoded locally. A `PaneBridge` or `PaneObserver` that is also
+/// herdr-core's attach stream, and so a pane that behaves like a pty: the local emulator holds
+/// its history and modes, so a drag and a tap are worked out here. A `PaneBridge` or `PaneObserver` that is also
 /// this says so, and the feed built from it has no `scroll` or `click`.
 public protocol RawTerminalStream: Sendable {
   /// This many bytes have reached the emulator, so the far side may send more.

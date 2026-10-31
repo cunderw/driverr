@@ -15,8 +15,9 @@ public struct TerminalFeed: Sendable {
   public var close: @Sendable () async -> Void
   /// How to scroll, when scrolling is **not** this side's job.
   ///
-  /// `nil` for a pty, whose scrollback lives in the local emulator. A herdr pane's history
-  /// lives in herdr, so a drag becomes a message sent through this.
+  /// A herdr pane's history lives in herdr, so a drag becomes a message sent through this.
+  /// `nil` for a pty or a core terminal: the emulator holds the scrollback, and a full-screen
+  /// program holds its own, so a drag goes where `TerminalDragRoute` says.
   public var scroll: (@Sendable (ScrollDirection, Int) async throws -> Void)?
   /// Where a tap's click goes, when the far side decides whether it is one.
   ///

@@ -29,15 +29,18 @@ struct TerminalMouseReportingTests {
     private var _clicks: [TerminalCell] = []
     var text: String { lock.withLock { String(decoding: _bytes, as: UTF8.self) } }
     var clicks: [TerminalCell] { lock.withLock { _clicks } }
-    func record(_ data: Data) { lock.withLock { _bytes.append(data) } }
+    func record(_ data: Data) {
+      lock.withLock { _bytes.append(data) }
+      Waker.signalShared()
+    }
     func record(_ click: TerminalCell) { lock.withLock { _clicks.append(click) } }
   }
 
   /// A terminal built by `DriverrTerminalView` in a key window, and the pans it starts with.
   ///
-  /// The baseline is asserted, not assumed: a PTY has the scroll view's own pan and nothing
-  /// else, and a pane adds the remote-scroll pan. A SwiftTerm update that installs another
-  /// pan at rest fails here first, before a case compares a count against it.
+  /// The baseline is asserted, not assumed: the scroll view's own pan and the drag pan. A
+  /// SwiftTerm update that installs another pan at rest fails here first, before a case
+  /// compares a count against it.
   @MainActor
   private struct Hosted {
     let window: UIWindow
@@ -75,7 +78,7 @@ struct TerminalMouseReportingTests {
     )
     let view = try #require(Self.terminal(in: window))
     let baseline = (view.gestureRecognizers ?? []).filter { $0 is UIPanGestureRecognizer }
-    #expect(baseline.count == (pane ? 2 : 1))
+    #expect(baseline.count == 2)
     return Hosted(window: window, view: view, baseline: baseline, farSide: farSide) {
       continuation.finish()
     }
@@ -106,7 +109,8 @@ struct TerminalMouseReportingTests {
     }
   }
 
-  /// The remote asking for mouse events must not add a pan that takes the drag.
+  /// The remote asking for mouse events must not add SwiftTerm's pan, which would take the
+  /// drag and send it as motion reports.
   @Test("a mouse mode from the far side adds no pan", arguments: [false, true])
   func mouseModeAddsNoPan(pane: Bool) async throws {
     let hosted = try hosted(pane: pane)
@@ -206,8 +210,7 @@ struct TerminalMouseReportingTests {
   /// A pane's remote-scroll pan accepts a trackpad and a mouse wheel, not only a touch.
   ///
   /// The pane turns the scroll view's own pan off, so this pan is the only thing on a pane
-  /// that can take indirect scroll. A `UIPanGestureRecognizer` takes none by default. A PTY
-  /// needs nothing: its scroll view's own pan is its only pan, which the baseline pins.
+  /// that can take indirect scroll. A `UIPanGestureRecognizer` takes none by default.
   ///
   /// This asserts the mask and not the scroll itself, because no in-process API creates a
   /// scroll `UIEvent`. The wheel and the trackpad are checked on a device.
@@ -220,6 +223,78 @@ struct TerminalMouseReportingTests {
       hosted.baseline.first { $0 !== hosted.view.panGestureRecognizer } as? UIPanGestureRecognizer
     )
     #expect(remoteScroll.allowedScrollTypesMask == .all)
+    withExtendedLifetime(hosted.window) {}
+  }
+
+  /// What Claude Code paints with `"tui": "fullscreen"`, as a core relayed it.
+  private nonisolated static let fullscreenProgram =
+    "\u{1b}[?1049h\u{1b}[?1000h\u{1b}[?1002h\u{1b}[?1003h\u{1b}[?1004h\u{1b}[?1006h"
+
+  /// The alternate screen has no scrollback, so the scroll view has nothing to move, and a
+  /// drag does nothing unless the pan has it. The way back is pinned too, because a shell left
+  /// with the scroll view off could never reach its history again.
+  @Test(
+    "a full-screen program takes the drag from the scroll view, and leaving gives it back",
+    arguments: [Self.fullscreenProgram, "\u{1b}[?1049h", "\u{1b}[?1000h"]
+  )
+  func programTakesTheDrag(output: String) throws {
+    let hosted = try hosted(pane: false)
+    defer { hosted.finish() }
+    let dragPan = try #require(hosted.view.dragPan)
+    #expect(hosted.view.isScrollEnabled)
+    #expect(!dragPan.isEnabled)
+
+    hosted.view.feed(text: output)
+    #expect(!hosted.view.isScrollEnabled)
+    #expect(dragPan.isEnabled)
+
+    hosted.view.feed(text: "\u{1b}[?1049l\u{1b}[?1003l\u{1b}[?1002l\u{1b}[?1000l")
+    #expect(hosted.view.isScrollEnabled)
+    #expect(!dragPan.isEnabled)
+    withExtendedLifetime(hosted.window) {}
+  }
+
+  /// herdr's `wheel_routing` already does this for a pane, on its side of `terminal.scroll`.
+  @Test("a pane's drag stays herdr's, whatever the program does")
+  func paneIgnoresTheRoute() throws {
+    let hosted = try hosted(pane: true)
+    defer { hosted.finish() }
+    let dragPan = try #require(hosted.view.dragPan)
+
+    let leaving = "\u{1b}[?1049l\u{1b}[?1003l\u{1b}[?1002l\u{1b}[?1000l"
+    for output in [Self.fullscreenProgram, leaving] {
+      hosted.view.feed(text: output)
+      #expect(!hosted.view.isScrollEnabled)
+      #expect(dragPan.isEnabled)
+    }
+    withExtendedLifetime(hosted.window) {}
+  }
+
+  /// From where `handleDrag` hands over, with the location a touch would give. A pan reports
+  /// no translation without real touches, and `RemoteScrollAccumulatorTests` covers the rows.
+  @Test(
+    "a drag reaches the program as wheel events under the finger, one per row",
+    .timeLimit(.minutes(1)),
+    arguments: [(3, "\u{1b}[<64;10;5M"), (-3, "\u{1b}[<65;10;5M")]
+  )
+  func dragReachesTheProgram(lines: Int, report: String) async throws {
+    let hosted = try hosted(pane: false)
+    defer { hosted.finish() }
+    let view = hosted.view
+    // Not `fullscreenProgram`: on this feed its `?1004h` draws SwiftTerm's own focus report.
+    view.feed(text: "\u{1b}[?1049h\u{1b}[?1000h\u{1b}[?1006h")
+    let dragPan = try #require(view.dragPan)
+    let coordinator = try #require(view.terminalDelegate as? DriverrTerminalView.Coordinator)
+
+    let grid = view.getOptimalFrameSize()
+    let cellWidth = grid.width / CGFloat(view.getTerminal().cols)
+    let cellHeight = grid.height / CGFloat(view.getTerminal().rows)
+    view.tapLocation = { _, _ in CGPoint(x: cellWidth * 9.5, y: cellHeight * 4.5) }
+
+    coordinator.deliverDrag(lines: lines, from: dragPan, in: view)
+
+    await waitUntilSignalled("the wheel") { hosted.farSide.text.count >= report.count * 3 }
+    #expect(hosted.farSide.text == String(repeating: report, count: 3))
     withExtendedLifetime(hosted.window) {}
   }
 

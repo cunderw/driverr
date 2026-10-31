@@ -88,20 +88,25 @@
       view.focusChanged = { [session] in session.focus($0) }
       view.firstLayout = { [coordinator = context.coordinator] in coordinator.firstLayout(of: $0) }
 
-      // A pane's history lives in herdr, so a drag becomes `terminal.scroll` and the
-      // scroll view is turned off. A pty keeps SwiftTerm's local scrollback.
+      // A pane's history lives in herdr, so a drag becomes `terminal.scroll` and the scroll
+      // view is turned off for good. On a feed with no `scroll`, a drag is the scroll view's
+      // while the emulator has scrollback, and this pan's while the program owns the history.
+      // See `DriverrTerminalUIView.applyDragRoute()`.
+      let pan = UIPanGestureRecognizer(
+        target: context.coordinator,
+        action: #selector(Coordinator.handleDrag(_:))
+      )
+      // Trackpad and mouse wheel too. A pan takes no indirect scroll by default, and with the
+      // scroll view off this is the only pan.
+      pan.allowedScrollTypesMask = .all
+      view.addGestureRecognizer(pan)
+      view.dragPan = pan
+      context.coordinator.draggedView = view
       if session.scrollsRemotely {
         view.isScrollEnabled = false
-        let pan = UIPanGestureRecognizer(
-          target: context.coordinator,
-          action: #selector(Coordinator.handleRemoteScroll(_:))
-        )
-        // Trackpad and mouse wheel too. A pan takes no indirect scroll by default, and
-        // this is the only pan on a pane.
-        pan.allowedScrollTypesMask = .all
-        view.addGestureRecognizer(pan)
-        view.remoteScrollPan = pan
-        context.coordinator.scrolledView = view
+      } else {
+        view.followsDragRoute = true
+        view.applyDragRoute()
       }
       // A tap is also a click, for a program that asked for mouse reports. It targets
       // SwiftTerm's own single-tap recogniser, because a second one would need its own
@@ -201,8 +206,8 @@
     public final class Coordinator: NSObject, TerminalViewDelegate {
       let session: TerminalSession
       var lastFocusRequest = 0
-      /// The view a remote scroll is measured against. Only set for a pane.
-      weak var scrolledView: DriverrTerminalUIView?
+      /// The view a drag is measured against.
+      weak var draggedView: DriverrTerminalUIView?
       /// The view whose single tap `handleTap` turns into a click.
       weak var tappedView: DriverrTerminalUIView?
       /// Vertical drag not yet spent on a whole row.
@@ -214,12 +219,12 @@
         self.session = session
       }
 
-      /// Turns a drag into `terminal.scroll`, in rows at the drawn cell height, because
-      /// herdr scrolls by lines. Gesture actions run on the main thread, so `@MainActor`
-      /// adds no hop.
+      /// Turns a drag into `terminal.scroll`, or into what `TerminalDragRoute` says the
+      /// program takes, in rows at the drawn cell height, because both move by lines. Gesture
+      /// actions run on the main thread, so `@MainActor` adds no hop.
       @MainActor
-      @objc func handleRemoteScroll(_ gesture: UIPanGestureRecognizer) {
-        guard let view = scrolledView else { return }
+      @objc func handleDrag(_ gesture: UIPanGestureRecognizer) {
+        guard let view = draggedView else { return }
         let rows = max(view.getTerminal().rows, 1)
         let cellHeight = max(view.bounds.height / CGFloat(rows), 1)
         let lines: Int
@@ -244,10 +249,32 @@
           return
         }
         guard lines != 0 else { return }
+        deliverDrag(lines: lines, from: gesture, in: view)
+      }
 
-        // Dragging down reveals older output, as in a scroll view. Handed over
-        // synchronously so rows keep the order the finger made them.
-        session.scroll(lines > 0 ? .up : .down, lines: abs(lines))
+      /// Hands whole rows of a drag to whoever takes them. Positive is down the screen, which
+      /// reveals older output, as in a scroll view. Synchronous, so rows keep the order the
+      /// finger made them. `internal` so a hosted test can reach it: a pan reports no
+      /// translation without real touches.
+      @MainActor
+      func deliverDrag(
+        lines: Int,
+        from gesture: UIGestureRecognizer,
+        in view: DriverrTerminalUIView
+      ) {
+        let direction: ScrollDirection = lines > 0 ? .up : .down
+        if session.scrollsRemotely {
+          session.scroll(direction, lines: abs(lines))
+        } else if let at = view.position(of: gesture) {
+          TerminalDragRoute.send(
+            direction,
+            lines: abs(lines),
+            at: at.cell,
+            pixelX: at.pixelX,
+            pixelY: at.pixelY,
+            to: view.getTerminal()
+          )
+        }
       }
 
       /// Sends a single tap to the far side as a left click.
@@ -346,9 +373,24 @@
     /// Bounded, cancellable, and tested one tier down. See `FocusRetryPolicy`.
     private let focusRetry = FocusRetryPolicy()
 
-    /// A pane's drag-to-scroll recogniser, installed by `DriverrTerminalView.makeUIView`.
-    /// Kept so `gestureRecognizerShouldBegin` can tell it from SwiftTerm's selection pan.
-    weak var remoteScrollPan: UIPanGestureRecognizer?
+    /// The drag recogniser installed by `DriverrTerminalView.makeUIView`. Kept so
+    /// `gestureRecognizerShouldBegin` can tell it from SwiftTerm's selection pan.
+    weak var dragPan: UIPanGestureRecognizer?
+
+    /// Whether a drag depends on what the program is doing. False for a pane, whose drag is
+    /// always `terminal.scroll`. Set before any byte is fed, in `makeUIView`.
+    var followsDragRoute = false
+
+    /// Gives the drag to the scroll view or to `dragPan`, as `TerminalDragRoute` says.
+    ///
+    /// **Only from `mouseModeChanged` and `bufferActivated`, and only on a change.** Touching
+    /// `isScrollEnabled` from inside a gesture cancels the gesture.
+    func applyDragRoute() {
+      guard followsDragRoute, let dragPan else { return }
+      let isLocal = TerminalDragRoute.route(for: getTerminal()) == .localScrollback
+      if isScrollEnabled != isLocal { isScrollEnabled = isLocal }
+      if dragPan.isEnabled == isLocal { dragPan.isEnabled = !isLocal }
+    }
 
     /// Selection belongs to the phone, whatever mouse mode the far side asks for.
     ///
@@ -365,12 +407,20 @@
       allowMouseReporting = false
     }
 
-    /// Does nothing, deliberately: no mouse pan, whatever mouse mode the far side sets.
+    /// Adds no mouse pan, whatever mouse mode the far side sets.
     ///
     /// SwiftTerm's version adds a pan whenever the mouse mode is not `.off`, and ignores
-    /// `allowMouseReporting`. That pan takes the drag from the scroll view, so a PTY on a
-    /// host running herdr would not scroll.
-    override public func mouseModeChanged(source: Terminal) {}
+    /// `allowMouseReporting`. That pan takes the drag and sends it as motion reports, so a
+    /// PTY on a host running herdr would not scroll. A drag goes by `applyDragRoute()`.
+    override public func mouseModeChanged(source: Terminal) {
+      applyDragRoute()
+    }
+
+    /// The alternate screen came or went, and with it the emulator's scrollback.
+    override public func bufferActivated(source: Terminal) {
+      super.bufferActivated(source: source)
+      applyDragRoute()
+    }
 
     /// Refuses SwiftTerm's selection pan while there is no selection.
     ///
@@ -429,6 +479,13 @@
     )? {
       defer { tapMayClick = false }
       guard tapMayClick else { return nil }
+      return position(of: gesture)
+    }
+
+    /// The cell and device-pixel position under a gesture, or `nil` above the live screen.
+    func position(of gesture: UIGestureRecognizer) -> (
+      cell: TerminalCell, pixelX: Int, pixelY: Int
+    )? {
       let terminal = getTerminal()
       let grid = getOptimalFrameSize()
       let cellHeight = Double(grid.height) / Double(max(terminal.rows, 1))
@@ -474,7 +531,7 @@
 
     private func isSelectionPan(_ recognizer: UIGestureRecognizer) -> Bool {
       recognizer is UIPanGestureRecognizer && recognizer.view === self
-        && recognizer !== panGestureRecognizer && recognizer !== remoteScrollPan
+        && recognizer !== panGestureRecognizer && recognizer !== dragPan
     }
 
     /// Receives first-responder and keyboard-frame changes. `DriverrTerminalView.makeUIView`

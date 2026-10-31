@@ -3,8 +3,8 @@ import SwiftTerm
 
 /// A tap as a left click, for a program on a PTY that asked for mouse reports.
 ///
-/// `allowMouseReporting` is off so selection and scrolling stay on the phone, which also
-/// stops SwiftTerm's tap from reaching the program. This sends that click and nothing
+/// `allowMouseReporting` is off so selection stays on the phone, which also stops SwiftTerm's
+/// tap from reaching the program. This sends that click and nothing
 /// else. A herdr pane's click goes through `TerminalFeed.click` instead.
 enum TerminalMouseClick {
   /// Sends a press and a release at `cell` if the program asked for button events, and

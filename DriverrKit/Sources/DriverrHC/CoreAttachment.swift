@@ -132,8 +132,8 @@ final class CoreAttachment: PaneBridge, PaneObserver, RawTerminalStream, @unchec
     try await connection.write(.resize, payload, toChannel: channel)
   }
 
-  /// Scrollback is local, and a tap goes through `TerminalMouseClick`, so a feed over this has
-  /// neither closure and these are never reached. `PaneBridge` asks for them.
+  /// A drag goes by `TerminalDragRoute` and a tap through `TerminalMouseClick`, so a feed over
+  /// this has neither closure and these are never reached. `PaneBridge` asks for them.
   func scroll(_ direction: ScrollDirection, lines: Int) async throws {}
   func click(_ cell: TerminalCell) async throws {}
 
