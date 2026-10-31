@@ -11,6 +11,20 @@ public protocol HerdrControl: Sendable {
   /// at this boundary so nothing downstream has to join ids.
   func snapshot() async throws -> SessionTree
 
+  /// A signal that `changedSnapshot()` would answer differently, or `nil` for a control that
+  /// cannot know without being asked.
+  ///
+  /// Each read of this starts a new stream and ends the last, because a stream ends for good
+  /// with the task reading it. One listener at a time.
+  var changes: AsyncStream<Void>? { get }
+
+  /// Whether `snapshot()` is the only way this control finds out, so it has to be asked on a
+  /// timer. `false` means `changes` covers everything.
+  var needsPolling: Bool { get }
+
+  /// The tree after a signal from `changes`, at whatever cost that signal saved.
+  func changedSnapshot() async throws -> SessionTree
+
   /// The command that puts one pane's live terminal on a PTY.
   ///
   /// Returned as a string, because attaching needs a PTY, which the app opens. Takes the
@@ -95,6 +109,9 @@ public protocol HerdrControl: Sendable {
 }
 
 extension HerdrControl {
+  public var changes: AsyncStream<Void>? { nil }
+  public var needsPolling: Bool { true }
+  public func changedSnapshot() async throws -> SessionTree { try await snapshot() }
   public func bound(toSocketPath path: String?) -> any HerdrControl { self }
   public func paneAttacher(for paneID: String) -> (any PaneAttacher)? { nil }
 }

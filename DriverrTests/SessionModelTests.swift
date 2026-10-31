@@ -70,6 +70,84 @@ private final class PollRecorder {
   }
 }
 
+/// A host that says when it changed, as a core does.
+private actor PushingControl: HerdrControl {
+  private final class Listener: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: AsyncStream<Void>.Continuation?
+
+    func listen() -> AsyncStream<Void> {
+      let (stream, continuation) = AsyncStream.makeStream(
+        of: Void.self, bufferingPolicy: .bufferingNewest(1))
+      lock.withLock { self.continuation = continuation }
+      return stream
+    }
+
+    func signal() {
+      lock.withLock { _ = continuation?.yield() }
+    }
+  }
+
+  private let listener = Listener()
+  private var read: Result<SessionTree, AppError>
+  private var gate: CheckedContinuation<Void, Never>?
+  private var holdsChangedReads = false
+  private(set) var snapshots = 0
+  private(set) var changedSnapshots = 0
+
+  nonisolated var changes: AsyncStream<Void>? { listener.listen() }
+  nonisolated var needsPolling: Bool { false }
+  nonisolated var binaryPath: String { "hc" }
+
+  init(_ tree: SessionTree = .empty) {
+    read = .success(tree)
+  }
+
+  func moved(to read: Result<SessionTree, AppError>) {
+    self.read = read
+  }
+
+  nonisolated func signal() {
+    listener.signal()
+  }
+
+  /// The next changed read waits for `release()`.
+  func holdChangedReads() {
+    holdsChangedReads = true
+  }
+
+  var isHoldingARead: Bool { gate != nil }
+
+  func release() {
+    holdsChangedReads = false
+    gate?.resume()
+    gate = nil
+  }
+
+  func snapshot() async throws -> SessionTree {
+    snapshots += 1
+    return try read.get()
+  }
+
+  func changedSnapshot() async throws -> SessionTree {
+    changedSnapshots += 1
+    if holdsChangedReads {
+      await withCheckedContinuation { gate = $0 }
+    }
+    return try read.get()
+  }
+
+  nonisolated func attachCommand(for pane: Pane) -> String { "" }
+  func availability() async -> HerdrAvailability { .coreReady(version: "0.1.15") }
+  func sendText(paneID: String, text: String) async throws {}
+  func submitText(paneID: String, text: String) async throws {}
+  func sendKeys(paneID: String, keys: [PaneKey]) async throws {}
+  func readPanes(ids: [String], lines: Int) async throws -> [String: [String]] { [:] }
+  func readScreen(of pane: Pane, lines: Int) async throws -> PaneScreen { .blank }
+  func perform(_ action: PaneAction, on paneID: String) async throws {}
+  func rename(_ target: RenameTarget, to label: String) async throws {}
+}
+
 /// The polling loop. herdr has no reachable subscription API (see `SessionModel.pollInterval`),
 /// so the loop has to start, repeat, stop, and never run twice over the same host.
 @MainActor
@@ -94,6 +172,163 @@ struct SessionModelTests {
   /// Several ticks long, used only where the claim is that something did not happen, which a
   /// slow machine makes hold.
   private let settle = Duration.milliseconds(200)
+
+  /// A wait on the fake's own state, which `Task.sleep` lets `.timeLimit` stop.
+  private func until(_ condition: () async -> Bool) async throws {
+    while !(await condition()) { try await Task.sleep(for: .milliseconds(1)) }
+  }
+
+  private func oneTerminal(_ id: String = "core:t1") -> SessionTree {
+    SessionTree(
+      workspaces: [
+        Workspace(
+          id: "core:workspace",
+          number: 1,
+          label: "herdr-core",
+          tabs: [
+            DriverrCore.Tab(
+              id: "core:tab",
+              workspaceID: "core:workspace",
+              number: 1,
+              label: "Terminals",
+              panes: [Pane(id: id, tabID: "core:tab", workspaceID: "core:workspace", title: id)]
+            )
+          ]
+        )
+      ]
+    )
+  }
+
+  /// Started and through its first reads, with `polls` counting from here.
+  private func listening(_ control: PushingControl) async -> (SessionModel, PollRecorder) {
+    let (model, polls) = live(control, pollInterval: .seconds(30))
+    model.startLiveUpdates()
+    await polls.waitForPolls(2)
+    return (model, polls)
+  }
+
+  @Test("a pushed change is read at once, with no tick to wait for")
+  func pushed() async {
+    let control = PushingControl(oneTerminal())
+    let (model, polls) = await listening(control)
+    defer { model.stopLiveUpdates() }
+
+    await control.moved(to: .success(oneTerminal("core:t2")))
+    control.signal()
+
+    await polls.waitForPolls(polls.completed + 1)
+    #expect(model.tree.allPanes.map(\.id) == ["core:t2"])
+  }
+
+  @Test("a pushed change does not put the sidebar back into loading")
+  func pushedKeepsItsState() async throws {
+    let control = PushingControl(oneTerminal())
+    let (model, polls) = await listening(control)
+    defer { model.stopLiveUpdates() }
+
+    await control.holdChangedReads()
+    control.signal()
+    try await until { await control.isHoldingARead }
+
+    #expect(!model.isLoading)
+    #expect(model.state == .loaded(oneTerminal()))
+
+    let done = polls.completed
+    await control.release()
+    await polls.waitForPolls(done + 1)
+  }
+
+  @Test("a host that pushes is not polled while it answers")
+  func pushedIsNotPolled() async throws {
+    let control = PushingControl(oneTerminal())
+    let (model, polls) = live(control, pollInterval: interval)
+    model.startLiveUpdates()
+    defer { model.stopLiveUpdates() }
+    await polls.waitForPolls(2)
+
+    try await Task.sleep(for: settle)
+    #expect(await control.snapshots == 1)
+    #expect(await control.changedSnapshots == 1)
+  }
+
+  /// With nothing pushing there is nothing else to ask again, and once a read works there is
+  /// nothing to poll for.
+  @Test("a failed read starts the timer, and the first read that works stops it")
+  func failureIsPolled() async throws {
+    let control = PushingControl(oneTerminal())
+    let (model, polls) = live(control, pollInterval: interval)
+    model.startLiveUpdates()
+    defer { model.stopLiveUpdates() }
+    await polls.waitForPolls(2)
+
+    await control.moved(to: .failure(.channelFailed(reason: "the link went")))
+    control.signal()
+    try await until { model.failure != nil }
+    let snapshotsAtFailure = await control.snapshots
+    try await until { await control.snapshots >= snapshotsAtFailure + 2 }
+
+    await control.moved(to: .success(oneTerminal("core:t2")))
+    try await until { model.failure == nil }
+    #expect(model.tree.allPanes.map(\.id) == ["core:t2"])
+
+    try await Task.sleep(for: settle)
+    let settled = await control.snapshots
+    try await Task.sleep(for: settle)
+    #expect(await control.snapshots == settled)
+  }
+
+  /// `AsyncStream` ends with the task reading it, and a pause cancels that task.
+  @Test("a change is heard after a pause and a restart, and what happened between is read")
+  func pushedAfterARestart() async {
+    let control = PushingControl(oneTerminal())
+    let (model, polls) = await listening(control)
+    defer { model.stopLiveUpdates() }
+
+    model.pausePolling()
+    await control.moved(to: .success(oneTerminal("core:t2")))
+    model.startLiveUpdates()
+    await polls.waitForPolls(polls.completed + 1)
+    #expect(model.tree.allPanes.map(\.id) == ["core:t2"])
+
+    await control.moved(to: .success(oneTerminal("core:t3")))
+    control.signal()
+    await polls.waitForPolls(polls.completed + 1)
+    #expect(model.tree.allPanes.map(\.id) == ["core:t3"])
+  }
+
+  @Test("changes during a read wait for it, and go once")
+  func changedDuringARead() async throws {
+    let control = PushingControl(oneTerminal())
+    let (model, polls) = await listening(control)
+    defer { model.stopLiveUpdates() }
+
+    await control.holdChangedReads()
+    control.signal()
+    try await until { await control.isHoldingARead }
+    let readsAtHold = await control.changedSnapshots
+
+    await control.moved(to: .success(oneTerminal("core:t2")))
+    control.signal()
+    control.signal()
+    try await Task.sleep(for: settle)
+    #expect(await control.changedSnapshots == readsAtHold)
+
+    let done = polls.completed
+    await control.release()
+    await polls.waitForPolls(done + 2)
+    #expect(model.tree.allPanes.map(\.id) == ["core:t2"])
+    #expect(await control.changedSnapshots == readsAtHold + 1)
+  }
+
+  @Test("a control that cannot push is polled as before")
+  func notPushed() async {
+    let control = FakeControl()
+    let (model, polls) = live(control, pollInterval: interval)
+    model.startLiveUpdates()
+    defer { model.stopLiveUpdates() }
+    await polls.waitForPolls(3)
+    #expect(await control.snapshotCount >= 3)
+  }
 
   @Test("a first read happens immediately rather than after one interval")
   func loadsBeforeWaiting() async {

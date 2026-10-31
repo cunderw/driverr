@@ -6,9 +6,9 @@ import Foundation
 /// herdr-core has no `agent_session`. Claude Code keeps a `<pid>.json` per running process
 /// under `~/.claude/sessions`, and rewrites its `sessionId` on `/clear` and on resume, so the
 /// foreground pid names the session even with two Claudes in one folder. This reads that over
-/// the core's `file.read` on every poll, because a host command in the reader would let a
-/// failed read replace an exact page with the directory's newest file, and `/clear` would wait
-/// for the reader's next re-resolve.
+/// the core's `file.read`, whenever `CoreEventState` says a terminal's may have moved, because a
+/// host command in the reader would let a failed read replace an exact page with the directory's
+/// newest file, and `/clear` would wait for the reader's next re-resolve.
 ///
 /// **The file is Claude Code's, not a contract.** Anything wrong with it leaves a terminal
 /// with no id, and the reader falls back to its directory match. A file that reads but whose
@@ -33,20 +33,22 @@ actor CoreSessionFiles {
     self.home = home
   }
 
-  /// Each local Claude terminal's session id, by address.
+  /// Each local Claude terminal's session id, by address, after reading those in `addresses`.
   ///
-  /// A failed read keeps that terminal's last good id, as `CoreLink.settled` keeps the last
-  /// document, so one bad poll cannot move an open chat onto a guess. This also covers Claude
-  /// running something in the foreground, when the pid is not Claude's. An id goes when its
-  /// terminal leaves or stops being Claude.
+  /// Every other id stands, as does the last good id of a read that failed, as
+  /// `CoreEventFeed` keeps the last document, so one bad read cannot move an open chat onto a
+  /// guess. This also covers Claude running something in the foreground, when the pid is not
+  /// Claude's. An id goes when its terminal leaves or stops being Claude, which `terminals`
+  /// says, so it must be all of them.
   func identifiers(
     for terminals: [CoreTerminal],
+    reading addresses: Set<String>,
     over connection: CoreConnection
   ) async -> [String: String] {
     guard let home else { return [:] }
     let claudes = terminals.filter(CoreSnapshotMapper.isLocalClaude)
     let reads = await withTaskGroup(of: (String, String?).self) { group in
-      for terminal in claudes {
+      for terminal in claudes where addresses.contains(terminal.address) {
         group.addTask {
           (terminal.address, await Self.identifier(of: terminal, home: home, over: connection))
         }

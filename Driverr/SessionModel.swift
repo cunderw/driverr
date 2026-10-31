@@ -62,11 +62,18 @@ final class SessionModel {
   @ObservationIgnored private let pollInterval: Duration
   private(set) var pollingPaused = false
 
-  /// How often to re-read the session while the screen is on.
+  /// Reads under way, so a change that lands during one waits for it. See `changedOnHost()`.
+  @ObservationIgnored private var readsInFlight = 0
+  @ObservationIgnored private var changedDuringRead = false
+
+  /// How often to re-read the session while the screen is on, for a control that has to be
+  /// asked.
   ///
-  /// Polling, not push: Driverr reaches herdr only through its CLI over SSH, so
-  /// `events.subscribe` is out of reach, and `herdr agent wait` watches one named agent,
-  /// not panes opening or closing. Three seconds is a judgement, not a measurement.
+  /// The TUI is polled: Driverr reaches it only through its CLI over SSH, so its
+  /// `events.subscribe` is out of reach, and `herdr agent wait` watches one named agent, not
+  /// panes opening or closing. A core pushes, through `HerdrControl.changes`, and this timer
+  /// runs there only to get back from a failed read, because nothing else would ask again.
+  /// Three seconds is a judgement, not a measurement.
   static let defaultPollInterval = Duration.seconds(3)
 
   init(control: any HerdrControl, pollInterval: Duration = SessionModel.defaultPollInterval) {
@@ -86,8 +93,35 @@ final class SessionModel {
 
   func refresh() async {
     state = .loading
+    await read { [control] in try await control.snapshot() }
+  }
+
+  /// The host said something changed, so read it, with no `.loading` for a screen that is only
+  /// being kept current.
+  ///
+  /// **One at a time.** A poll on a combined host can be out for a second, and a read that
+  /// started before this change must not land after it. So this waits its turn, and goes once
+  /// however many changes came meanwhile.
+  private func changedOnHost() async {
+    guard readsInFlight == 0 else {
+      changedDuringRead = true
+      return
+    }
+    await read { [control] in try await control.changedSnapshot() }
+  }
+
+  private func read(_ tree: @Sendable () async throws -> SessionTree) async {
+    readsInFlight += 1
+    await load(tree)
+    readsInFlight -= 1
+    guard readsInFlight == 0, changedDuringRead else { return }
+    changedDuringRead = false
+    await changedOnHost()
+  }
+
+  private func load(_ read: @Sendable () async throws -> SessionTree) async {
     do {
-      let tree = try await control.snapshot()
+      let tree = try await read()
       // Diffed against the tree being replaced, before it is replaced.
       let changes = Self.changes(from: self.tree, to: tree)
       recordBlockedSince(from: self.tree, to: tree)
@@ -229,25 +263,41 @@ final class SessionModel {
     await refresh()
   }
 
-  /// Retains the polling loop, starting it if nobody held it yet.
+  /// Retains the live updates, starting them if nobody held them yet.
   ///
   /// A retain/release pair, because the host screen and the terminal scene both consume
   /// the session and either can leave first. Only one loop ever runs, so a re-running
   /// `.task` does not double the traffic.
+  ///
+  /// Where the control pushes, this listens as well. Listening starts ahead of the first read,
+  /// and what changed while nobody listened is read once on the way in, so no change falls
+  /// between the two.
   func startLiveUpdates() {
     consumers += 1
     pollingPaused = false
     guard liveUpdates == nil else { return }
+    let changes = control.changes
+    let isPushed = changes != nil
     liveUpdates = Task { [weak self, pollInterval] in
+      let listener = changes.map { changes in
+        Task { [weak self] in
+          for await _ in changes { await self?.changedOnHost() }
+        }
+      }
+      defer { listener?.cancel() }
+
       // Load first, then wait, so the screen is not blank for a whole tick.
       await self?.loadIfNeeded()
+      if isPushed { await self?.changedOnHost() }
       while !Task.isCancelled {
         try? await Task.sleep(for: pollInterval)
         guard !Task.isCancelled, let self else { return }
-        await self.refresh()
+        if self.needsPolling { await self.refresh() }
       }
     }
   }
+
+  private var needsPolling: Bool { control.needsPolling || lastFailure != nil }
 
   /// Releases one consumer's hold, and stops polling when the last one lets go. A warm
   /// connection is idle; a polling one runs a command on the user's machine every tick.

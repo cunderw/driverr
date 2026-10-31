@@ -23,7 +23,7 @@ enum CoreProbe {
 /// shares a line of code with.
 ///
 /// Off unless `DRIVERR_LIVE_CORE=1` and a core is installed here. It sends only `hello`,
-/// `terminal.list`, `doc.get` and `file.read` of a Claude terminal's own record, which change
+/// `events.subscribe`, `doc.get` and `file.read` of a Claude terminal's own record, which change
 /// nothing, but `hc connect` starts a core when none is running, which is why a default run
 /// leaves it out. Run it by hand:
 ///
@@ -74,7 +74,7 @@ struct CoreOverSSHTests {
     )
   }
 
-  @Test("hello and terminal.list cross the exec channel behind a login banner")
+  @Test("hello and events.subscribe cross the exec channel behind a login banner")
   func throughABanner() async throws {
     let server = try await server()
     defer { Task { await server.stop() } }

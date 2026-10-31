@@ -5,7 +5,8 @@ import Testing
 
 @testable import DriverrHC
 
-/// Through `CoreControl.snapshot`, because what matters is the session on the pane.
+/// Through `CoreControl.snapshot`, because what matters is the session on the pane. A record is
+/// read again when an event says a terminal's may have moved, so the later reads here follow one.
 @Suite("Core session files", .timeLimit(.minutes(1)))
 struct CoreSessionFilesTests {
   private static let home = "/home/my user"
@@ -39,14 +40,26 @@ struct CoreSessionFilesTests {
     """#
   }
 
-  private func listing(_ terminals: [String]) -> FakeCoreStream.Reply {
-    .result(#"{"terminals":[\#(terminals.joined(separator: ","))]}"#)
-  }
-
   private func stream(_ terminals: String...) -> FakeCoreStream {
     let stream = FakeCoreStream()
-    stream.replies["terminal.list"] = listing(terminals)
+    stream.replies["events.subscribe"] = .result(FakeCoreStream.subscribed(terminals))
     return stream
+  }
+
+  private let working =
+    #"{"records":{},"reported":true,"status":{"app":"claude-code","state":"working"}}"#
+
+  /// Raises a status on `t1` and waits for what it causes to land. Reads go one at a time, so
+  /// the second having started says the first has finished.
+  private func raiseStatus(on stream: FakeCoreStream) async throws {
+    let reads = stream.readPaths.count
+    stream.event("status", on: "t1", working)
+    try await waitUntil("the read") { stream.readPaths.count >= reads + 1 }
+    let held = stream.files
+    stream.files = held.mapValues { _ in .silent }
+    stream.event("status", on: "t1", working)
+    try await waitUntil("the read after it") { stream.readPaths.count >= reads + 2 }
+    stream.files = held
   }
 
   private func sessions(_ tree: SessionTree) -> [String: String?] {
@@ -158,6 +171,7 @@ struct CoreSessionFilesTests {
     #expect(sessions(try await control.snapshot()) == ["core:t1": "first"])
 
     stream.files = [path(101): failure]
+    try await raiseStatus(on: stream)
     #expect(sessions(try await control.snapshot()) == ["core:t1": "first"])
   }
 
@@ -170,9 +184,42 @@ struct CoreSessionFilesTests {
     let control = control(stream)
     _ = try await control.snapshot()
 
-    stream.replies["terminal.list"] = listing([claude("t1", pid: 500)])
+    stream.event("foreground", on: "t1", #"{"argv":["sleep"],"cwd":"/srv","pid":500}"#)
+    try await waitUntil("the child's read") { stream.readPaths.last == path(500) }
+    try await raiseStatus(on: stream)
     #expect(sessions(try await control.snapshot()) == ["core:t1": "first"])
-    #expect(stream.readPaths.last == path(500))
+  }
+
+  @Test("a pid that changes reads the new one's record, and only for that terminal")
+  func onlyTheChanged() async throws {
+    let stream = stream(claude("t1", pid: 101), claude("t2", pid: 102))
+    stream.files = [
+      path(101): record(pid: 101, id: "first"),
+      path(102): record(pid: 102, id: "second"),
+      path(500): record(pid: 500, id: "new"),
+    ]
+    let control = control(stream)
+    _ = try await control.snapshot()
+    let readsAtStart = stream.readPaths.count
+
+    stream.event("foreground", on: "t1", #"{"argv":["claude"],"cwd":"/srv","pid":500}"#)
+    let tree = try await tree(of: control) { sessions($0)["core:t1"] == "new" }
+    #expect(sessions(tree) == ["core:t1": "new", "core:t2": "second"])
+    #expect(Array(stream.readPaths[readsAtStart...]) == [path(500)])
+  }
+
+  /// Claude Code rewrites the file for these and says nothing else that carries the id.
+  @Test("a foreground that only changes its name or folder reads nothing")
+  func samePID() async throws {
+    let stream = stream(claude("t1", pid: 101))
+    stream.files = [path(101): record(pid: 101, id: "first")]
+    let control = control(stream)
+    _ = try await control.snapshot()
+    let readsAtStart = stream.readPaths.count
+
+    stream.event("foreground", on: "t1", #"{"argv":["claude"],"cwd":"/elsewhere","pid":101}"#)
+    _ = try await tree(of: control) { $0.pane(id: "core:t1")?.directory == "/elsewhere" }
+    #expect(stream.readPaths.count == readsAtStart)
   }
 
   @Test("a call that never answers costs the deadline, not the snapshot or the id")
@@ -183,10 +230,11 @@ struct CoreSessionFilesTests {
     _ = try await control.snapshot()
 
     stream.files = [path(101): .silent]
+    try await raiseStatus(on: stream)
     #expect(sessions(try await control.snapshot()) == ["core:t1": "first"])
   }
 
-  @Test("/clear lands on the next poll")
+  @Test("/clear lands on the status it raises")
   func newID() async throws {
     let stream = stream(claude("t1", pid: 101))
     stream.files = [path(101): record(pid: 101, id: "before")]
@@ -194,7 +242,8 @@ struct CoreSessionFilesTests {
     _ = try await control.snapshot()
 
     stream.files = [path(101): record(pid: 101, id: "after")]
-    #expect(sessions(try await control.snapshot()) == ["core:t1": "after"])
+    stream.event("status", on: "t1", working)
+    _ = try await tree(of: control) { sessions($0) == ["core:t1": "after"] }
   }
 
   @Test("a terminal that stops being Claude forgets its id")
@@ -204,13 +253,15 @@ struct CoreSessionFilesTests {
     let control = control(stream)
     _ = try await control.snapshot()
 
-    stream.replies["terminal.list"] = listing([
-      #"{"address":"t1","foreground":{"argv":["zsh"],"pid":200}}"#
-    ])
-    #expect(sessions(try await control.snapshot()) == ["core:t1": nil])
+    stream.event("status", on: "t1", #"{"records":{},"reported":true,"status":null}"#)
+    stream.event("foreground", on: "t1", #"{"argv":["zsh"],"pid":200}"#)
+    _ = try await tree(of: control) { sessions($0) == ["core:t1": nil] }
 
     // Back, with no record yet: the old id is another process's.
-    stream.replies["terminal.list"] = listing([claude("t1", pid: 300)])
+    stream.event("foreground", on: "t1", #"{"argv":["claude"],"pid":300}"#)
+    stream.event("status", on: "t1", working)
+    try await waitUntil("the read") { stream.readPaths.last == path(300) }
+    try await raiseStatus(on: stream)
     #expect(sessions(try await control.snapshot()) == ["core:t1": nil])
   }
 
@@ -221,10 +272,14 @@ struct CoreSessionFilesTests {
     let control = control(stream)
     _ = try await control.snapshot()
 
-    stream.replies["terminal.list"] = listing([])
-    _ = try await control.snapshot()
+    stream.event("removed", on: "t1")
+    _ = try await tree(of: control) { $0.allPanes.isEmpty }
 
-    stream.replies["terminal.list"] = listing([claude("t1", pid: 300)])
+    // One line, as an event has to be.
+    let record = claude("t1", pid: 300).replacingOccurrences(of: "\n", with: "")
+    stream.event("created", on: "t1", record)
+    try await waitUntil("the read") { stream.readPaths.last == path(300) }
+    try await raiseStatus(on: stream)
     #expect(sessions(try await control.snapshot()) == ["core:t1": nil])
   }
 }
