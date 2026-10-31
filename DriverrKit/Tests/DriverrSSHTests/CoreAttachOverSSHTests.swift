@@ -355,14 +355,43 @@ struct CoreAttachOverSSHTests {
 
       let bridge = try await #require(observer as? any PromotableObserver).promote()
       try await waitUntil("the history") { output.text.contains("\r\n150\r\n") }
-      try await (bridge as? any RawTerminalStream)?.focus(true)
+      // The pane growing as its chat goes is a size nobody asked for.
+      try await bridge.resize(to: TerminalSize(columns: 44, rows: 22))
       try await Task.sleep(for: .milliseconds(300))
       #expect(try await size(of: scratch) == [100, 30], "took the size with nothing typed")
 
       try await bridge.send(text: "echo pro''moted\r")
       try await waitUntil("the echo") { output.text.contains("promoted\r\n") }
-      #expect(try await size(of: scratch) == [40, 20])
+      #expect(try await size(of: scratch) == [44, 22], "the first keystroke brings the size")
       await desk.release()
+    }
+  }
+
+  /// Alone there is no desk to protect, and the attach takes the phone's size at once. A size
+  /// after that still waits, so the pane can sit a few rows short until it is touched. The
+  /// program also hears the focus it asked for, which the observer could not report.
+  @Test("a promoted observer alone keeps its attach size until touched, then reports focus")
+  func promotedObserverAlone() async throws {
+    let program = #"sh -c 'printf "\033[?1004h"; exec cat -v'"#
+    try await withScratchCore(runs: program) { scratch in
+      try await Task.sleep(for: .milliseconds(300))
+      let attacher = try #require(scratch.control.paneAttacher(for: scratch.paneID))
+      let observer = try await attacher.observe(terminalID: scratch.address, size: Self.phone)
+      let output = ReadBack()
+      output.start(observer.output, on: observer as? any RawTerminalStream)
+      try await (observer as? any PaneBridge)?.resize(to: Self.phone)
+      try await (observer as? any RawTerminalStream)?.focus(true)
+
+      let bridge = try await #require(observer as? any PromotableObserver).promote()
+      try await waitUntil("the phone's size") { try await size(of: scratch) == [40, 20] }
+
+      try await bridge.resize(to: TerminalSize(columns: 44, rows: 24))
+      try await Task.sleep(for: .milliseconds(300))
+      #expect(try await size(of: scratch) == [40, 20])
+
+      try await bridge.send(text: "typed\r")
+      try await waitUntil("the size") { try await size(of: scratch) == [44, 24] }
+      try await waitUntil("the focus report") { output.text.contains("^[[I") }
     }
   }
 

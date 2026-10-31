@@ -739,6 +739,14 @@ struct TerminalSceneModelTests {
     return (scene, control, observer)
   }
 
+  private func agentReturns(_ scene: TerminalSceneModel, _ control: FakeControl) async {
+    await control.update(
+      to: tree(withCorePane: "core:t7", agent: FakeControl.seededTree.pane(id: "w1:p1")?.agent))
+    await scene.model.session?.refresh()
+    scene.treeChanged()
+    await scene.settle()
+  }
+
   private func agentQuits(_ scene: TerminalSceneModel, _ control: FakeControl) async {
     await control.update(to: tree(withCorePane: "core:t7"))
     await scene.model.session?.refresh()
@@ -804,6 +812,45 @@ struct TerminalSceneModelTests {
     await scene.settle()
     #expect(attacher.log == ["observe t7", "open t7"])
     #expect(scene.currentRole == .controller)
+  }
+
+  /// The chat is what is on screen again, so a controller behind it would hold the size for
+  /// nothing.
+  @Test("a promoted pane whose agent comes back is watched again")
+  func aSecondAgentDemotesThePromotedViewer() async throws {
+    let attacher = FakeCoreAttacher()
+    let (scene, control, observer) = try await watchedAgentScene(attacher)
+    await agentQuits(scene, control)
+    #expect(scene.currentRole == .controller)
+
+    await agentReturns(scene, control)
+
+    #expect(scene.currentRole == .observer)
+    #expect(attacher.log == ["observe t7", "observe t7"])
+    #expect(observer.releaseCount == 1)
+  }
+
+  /// The step waits its turn in the chain, and the agent can be back by then.
+  @Test("a promotion still queued when the agent comes back does not run")
+  func aQueuedPromotionRechecksTheSurface() async throws {
+    let attacher = FakeCoreAttacher()
+    let (scene, control, observer) = try await watchedAgentScene(attacher)
+    observer.gatePromotion()
+    observer.refusePromotion()
+
+    await control.update(to: tree(withCorePane: "core:t7"))
+    await scene.model.session?.refresh()
+    scene.treeChanged()
+    await waitUntilSignalled("the first promotion") { observer.promotionCount == 1 }
+    // Behind the first in the chain, because the notice that would stop it is not up yet.
+    scene.treeChanged()
+    await control.update(
+      to: tree(withCorePane: "core:t7", agent: FakeControl.seededTree.pane(id: "w1:p1")?.agent))
+    await scene.model.session?.refresh()
+    observer.openPromotionGate()
+    await scene.settle()
+
+    #expect(observer.promotionCount == 1)
   }
 
   /// Nobody is looking at it, and every pane on a host can lose its agent at once.

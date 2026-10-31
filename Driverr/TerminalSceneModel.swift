@@ -1652,14 +1652,29 @@ final class TerminalSceneModel {
     adoptNewPane()
     rebuildActions(for: current)
     promoteObserverLeftOnItsTerminal()
+    demoteViewerLeftBehindItsChat()
+  }
+
+  /// Watches a core pane again if an agent has started in it, so the chat is on screen.
+  ///
+  /// `surface(for:)` turned to `.chat` with nobody asking, and a viewer that has typed would go
+  /// on holding the terminal's size while only the conversation is read. Only a core pane,
+  /// which is the only place a promotion leaves one. `show(_:)` covers the segment.
+  private func demoteViewerLeftBehindItsChat() {
+    let target = current
+    guard case .pane(let id) = target, CorePaneID.isCore(id), surface(for: target) == .chat,
+      entry(for: target)?.role == .controller
+    else { return }
+    enqueue(on: target) { [weak self] in await self?.openSurface(for: target) }
   }
 
   /// Makes the pane on screen typable if its chat has just gone from under an observer.
   ///
-  /// When an agent quits, `surface(for:)` turns to `.terminal` with nobody asking, so the
-  /// keyboard comes up on a stream that cannot type. Only the current pane: a warm one opens
-  /// when it is chosen, and a host can lose every agent at once. A notice stops this asking
-  /// again on every tree, and Retry opens the pane as any open does.
+  /// When an agent quits, `surface(for:)` turns to `.terminal` with nobody asking, so the pane
+  /// shows a terminal on a stream that cannot type, and a tap would raise the keyboard on it.
+  /// Only the current pane: a warm one opens when it is chosen, and a host can lose every
+  /// agent at once. A notice stops this asking again on every tree, and Retry opens the pane
+  /// as any open does.
   private func promoteObserverLeftOnItsTerminal() {
     let target = current
     guard notices[target] == nil, surface(for: target) == .terminal,
@@ -1669,8 +1684,9 @@ final class TerminalSceneModel {
     else { return }
 
     enqueue(on: target) { [weak self] in
+      // Rechecked, because an agent can start while this waits its turn.
       guard let self, !isClosed, entry(for: target)?.id == watched.id,
-        entry(for: target)?.role == .observer
+        entry(for: target)?.role == .observer, surface(for: target) == .terminal
       else { return }
       guard let bridge = try? await promotable.promote() else {
         notices[target] = .failed(.channelFailed(reason: "The pane could not be opened."))

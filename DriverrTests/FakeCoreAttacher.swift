@@ -69,6 +69,8 @@ final class FakeCoreViewer:
   private var leavings = 0
   private var promotions = 0
   private var refusesPromotion = false
+  private var promotionGate: AsyncStream<Void>.Continuation?
+  private var promotionWaits: AsyncStream<Void>?
 
   init() {
     (output, continuation) = AsyncThrowingStream.makeStream(
@@ -87,6 +89,19 @@ final class FakeCoreViewer:
 
   func refusePromotion() {
     lock.withLock { refusesPromotion = true }
+  }
+
+  /// Holds the next `promote` until `openPromotionGate`, so a test can act while it is out.
+  func gatePromotion() {
+    let (waits, gate) = AsyncStream<Void>.makeStream()
+    lock.withLock {
+      promotionWaits = waits
+      promotionGate = gate
+    }
+  }
+
+  func openPromotionGate() {
+    lock.withLock { promotionGate }?.yield()
   }
 
   func paint(_ text: String) {
@@ -113,6 +128,12 @@ final class FakeCoreViewer:
 
   func promote() async throws -> any PaneBridge {
     record { promotions += 1 }
+    if let waits = lock.withLock({ () -> AsyncStream<Void>? in
+      defer { promotionWaits = nil }
+      return promotionWaits
+    }) {
+      for await _ in waits { break }
+    }
     if lock.withLock({ refusesPromotion }) {
       throw AppError.herdrCommandFailed(reason: "lost, waiting for its new shell")
     }

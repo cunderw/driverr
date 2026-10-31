@@ -28,8 +28,10 @@ final class CoreAttachment:
   private let lock = NSLock()
   private var channel: UInt32
   private var isObserver: Bool
-  /// Promoted, and has neither typed nor resized. See `focus(_:)`.
-  private var awaitsActivity = false
+  /// Promoted, and nobody has touched it. See `touched()`.
+  private var awaitsTouch = false
+  /// The focus to report when it is touched. `TerminalSession` sends each change once.
+  private var heldFocus: Bool?
   /// What an attach for this viewer asks for now, kept for `repaint()`.
   private var params: CoreAttachParams
   private var generation = 0
@@ -100,23 +102,49 @@ final class CoreAttachment:
   }
 
   func send(bytes: Data) async throws {
-    lock.withLock { awaitsActivity = false }
+    try await touched()
     try await connection.write(.data, bytes, toChannel: currentChannel)
   }
 
   private var currentChannel: UInt32 { lock.withLock { channel } }
 
+  /// Only remembered until someone touches a promoted viewer, or for an observer, which the
+  /// core would ignore. A RESIZE counts as activity, and the pane changing size as its chat
+  /// goes is nobody asking to take the terminal from a desk.
   func resize(to size: TerminalSize) async throws {
-    var payload = Data()
-    for cells in [size.columns, size.rows] {
-      withUnsafeBytes(of: UInt16(clamping: cells).littleEndian) { payload.append(contentsOf: $0) }
-    }
-    lock.withLock {
+    let isWritten: Bool = lock.withLock {
       params.cols = size.columns
       params.rows = size.rows
-      awaitsActivity = false
+      return !isObserver && !awaitsTouch
     }
-    try await connection.write(.resize, payload, toChannel: currentChannel)
+    if isWritten { try await writeSize() }
+  }
+
+  private func writeSize() async throws {
+    let (cols, rows, channel) = lock.withLock { (params.cols, params.rows, channel) }
+    var payload = Data()
+    for cells in [cols, rows] {
+      withUnsafeBytes(of: UInt16(clamping: cells).littleEndian) { payload.append(contentsOf: $0) }
+    }
+    try await connection.write(.resize, payload, toChannel: channel)
+  }
+
+  /// The first touch of a promoted viewer: the size it has been keeping, then its focus. From
+  /// here it is the active viewer, so the terminal comes to the phone's size.
+  private func touched() async throws {
+    let focus: Bool?? = lock.withLock {
+      guard awaitsTouch else { return nil }
+      awaitsTouch = false
+      defer { heldFocus = nil }
+      return .some(heldFocus)
+    }
+    guard let focus else { return }
+    try await writeSize()
+    if focus == true { try await writeFocus(true) }
+  }
+
+  private func writeFocus(_ gained: Bool) async throws {
+    try await connection.write(.focus, Data([gained ? 1 : 0]), toChannel: currentChannel)
   }
 
   /// A drag goes by `TerminalDragRoute` and a tap through `TerminalMouseClick`, so a feed over
@@ -124,13 +152,19 @@ final class CoreAttachment:
   func scroll(_ direction: ScrollDirection, lines: Int) async throws {}
   func click(_ cell: TerminalCell) async throws {}
 
-  /// An observer's focus means nothing to the core. A promoted viewer's gain is held back
-  /// until it has done something, because the core counts it as activity and would hand it the
-  /// size from a desk, for a keyboard coming up on a pane nobody has touched.
+  /// An observer's focus means nothing to the core, so it is kept for a promotion. A promoted
+  /// viewer's view takes focus only on a tap or a sheet closing, so a gain there is a touch.
   func focus(_ gained: Bool) async throws {
-    let isDropped: Bool = lock.withLock { isObserver || (gained && awaitsActivity) }
-    guard !isDropped else { return }
-    try await connection.write(.focus, Data([gained ? 1 : 0]), toChannel: currentChannel)
+    let (isTouch, isWritten): (Bool, Bool) = lock.withLock {
+      if isObserver || awaitsTouch { heldFocus = gained }
+      let isTouch = !isObserver && awaitsTouch && gained
+      return (isTouch, !isObserver && !isTouch)
+    }
+    if isTouch {
+      try await touched()
+    } else if isWritten {
+      try await writeFocus(gained)
+    }
   }
 
   /// Attaches again if this stream's paint held nothing of the normal screen.
@@ -161,7 +195,7 @@ final class CoreAttachment:
       params.observe = false
       params.history = CoreControl.attachHistoryLines
       isObserver = false
-      awaitsActivity = true
+      awaitsTouch = true
     }
     return self
   }

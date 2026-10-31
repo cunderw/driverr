@@ -575,8 +575,12 @@ struct CoreAttachmentTests {
     #expect(stream.streamFrames.last == CoreFrame(channel: 5, kind: .data, payload: Data("k".utf8)))
   }
 
-  @Test("a promoted observer resizes on its new channel, and the attach used its latest size")
-  func promotionKeepsTheSize() async throws {
+  private func resizeFrame(columns: UInt8, rows: UInt8) -> CoreFrame {
+    CoreFrame(channel: 5, kind: .resize, payload: Data([columns, 0, rows, 0]))
+  }
+
+  @Test("the attach used an observer's latest size")
+  func promotionUsesTheLatestSize() async throws {
     let stream = FakeCoreStream()
     let (attachment, _) = try await attached(stream, observe: true)
     try await attachment.resize(to: TerminalSize(columns: 50, rows: 21))
@@ -587,24 +591,107 @@ struct CoreAttachmentTests {
     let params = try #require(try stream.params(of: "terminal.attach").last)
     #expect(params["cols"] as? Int == 50)
     #expect(params["rows"] as? Int == 21)
-    try await attachment.resize(to: TerminalSize(columns: 52, rows: 22))
-    #expect(stream.streamFrames.last?.channel == 5)
-    #expect(stream.streamFrames.last?.kind == .resize)
   }
 
-  /// FOCUS counts as activity, so the keyboard coming up on the view that is already there
-  /// would take the size from a desk with nothing typed. Measured on a real core.
-  @Test("a promoted observer holds back focus until it has typed or resized")
-  func promotionHoldsFocus() async throws {
+  /// The pane growing when its agent quits is a resize nobody asked for, and a RESIZE is
+  /// activity, so writing it would take the size from a desk with nothing touched.
+  @Test("a promoted viewer's size waits for the first keystroke, and goes ahead of it")
+  func promotionHoldsTheSize() async throws {
     let stream = FakeCoreStream()
     let (attachment, _) = try await promoted(stream)
 
-    try await attachment.focus(true)
-    #expect(!stream.streamFrames.contains { $0.kind == .focus })
+    try await attachment.resize(to: TerminalSize(columns: 52, rows: 22))
+    #expect(!stream.streamFrames.contains { $0.kind == .resize })
 
     try await attachment.send(text: "k")
+    #expect(
+      Array(stream.streamFrames.suffix(2)) == [
+        resizeFrame(columns: 52, rows: 22),
+        CoreFrame(channel: 5, kind: .data, payload: Data("k".utf8)),
+      ])
+
+    try await attachment.resize(to: TerminalSize(columns: 53, rows: 22))
+    #expect(stream.streamFrames.last == resizeFrame(columns: 53, rows: 22))
+  }
+
+  /// With the promotion still out the viewer is an observer, and a RESIZE on that channel
+  /// would be ignored and never sent again.
+  @Test("a size that arrives while the promotion is out is not lost")
+  func sizeDuringThePromotion() async throws {
+    let stream = FakeCoreStream()
+    let (attachment, _) = try await attached(stream, observe: true)
+    stream.replies["terminal.attach"] = .result(FakeCoreStream.attached(channel: 5))
+    stream.holdsReplies = true
+
+    async let promotion = attachment.promote()
+    try await waitUntil("the attach") { attachCount(stream) == 2 }
+    try await attachment.resize(to: TerminalSize(columns: 52, rows: 22))
+    stream.flushHeld()
+    _ = try await promotion
+
+    try await attachment.send(text: "k")
+    #expect(stream.streamFrames.contains(resizeFrame(columns: 52, rows: 22)))
+  }
+
+  /// A view's focus only moves on a tap or a sheet closing, so this is someone touching it.
+  @Test("a promoted viewer's first focus counts as a touch: the size, then the focus")
+  func focusIsATouch() async throws {
+    let stream = FakeCoreStream()
+    let (attachment, _) = try await promoted(stream)
+    try await attachment.resize(to: TerminalSize(columns: 52, rows: 22))
+
     try await attachment.focus(true)
-    #expect(stream.streamFrames.last?.kind == .focus)
+
+    #expect(
+      Array(stream.streamFrames.suffix(2)) == [
+        resizeFrame(columns: 52, rows: 22),
+        CoreFrame(channel: 5, kind: .focus, payload: Data([1])),
+      ])
+  }
+
+  /// `TerminalSession` sends a focus once, so one dropped here is never sent again, and a
+  /// program that asked for focus reports never hears it.
+  @Test("focus gained as an observer reaches the program with the first keystroke")
+  func focusAsAnObserverIsHeld() async throws {
+    let stream = FakeCoreStream()
+    let (attachment, _) = try await attached(stream, observe: true)
+    try await attachment.focus(true)
+    stream.replies["terminal.attach"] = .result(FakeCoreStream.attached(channel: 5))
+    _ = try await attachment.promote()
+
+    try await attachment.send(text: "k")
+
+    #expect(
+      stream.streamFrames.filter { $0.channel == 5 }.map(\.kind) == [.resize, .focus, .data])
+  }
+
+  @Test("focus lost while waiting for a touch is not reported as gained")
+  func focusLostAfterThePromotion() async throws {
+    let stream = FakeCoreStream()
+    let (attachment, _) = try await attached(stream, observe: true)
+    try await attachment.focus(true)
+    stream.replies["terminal.attach"] = .result(FakeCoreStream.attached(channel: 5))
+    _ = try await attachment.promote()
+    try await attachment.focus(false)
+
+    try await attachment.send(text: "k")
+
+    #expect(
+      stream.streamFrames.filter { $0.channel == 5 }.map(\.kind) == [.focus, .resize, .data])
+  }
+
+  @Test("focus lost before the promotion is not reported as gained")
+  func focusLostAsAnObserver() async throws {
+    let stream = FakeCoreStream()
+    let (attachment, _) = try await attached(stream, observe: true)
+    try await attachment.focus(true)
+    try await attachment.focus(false)
+    stream.replies["terminal.attach"] = .result(FakeCoreStream.attached(channel: 5))
+    _ = try await attachment.promote()
+
+    try await attachment.send(text: "k")
+
+    #expect(!stream.streamFrames.contains { $0.kind == .focus })
   }
 
   @Test("a refused promotion leaves the observer as it was")

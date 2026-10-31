@@ -101,13 +101,13 @@ public protocol PaneAttacher: Sendable {
 /// An observer that can start typing where it stands, on the same stream and the same emulator.
 ///
 /// For a pane left on its terminal by something the phone did not do, such as its agent
-/// quitting. A new viewer would mean a new view, whose first size and focus would each take the
-/// terminal's size from a desk with nothing typed.
+/// quitting. A new viewer would mean a new view, whose first size would take the terminal's
+/// size from a desk with nothing typed.
 public protocol PromotableObserver: PaneObserver {
   /// Becomes a viewer that can type, or throws and stays an observer.
   ///
-  /// Not active: the terminal's size stays with whoever holds it until this viewer types or
-  /// resizes.
+  /// Not active: the terminal's size stays with whoever holds it until someone touches this
+  /// viewer. A size reported before then is kept and goes out with the first touch.
   func promote() async throws -> any PaneBridge
 }
 
