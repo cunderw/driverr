@@ -23,7 +23,8 @@ extension TerminalFeed {
 ///
 /// A pane is not a pty. Its history lives in herdr, so this feed carries `scroll`, and
 /// herdr knows the pane's mouse mode, so it carries `click`. That is why a drag on a pane
-/// sends `terminal.scroll` while a drag on a shell scrolls locally; see `TerminalFeed`.
+/// sends `terminal.scroll` while a drag on a shell goes by `TerminalDragRoute`; see
+/// `TerminalFeed`.
 extension TerminalFeed {
   init(bridge: any PaneBridge) {
     self.init(
@@ -37,6 +38,31 @@ extension TerminalFeed {
   }
 }
 
+/// A herdr-core terminal as a feed.
+///
+/// The other way round from a bridge pane: the bytes are the program's own, so the emulator
+/// knows the program's modes, a drag goes by `TerminalDragRoute`, and `TerminalMouseClick`
+/// encodes a tap locally. A feed with no `scroll` or `click` is what says so. What it adds is
+/// the two things a core asks of a viewer.
+extension TerminalFeed {
+  init(
+    raw: any RawTerminalStream,
+    output: AsyncThrowingStream<Data, any Error>,
+    send: @escaping @Sendable (Data) async throws -> Void,
+    resize: @escaping @Sendable (TerminalSize) async throws -> Void
+  ) {
+    self.init(
+      output: output,
+      send: send,
+      resize: resize,
+      // The scene releases, in order; see `TerminalSceneModel.demote(_:)`.
+      close: {},
+      focus: { try await raw.focus($0) },
+      consumed: { raw.consumed($0) },
+      awaitsFirstSize: true
+    )
+  }
+}
 
 /// `DriverrSSH`'s stream, as `DriverrHerdr` wants it.
 ///

@@ -10,19 +10,24 @@ private actor Side: HerdrControl {
   private let tree: SessionTree
   private let snapshotFailure: AppError?
   private let answer: HerdrAvailability
+  private let attacher: (any PaneAttacher)?
   private(set) var calls: [String] = []
 
   init(
     binaryPath: String,
     tree: SessionTree = .empty,
     snapshotFailure: AppError? = nil,
-    answer: HerdrAvailability = .notInstalled
+    answer: HerdrAvailability = .notInstalled,
+    attacher: (any PaneAttacher)? = nil
   ) {
     self.binaryPath = binaryPath
     self.tree = tree
     self.snapshotFailure = snapshotFailure
     self.answer = answer
+    self.attacher = attacher
   }
+
+  nonisolated func paneAttacher(for paneID: String) -> (any PaneAttacher)? { attacher }
 
   func snapshot() async throws -> SessionTree {
     if let snapshotFailure { throw snapshotFailure }
@@ -52,6 +57,16 @@ private actor Side: HerdrControl {
   }
   func rename(_ target: RenameTarget, to label: String) async throws {
     calls.append("rename \(target.id)")
+  }
+}
+
+/// Never opens anything. `attacherRouting` only asks whose it is.
+private struct Attacher: PaneAttacher {
+  func open(terminalID: String, size: TerminalSize) async throws -> any PaneBridge {
+    throw AppError.herdrResponseUnreadable
+  }
+  func observe(terminalID: String, size: TerminalSize) async throws -> any PaneObserver {
+    throw AppError.herdrResponseUnreadable
   }
 }
 
@@ -308,6 +323,18 @@ struct CombinedControlTests {
     #expect(unchanged.herdrSocketPath == "/run/old.sock")
   }
 
+  @Test("a core pane opens on the core's attacher, and a TUI pane on no attacher at all")
+  func attacherRouting() {
+    let attacher = Attacher()
+    let combined = CombinedControl(
+      tui: Side(binaryPath: "herdr"),
+      core: Side(binaryPath: "hc", attacher: attacher)
+    )
+
+    #expect(combined.paneAttacher(for: "core:t1") is Attacher)
+    #expect(combined.paneAttacher(for: "w1:p1") == nil)
+  }
+
   // MARK: - The prefix
 
   @Test("a core id is the prefix and the address, machine included")
@@ -315,5 +342,11 @@ struct CombinedControlTests {
     #expect(CorePaneID.id(forAddress: "box/t1") == "core:box/t1")
     #expect(CorePaneID.isCore("core:t1"))
     #expect(!CorePaneID.isCore("w1:p1"))
+  }
+
+  @Test("a core id gives its address back, and any other id is left alone")
+  func corePaneAddress() {
+    #expect(CorePaneID.address(of: "core:box/t1") == "box/t1")
+    #expect(CorePaneID.address(of: "t1") == "t1")
   }
 }

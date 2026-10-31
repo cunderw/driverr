@@ -18,6 +18,10 @@ final class FakeCoreStream: HerdrStream, @unchecked Sendable {
     case silent
     /// Answers after `delay`, by which time the caller may have gone.
     case late(String, delay: Duration)
+    /// Writes these first, then answers, as a core can when its writer runs in between.
+    case after(Data, then: String)
+    /// Answers with these straight behind it, in the same write.
+    case followedBy(String, Data)
   }
 
   /// What comes before `hello`'s reply: a login file's output.
@@ -51,6 +55,17 @@ final class FakeCoreStream: HerdrStream, @unchecked Sendable {
   private var closeCount = 0
   private var held = Data()
   private var lateReplies = 0
+  private var received: [CoreFrame] = []
+  private var requests: [Data] = []
+  private var burst: Burst?
+
+  /// One stream's output, held to its credit the way the core's outbox holds it.
+  private struct Burst {
+    let channel: UInt32
+    var remaining: Int
+    var credit: Int
+    var written = 0
+  }
 
   init() {
     let (stream, continuation) = AsyncThrowingStream<Data, any Error>.makeStream()
@@ -64,6 +79,10 @@ final class FakeCoreStream: HerdrStream, @unchecked Sendable {
   /// Every path `file.read` was asked for, in the order the calls landed.
   var readPaths: [String] { lock.withLock { askedPaths } }
   var closes: Int { lock.withLock { closeCount } }
+  /// Every frame received on a stream channel, in order of arrival.
+  var streamFrames: [CoreFrame] { lock.withLock { received } }
+  /// How many bytes of the burst have been written.
+  var burstWritten: Int { lock.withLock { burst?.written ?? 0 } }
   /// How many `.late` replies have been written.
   var lateRepliesWritten: Int { lock.withLock { lateReplies } }
 
@@ -78,11 +97,18 @@ final class FakeCoreStream: HerdrStream, @unchecked Sendable {
     }
 
     let frames = try lock.withLock { try decoder.append(data) }
-    for frame in frames where frame.channel == 0 && frame.kind == .data {
+    for frame in frames {
+      guard frame.channel == 0, frame.kind == .data else {
+        record(frame)
+        continue
+      }
       let object = try JSONSerialization.jsonObject(with: frame.payload) as? [String: Any]
       let id = try required(object?["id"] as? Int)
       let method = try required(object?["method"] as? String)
-      lock.withLock { calledMethods.append(method) }
+      lock.withLock {
+        calledMethods.append(method)
+        requests.append(frame.payload)
+      }
       if method == "file.read" {
         let params = object?["params"] as? [String: Any]
         let path = try required(params?["path"] as? String)
@@ -91,6 +117,52 @@ final class FakeCoreStream: HerdrStream, @unchecked Sendable {
       } else {
         answer(id: id, reply: replies[method] ?? .error("no such method"))
       }
+    }
+  }
+
+  /// The `params` of each call to `method`, in order.
+  func params(of method: String) throws -> [[String: Any]] {
+    try lock.withLock { requests }.compactMap { request in
+      let object = try JSONSerialization.jsonObject(with: request) as? [String: Any]
+      guard object?["method"] as? String == method else { return nil }
+      return object?["params"] as? [String: Any]
+    }
+  }
+
+  /// Starts a stream's output: `total` bytes in 16 KiB chunks, with the core's 256 KiB of
+  /// starting credit, going on only as CREDIT arrives.
+  func startBurst(_ total: Int, onChannel channel: UInt32) {
+    lock.withLock { burst = Burst(channel: channel, remaining: total, credit: 256 * 1024) }
+    pumpBurst()
+  }
+
+  private func record(_ frame: CoreFrame) {
+    lock.withLock {
+      received.append(frame)
+      if frame.kind == .credit, frame.channel == burst?.channel {
+        let bytes = frame.payload.reversed().reduce(0) { $0 << 8 | Int($1) }
+        burst?.credit += bytes
+      }
+    }
+    if frame.kind == .credit { pumpBurst() }
+  }
+
+  private func pumpBurst() {
+    while let (channel, size) = nextBurstChunk() {
+      write(CoreFrame(channel: channel, kind: .data, payload: Data(count: size)).encoded)
+    }
+  }
+
+  private func nextBurstChunk() -> (UInt32, Int)? {
+    lock.withLock {
+      guard var active = burst else { return nil }
+      let size = min(16 * 1024, active.remaining, active.credit)
+      guard size > 0 else { return nil }
+      active.remaining -= size
+      active.credit -= size
+      active.written += size
+      burst = active
+      return (active.channel, size)
     }
   }
 
@@ -144,6 +216,12 @@ final class FakeCoreStream: HerdrStream, @unchecked Sendable {
       respond(#"{"id":\#(id),"jsonrpc":"2.0","error":{"code":-32000,"message":"\#(message)"}}"#)
     case .silent:
       break
+    case .after(let frames, let json):
+      write(frames)
+      respond(#"{"id":\#(id),"jsonrpc":"2.0","result":\#(json)}"#)
+    case .followedBy(let json, let frames):
+      let reply = #"{"id":\#(id),"jsonrpc":"2.0","result":\#(json)}"#
+      write(CoreFrame(channel: 0, kind: .data, payload: Data(reply.utf8)).encoded + frames)
     case .late(let json, let delay):
       Task {
         try? await Task.sleep(for: delay)
@@ -160,6 +238,18 @@ final class FakeCoreStream: HerdrStream, @unchecked Sendable {
     }
     let frame = CoreFrame(channel: 0, kind: .data, payload: Data(json.utf8)).encoded
     lock.withLock { held.append(frame) }
+  }
+
+  /// What `terminal.attach` answers: a channel and the terminal's record, cut down.
+  static func attached(
+    channel: UInt32 = 1,
+    submit: String? = nil,
+    pasteGap: Int? = nil
+  ) -> String {
+    let key = submit.map { "\"\($0)\"" } ?? "null"
+    let gap = pasteGap.map(String.init) ?? "null"
+    return #"{"channel":\#(channel),"terminal":{"address":"t7","submit":\#(key),"#
+      + #""paste_gap_ms":\#(gap)}}"#
   }
 
   /// What `doc.get` answers for a document nobody has written.

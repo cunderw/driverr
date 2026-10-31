@@ -252,4 +252,44 @@ struct TerminalEndDispositionTests {
     #expect(disposition(.refused) == .closed)
     #expect(disposition(.takenOver) == .closed)
   }
+
+  @Test("a kept terminal that lost its program waits for the new shell, however often it did")
+  func aLostTerminalAwaitsRestart() {
+    for attempts in [0, 1, 5] {
+      #expect(
+        TerminalEndDisposition.forSessionThatEnded(
+          reason: .lost,
+          statedByHerdr: true,
+          paneIsStillInTree: true,
+          reattachAttempts: attempts
+        ) == .awaitRestart
+      )
+    }
+  }
+
+  @Test("a lost terminal that has left the tree is closed, because no shell is coming")
+  func aLostTerminalThatLeftIsClosed() {
+    #expect(
+      TerminalEndDisposition.forSessionThatEnded(
+        reason: .lost,
+        statedByHerdr: true,
+        paneIsStillInTree: false,
+        reattachAttempts: 0
+      ) == .closed
+    )
+  }
+
+  @Test("a viewer that never attached gets a sentence and a Retry, however things stand")
+  func aViewerThatNeverAttached() {
+    for paneIsStillInTree in [true, false] {
+      #expect(
+        TerminalEndDisposition.forSessionThatEnded(
+          reason: .neverAttached,
+          statedByHerdr: false,
+          paneIsStillInTree: paneIsStillInTree,
+          reattachAttempts: 0
+        ) == .failed(message: "The pane could not be opened.")
+      )
+    }
+  }
 }

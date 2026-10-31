@@ -18,7 +18,11 @@ private final class TestFeed {
     private var _scrolls: [(ScrollDirection, Int)] = []
     private var _clicks: [TerminalCell] = []
     private var _closed = false
+    private var _focuses: [Bool] = []
+    private var _consumed: [Int] = []
 
+    var focuses: [Bool] { lock.withLock { _focuses } }
+    var consumed: [Int] { lock.withLock { _consumed } }
     var sent: [Data] { lock.withLock { _sent } }
     var sizes: [TerminalSize] { lock.withLock { _sizes } }
     var scrolls: [(ScrollDirection, Int)] { lock.withLock { _scrolls } }
@@ -47,6 +51,14 @@ private final class TestFeed {
       lock.withLock { _closed = true }
       Waker.signalFromAnywhere()
     }
+    func record(focus: Bool) {
+      lock.withLock { _focuses.append(focus) }
+      Waker.signalFromAnywhere()
+    }
+    func record(consumed: Int) {
+      lock.withLock { _consumed.append(consumed) }
+      Waker.signalFromAnywhere()
+    }
   }
 
   let feed: TerminalFeed
@@ -58,11 +70,15 @@ private final class TestFeed {
   var scrolls: [(ScrollDirection, Int)] { recorder.scrolls }
   var clicks: [TerminalCell] { recorder.clicks }
   var closed: Bool { recorder.closed }
+  var focuses: [Bool] { recorder.focuses }
+  var consumed: [Int] { recorder.consumed }
   var sentText: String { String(decoding: sent.reduce(Data(), +), as: UTF8.self) }
 
   /// - Parameter scrollable: stand in for a herdr pane. A pty has no `scroll` or `click`
   ///   closure, which is what `scrollsRemotely` reads.
-  init(scrollable: Bool = false) {
+  /// - Parameter raw: stand in for a herdr-core terminal, which also takes focus and consumed
+  ///   bytes.
+  init(scrollable: Bool = false, raw: Bool = false) {
     let (stream, continuation) = AsyncThrowingStream.makeStream(
       of: Data.self,
       throwing: (any Error).self
@@ -79,7 +95,10 @@ private final class TestFeed {
         : nil,
       // `async`, as herdr's bridge is. A synchronous closure converted to async runs without a
       // hop, which hid a reorder between clicks.
-      click: scrollable ? { @Sendable cell async in recorder.record(click: cell) } : nil
+      click: scrollable ? { @Sendable cell async in recorder.record(click: cell) } : nil,
+      focus: raw ? { @Sendable gained async in recorder.record(focus: gained) } : nil,
+      consumed: raw ? { @Sendable in recorder.record(consumed: $0) } : nil,
+      awaitsFirstSize: raw
     )
   }
 
@@ -1125,5 +1144,181 @@ struct TerminalFeedReadOnlyTests {
     session.close()
     await waitUntil { closedFlag.closed }
     #expect(closedFlag.closed)
+  }
+}
+
+/// A session over a herdr-core attach stream: what it owes the far side beyond its bytes.
+@MainActor
+@Suite("TerminalSession over a raw stream", .timeLimit(.minutes(1)))
+struct TerminalSessionRawStreamTests {
+  /// `terminal.attach`'s first paint at 40x20, captured from a scratch core 0.1.14. The program
+  /// had printed 1 to 40 and turned on focus reports, SGR mouse and bracketed paste, so this
+  /// holds a reset, history pushed off the top, `?1004h` and the win32 report.
+  private static let firstPaint = Data(
+    base64Encoded:
+      "G1shcBtbPzIwMjZsG1s/OWwbWz8xMDAwbBtbPzEwMDFsG1s/MTAwMmwbWz8xMDAzbBtbPzEwMDRsG1s/MTAwNWwb"
+      + "Wz8xMDA2bBtbPzEwMTVsG1s/MTAxNmwbWz8yMDA0bBtbPzFsG1s/NjZsG1s/MjAzMWwbWz8yMDQ4bBtbPTA7MXUb"
+      + "Wz8xMDQ5bBtbPzEwNDdsG1s/NDdsG1tIG1sySjENCjINCjMNCjQNCjUNCjYNCjcNCjgNCjkNCjEwDQoxMQ0KMTIN"
+      + "CjEzDQoxNA0KMTUNCjE2DQoxNw0KMTgNCjE5DQoyMA0KMjEbWzBtDQoKCgoKCgoKCgoKCgoKCgoKCgoKChtbSBtb"
+      + "MkobWz8xMDAwaBtbPzEwMDRoG1s/MTAwNmgbWz8yMDA0aBtbM2cbWzlHG0gbWzE3RxtIG1syNUcbSBtbMzNHG0gb"
+      + "W0gyMg0KMjMNCjI0DQoyNQ0KMjYNCjI3DQoyOA0KMjkNCjMwDQozMQ0KMzINCjMzDQozNA0KMzUNCjM2DQozNw0K"
+      + "MzgNCjM5DQo0MA0KcmVhZHk+IBtbMjA7OEgbWzBtG10yO2ZpeHR1cmUbXBtbPzkwMDFs"
+  )!
+
+  /// The view's delegate without the view: what the emulator replies lands in `session.send`.
+  private final class Forwarder: TerminalDelegate {
+    let session: TerminalSession
+    init(session: TerminalSession) { self.session = session }
+    func send(source: Terminal, data: ArraySlice<UInt8>) {
+      let session = session
+      MainActor.assumeIsolated { session.send(data) }
+    }
+  }
+
+  /// Whatever the emulator says back while it draws `paint`, ending at a sentinel so the
+  /// session's queue is known to have drained.
+  private func replies(toPaintOn feed: TestFeed) async -> String {
+    let session = TerminalSession(feed: feed.feed)
+    session.start()
+    let forwarder = Forwarder(session: session)
+    let terminal = Terminal(delegate: forwarder, options: TerminalOptions(cols: 40, rows: 20))
+    terminal.feed(buffer: ArraySlice([UInt8](Self.firstPaint)))
+    session.send(text: "sentinel")
+    await waitUntil { feed.sentText.hasSuffix("sentinel") }
+    withExtendedLifetime(forwarder) {}
+    return String(feed.sentText.dropLast("sentinel".count))
+  }
+
+  /// Anything here would be typed into the program. `CSI I` is the one SwiftTerm has:
+  /// `?1004h` reports the focus at once.
+  @Test("a core's first paint draws no reply from the emulator")
+  func firstPaintDrawsNoReply() async {
+    #expect(await replies(toPaintOn: TestFeed(raw: true)) == "")
+  }
+
+  /// The other half of the filter: without `focus`, nothing else tells the far side.
+  @Test("a feed without focus keeps SwiftTerm's own report")
+  func ptyKeepsTheFocusReport() async {
+    #expect(await replies(toPaintOn: TestFeed()) == "\u{1b}[I")
+  }
+
+  @Test("only a whole focus report is dropped")
+  func onlyAWholeReportIsDropped() async {
+    let feed = TestFeed(raw: true)
+    let session = TerminalSession(feed: feed.feed)
+    session.start()
+    session.send(text: "\u{1b}[O")
+    session.send(text: "\u{1b}[A")
+    session.send(text: "\u{1b}[Ix")
+    await waitUntil { feed.sentText.hasSuffix("x") }
+    #expect(feed.sentText == "\u{1b}[A\u{1b}[Ix")
+  }
+
+  /// The history arrives as lines pushed off the top, and the screen after a `2J`, so what the
+  /// emulator does with `2J` decides whether a drag finds it.
+  @Test("the paint's history lands in the local scrollback, in order, with the screen after")
+  func historyReachesScrollback() throws {
+    let delegate = NullDelegate()
+    let terminal = Terminal(delegate: delegate, options: TerminalOptions(cols: 40, rows: 20))
+    terminal.feed(buffer: ArraySlice([UInt8](Self.firstPaint)))
+
+    let text = String(decoding: terminal.getBufferAsData(), as: UTF8.self)
+    let numbers = text.split(separator: "\n").compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
+    #expect(numbers == Array(1...40), "\(text)")
+    withExtendedLifetime(delegate) {}
+  }
+
+  private final class NullDelegate: TerminalDelegate {
+    func send(source: Terminal, data: ArraySlice<UInt8>) {}
+  }
+
+  @Test("bytes count as consumed once rendered, not when they arrive")
+  func creditFollowsTheRenderer() async {
+    let feed = TestFeed(raw: true)
+    let session = TerminalSession(feed: feed.feed)
+    session.start()
+
+    feed.emit("before")
+    await waitUntil { session.bufferedByteCount == 6 }
+    #expect(feed.consumed.isEmpty)
+
+    var rendered = 0
+    session.attach { rendered += $0.count }
+    #expect(rendered == 6)
+    #expect(feed.consumed == [6])
+
+    feed.emit("after!!")
+    await waitUntil { rendered == 13 }
+    #expect(feed.consumed == [6, 7])
+  }
+
+  /// SwiftTerm says nothing about a grid that lands on its own default, and a core attach
+  /// holding for a size would wait out its deadline.
+  @Test("a feed that is waiting for a size hears the first grid, as a resize")
+  func firstGridReachesAWaitingFeed() async {
+    let feed = TestFeed(raw: true)
+    let session = TerminalSession(feed: feed.feed, openSettlingWindow: .zero)
+    session.start()
+
+    session.firstGridMeasured(TerminalSize(columns: 80, rows: 25))
+
+    await waitUntil { !feed.sizes.isEmpty }
+    #expect(feed.sizes == [TerminalSize(columns: 80, rows: 25)])
+  }
+
+  @Test("a first grid says nothing once a size has been reported")
+  func firstGridAfterAReport() async {
+    let feed = TestFeed(raw: true)
+    let session = TerminalSession(feed: feed.feed, openSettlingWindow: .zero)
+    session.start()
+
+    session.resize(to: TerminalSize(columns: 52, rows: 48))
+    session.firstGridMeasured(TerminalSize(columns: 80, rows: 25))
+
+    await waitUntil { !feed.sizes.isEmpty }
+    #expect(feed.sizes == [TerminalSize(columns: 52, rows: 48)])
+  }
+
+  /// A pty and a herdr pane stay as they were: no report at SwiftTerm's default grid.
+  @Test("a feed that is not waiting ignores the first grid")
+  func firstGridIgnored() {
+    let session = TerminalSession(feed: TestFeed().feed)
+    session.start()
+
+    session.firstGridMeasured(TerminalSize(columns: 80, rows: 25))
+
+    #expect(session.reportedSize == nil)
+  }
+
+  @Test("a focus change is sent once, in order with what was typed")
+  func focusIsSentOnce() async {
+    let feed = TestFeed(raw: true)
+    let session = TerminalSession(feed: feed.feed)
+    session.start()
+
+    session.focus(true)
+    session.focus(true)
+    session.send(text: "x")
+    session.focus(false)
+    await waitUntil { feed.focuses.count >= 2 }
+    #expect(feed.focuses == [true, false])
+    #expect(feed.sentText == "x")
+  }
+
+  @Test("a closed session reports no focus, and a feed that does not ask is not told")
+  func focusNeedsALiveSessionAndAFeedThatAsks() async {
+    let raw = TestFeed(raw: true)
+    let session = TerminalSession(feed: raw.feed)
+    session.start()
+    session.close()
+    session.focus(true)
+    await waitUntil { raw.closed }
+    #expect(raw.focuses.isEmpty)
+
+    let pty = TerminalSession(feed: TestFeed().feed)
+    pty.start()
+    pty.focus(true)
+    #expect(!pty.scrollsRemotely)
+    #expect(!pty.clicksRemotely)
   }
 }

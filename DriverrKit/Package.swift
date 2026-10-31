@@ -54,8 +54,8 @@ let package = Package(
         .product(name: "NIOSSH", package: "swift-nio-ssh"),
       ]
     ),
-    // `DriverrHC` only for `CoreOverSSHTests`, the opt-in run of a real core over a real exec
-    // channel. No production target joins the two; the app does.
+    // `DriverrHC` only for `CoreOverSSHTests` and `CoreAttachOverSSHTests`, the opt-in runs of
+    // a real core over a real exec channel. No production target joins the two; the app does.
     .testTarget(name: "DriverrSSHTests", dependencies: ["DriverrSSH", "DriverrHC"]),
     // No dependency on DriverrSSH on purpose: DriverrTerm renders a byte stream, and
     // making it import the SSH module would tie the terminal to one source of bytes.

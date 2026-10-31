@@ -4,12 +4,22 @@ import Foundation
 
 /// Drives a herdr-core over one `hc connect` exec channel.
 ///
-/// **Read-only so far.** `snapshot`, `availability` and `attachCommand` are real. Everything
-/// that changes a terminal or reads its screen throws, except `readPanes`, whose contract
-/// already maps an unreadable pane to an empty one. #18 and later fill these in.
+/// **Typing goes through a viewer**, never `terminal.send` or `terminal.keys`, which wait for
+/// about 3 s of quiet and refuse a blocked agent. See `typing(into:_:)`.
+///
+/// Reading a screen and acting on a pane are not here yet and throw, except `readPanes`, whose
+/// contract already maps an unreadable pane to an empty one.
 public struct CoreControl: HerdrControl {
   /// How long one call may take, the opening included.
   public static let defaultCallDeadline: Duration = .seconds(5)
+
+  /// Scrollback to paint at the head of a typing attach: what SwiftTerm keeps by default.
+  static let attachHistoryLines = 500
+  /// Between a paste and the key that submits it, unless the program's template says. The
+  /// core's own `terminal.send` waits the same.
+  static let defaultPasteGap: Duration = .milliseconds(200)
+  /// Between named keys, as the core's own `terminal.keys` paces them.
+  static let keyGap: Duration = .milliseconds(30)
 
   /// Where the core was found. `herdr-core` or `hc`; the two are one program.
   public let binaryPath: String
@@ -62,16 +72,68 @@ public struct CoreControl: HerdrControl {
     "\(shellQuoted(binaryPath)) attach \(shellQuoted(pane.terminalID ?? pane.id))"
   }
 
+  public func paneAttacher(for paneID: String) -> (any PaneAttacher)? { self }
+
   public func sendText(paneID: String, text: String) async throws {
-    throw Self.notYet
+    try await typing(into: paneID) { type, _ in try await type(Data(text.utf8)) }
   }
 
+  /// The text, a pause, then the key that submits, as the core's own `terminal.send` writes
+  /// them. A TUI that takes a paste as one event needs the pause to see a separate Enter.
+  ///
+  /// CR for a `submit` this cannot spell: the core encodes it against the program's keyboard
+  /// modes, and a viewer does not hold those.
   public func submitText(paneID: String, text: String) async throws {
-    throw Self.notYet
+    try await typing(into: paneID) { type, terminal in
+      try await type(Data(text.utf8))
+      let gap = terminal?.pasteGapMilliseconds.map { Duration.milliseconds($0) }
+      try await Task.sleep(for: gap ?? Self.defaultPasteGap)
+      let submit = terminal?.submit.flatMap(PaneKey.init(rawValue:)) ?? .enter
+      try await type(submit.viewerBytes)
+    }
   }
 
   public func sendKeys(paneID: String, keys: [PaneKey]) async throws {
-    throw Self.notYet
+    try await typing(into: paneID) { type, _ in
+      for (index, key) in keys.enumerated() {
+        if index > 0 { try await Task.sleep(for: Self.keyGap) }
+        try await type(key.viewerBytes)
+      }
+    }
+  }
+
+  /// Runs `body` with a short-lived viewer that can type and cannot resize.
+  ///
+  /// A held `observe` cannot type, because the core drops an observer's input. **At 0x0 the
+  /// core returns before it resizes**, at the attach and at each write, so typing from a chat
+  /// never reflows the desk, and `resumed` keeps the attach itself from counting as activity.
+  /// No credit is returned, because nobody reads this stream and it closes in a moment.
+  private func typing(
+    into paneID: String,
+    _ body: (
+      _ type: (Data) async throws -> Void,
+      _ terminal: CoreAttachResult.Attached?
+    ) async throws -> Void
+  ) async throws {
+    let (connection, handshake) = await link.established()
+    guard let connection else { throw Self.failure(for: handshake) }
+    let viewer = try await connection.openChannel(
+      "terminal.attach",
+      params: CoreAttachParams(
+        terminal: CorePaneID.address(of: paneID), cols: 0, rows: 0, resumed: true),
+      as: CoreAttachResult.self,
+      handler: { _ in }
+    )
+    do {
+      try await body(
+        { try await connection.write(.data, $0, toChannel: viewer.channel) },
+        viewer.answer.terminal
+      )
+    } catch {
+      await connection.closeChannel(viewer.channel)
+      throw error
+    }
+    await connection.closeChannel(viewer.channel)
   }
 
   public func readPanes(ids: [String], lines: Int) async throws -> [String: [String]] {
@@ -111,6 +173,58 @@ public struct CoreControl: HerdrControl {
         ? "herdr-core is not answering."
         : availability(for: handshake).message
     )
+  }
+}
+
+extension CoreControl: PaneAttacher {
+  /// Active from the start, at the phone's size, because the emulator's width is fixed from
+  /// here on. So the desk reflows at open and not at the first keystroke, and the history
+  /// arrives at the width it will be read at.
+  public func open(terminalID: String, size: TerminalSize) async throws -> any PaneBridge {
+    try await attach(
+      CoreAttachParams(
+        terminal: terminalID,
+        cols: size.columns,
+        rows: size.rows,
+        history: Self.attachHistoryLines
+      )
+    )
+  }
+
+  /// No history, because an observer's bytes arrive at the terminal's width, not the phone's.
+  public func observe(terminalID: String, size: TerminalSize) async throws -> any PaneObserver {
+    try await attach(
+      CoreAttachParams(
+        terminal: terminalID, cols: size.columns, rows: size.rows, observe: true)
+    )
+  }
+
+  private func attach(_ params: CoreAttachParams) async throws -> CoreAttachment {
+    let (connection, handshake) = await link.established()
+    guard let connection else { throw Self.failure(for: handshake) }
+    return try await CoreAttachment.open(on: connection, params: params)
+  }
+}
+
+extension PaneKey {
+  /// What a viewer writes for this key.
+  ///
+  /// The arrows are plain `CSI A`: the core encodes `terminal.keys` against the program's
+  /// keyboard modes, and a viewer does not hold those.
+  fileprivate var viewerBytes: Data {
+    switch self {
+    case .enter: Data([0x0D])
+    case .esc: Data([0x1B])
+    case .tab: Data([0x09])
+    case .interrupt: Data([0x03])
+    case .up: Data("\u{1B}[A".utf8)
+    case .down: Data("\u{1B}[B".utf8)
+    case .right: Data("\u{1B}[C".utf8)
+    case .left: Data("\u{1B}[D".utf8)
+    case .yes, .no, .digit1, .digit2, .digit3, .digit4, .digit5, .digit6, .digit7, .digit8,
+      .digit9:
+      Data(rawValue.utf8)
+    }
   }
 }
 

@@ -235,16 +235,149 @@ struct CoreControlTests {
     )
   }
 
-  @Test("everything that writes refuses instead of reporting success")
-  func writesRefuse() async {
+  /// One connected core that answers `terminal.attach`.
+  private func attachable(_ reply: FakeCoreStream.Reply? = nil) -> FakeCoreStream {
+    let stream = FakeCoreStream()
+    stream.replies = ["terminal.attach": reply ?? .result(FakeCoreStream.attached(channel: 3))]
+    return stream
+  }
+
+  private func text(_ frame: CoreFrame) -> String {
+    String(decoding: frame.payload, as: UTF8.self)
+  }
+
+  /// Everything after the close is the same in every case below, so it is checked once here:
+  /// DATA frames on the viewer's channel, then its CLOSE, and nothing that claims the size.
+  private func typed(on stream: FakeCoreStream) async throws -> [String] {
+    try await waitUntil("the CLOSE") { stream.streamFrames.last?.kind == .close }
+    let frames = stream.streamFrames
+    #expect(frames.allSatisfy { $0.channel == 3 })
+    #expect(frames.dropLast().allSatisfy { $0.kind == .data })
+    return frames.dropLast().map(text)
+  }
+
+  /// `touch` drops an observer's input, so a held `observe` cannot type. 0x0 is what keeps a
+  /// typing viewer off the size: `apply_size` returns before it resizes.
+  @Test("typing goes through a short-lived 0x0 viewer, never terminal.send")
+  func typingViewer() async throws {
+    let stream = attachable()
+    let control = control(CoreHost(stream))
+
+    try await control.sendText(paneID: "core:box/t7", text: "hi")
+
+    #expect(try await typed(on: stream) == ["hi"])
+    #expect(stream.methods == ["terminal.attach"])
+    let params = try #require(try stream.params(of: "terminal.attach").first)
+    #expect(params["terminal"] as? String == "box/t7")
+    #expect(params["cols"] as? Int == 0)
+    #expect(params["rows"] as? Int == 0)
+    #expect(params["resumed"] as? Bool == true)
+    #expect(params["observe"] as? Bool == false)
+    #expect(params["history"] as? Int == 0)
+    #expect(params["display"] == nil)
+  }
+
+  @Test("a submit is the text, then CR on its own, as core's own send writes them")
+  func submit() async throws {
+    let stream = attachable(.result(FakeCoreStream.attached(channel: 3, pasteGap: 1)))
+    let control = control(CoreHost(stream))
+
+    try await control.submitText(paneID: "core:t7", text: "hi")
+
+    #expect(try await typed(on: stream) == ["hi", "\r"])
+  }
+
+  @Test(
+    "a template's submit key is pressed, and one a viewer cannot spell falls back to CR",
+    arguments: [("tab", "\t"), ("ctrl+enter", "\r")]
+  )
+  func templateSubmit(key: String, written: String) async throws {
+    let stream = attachable(
+      .result(FakeCoreStream.attached(channel: 3, submit: key, pasteGap: 1)))
+    let control = control(CoreHost(stream))
+
+    try await control.submitText(paneID: "core:t7", text: "hi")
+
+    #expect(try await typed(on: stream) == ["hi", written])
+  }
+
+  @Test("keys are written one at a time, spelled as a plain terminal sends them")
+  func keys() async throws {
+    let stream = attachable()
+    let control = control(CoreHost(stream))
+
+    try await control.sendKeys(
+      paneID: "core:t7",
+      keys: [.up, .down, .left, .right, .enter, .esc, .tab, .interrupt, .yes, .no, .digit3]
+    )
+
+    #expect(
+      try await typed(on: stream) == [
+        "\u{1B}[A", "\u{1B}[B", "\u{1B}[D", "\u{1B}[C", "\r", "\u{1B}", "\t", "\u{03}", "y", "n",
+        "3",
+      ])
+  }
+
+  @Test("an attach the core refuses reaches the composer in the core's words, and types nothing")
+  func refusedTyping() async throws {
+    let stream = attachable(.error("t7 is lost, waiting for its new shell"))
+    let control = control(CoreHost(stream))
+
+    await #expect(
+      throws: AppError.herdrCommandFailed(reason: "t7 is lost, waiting for its new shell")
+    ) {
+      try await control.sendText(paneID: "core:t7", text: "hi")
+    }
+    #expect(stream.streamFrames.isEmpty)
+  }
+
+  @Test("opening a terminal is active, at the phone's size, with the emulator's history")
+  func openParams() async throws {
+    let stream = attachable()
+    let control = control(CoreHost(stream))
+
+    let attacher = try #require(control.paneAttacher(for: "core:t7"))
+    _ = try await attacher.open(
+      terminalID: "box/t7", size: TerminalSize(columns: 50, rows: 20))
+
+    let params = try #require(try stream.params(of: "terminal.attach").first)
+    #expect(params["terminal"] as? String == "box/t7")
+    #expect(params["cols"] as? Int == 50)
+    #expect(params["rows"] as? Int == 20)
+    #expect(params["resumed"] as? Bool == false)
+    #expect(params["observe"] as? Bool == false)
+    #expect(params["history"] as? Int == 500)
+    #expect(params["display"] == nil)
+  }
+
+  @Test("an observer is read-only, and takes no history")
+  func observeParams() async throws {
+    let stream = attachable()
+    let control = control(CoreHost(stream))
+
+    let attacher = try #require(control.paneAttacher(for: "core:t7"))
+    _ = try await attacher.observe(terminalID: "t7", size: TerminalSize(columns: 50, rows: 20))
+
+    let params = try #require(try stream.params(of: "terminal.attach").first)
+    #expect(params["observe"] as? Bool == true)
+    #expect(params["history"] as? Int == 0)
+  }
+
+  @Test("an attach with no core says so")
+  func attachWithNoCore() async {
+    let control = control(CoreHost())
+    await #expect(throws: AppError.herdrCommandFailed(reason: "herdr-core is not answering.")) {
+      _ = try await control.open(terminalID: "t7", size: TerminalSize(columns: 50, rows: 20))
+    }
+  }
+
+  @Test("what is not built yet refuses instead of reporting success")
+  func notBuiltYet() async {
     let control = control(CoreHost())
     let pane = Pane(id: "core:t1", tabID: "x", workspaceID: "y", title: "z", terminalID: "t1")
     let refused = AppError.herdrCommandFailed(
       reason: "Driverr can't do this on a herdr-core terminal yet.")
 
-    await #expect(throws: refused) { try await control.sendText(paneID: pane.id, text: "x") }
-    await #expect(throws: refused) { try await control.submitText(paneID: pane.id, text: "x") }
-    await #expect(throws: refused) { try await control.sendKeys(paneID: pane.id, keys: [.enter]) }
     await #expect(throws: refused) { _ = try await control.readScreen(of: pane, lines: 5) }
     await #expect(throws: refused) { try await control.perform(.close, on: pane.id) }
     await #expect(throws: refused) {
