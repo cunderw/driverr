@@ -1526,12 +1526,26 @@ final class TerminalSceneModel {
     }
 
     let send: @Sendable (Data) async throws -> Void = { @MainActor [weak self] data in
-      self?.accept(data, from: target)
+      // Promoted, so this session is the controller now, and `accept` would hand the bytes
+      // straight back to it.
+      if case .controller(let bridge)? = self?.entry(for: target)?.attachment,
+        bridge as AnyObject === observer as AnyObject
+      {
+        try await bridge.send(bytes: data)
+      } else {
+        self?.accept(data, from: target)
+      }
     }
     if let raw = observer as? any RawTerminalStream {
       // Credit as usual, and `focus`, which an observer ignores, so that SwiftTerm's report of
-      // a paint's `?1004h` is dropped rather than held and typed at the controller.
-      let feed = TerminalFeed(raw: raw, output: stream, send: send, resize: { _ in })
+      // a paint's `?1004h` is dropped rather than held and typed at the controller. A size
+      // goes through too: a core ignores it from an observer, and a promotion needs it.
+      let feed = TerminalFeed(
+        raw: raw,
+        output: stream,
+        send: send,
+        resize: { try await (observer as? any PaneBridge)?.resize(to: $0) }
+      )
       return (feed, pump)
     }
     let feed = TerminalFeed(
@@ -1637,6 +1651,36 @@ final class TerminalSceneModel {
     if actions?.didClose == true { paneWasClosed = true }
     adoptNewPane()
     rebuildActions(for: current)
+    promoteObserverLeftOnItsTerminal()
+  }
+
+  /// Makes the pane on screen typable if its chat has just gone from under an observer.
+  ///
+  /// When an agent quits, `surface(for:)` turns to `.terminal` with nobody asking, so the
+  /// keyboard comes up on a stream that cannot type. Only the current pane: a warm one opens
+  /// when it is chosen, and a host can lose every agent at once. A notice stops this asking
+  /// again on every tree, and Retry opens the pane as any open does.
+  private func promoteObserverLeftOnItsTerminal() {
+    let target = current
+    guard notices[target] == nil, surface(for: target) == .terminal,
+      let watched = entry(for: target), watched.role == .observer,
+      case .observer(let observer) = watched.attachment,
+      let promotable = observer as? any PromotableObserver
+    else { return }
+
+    enqueue(on: target) { [weak self] in
+      guard let self, !isClosed, entry(for: target)?.id == watched.id,
+        entry(for: target)?.role == .observer
+      else { return }
+      guard let bridge = try? await promotable.promote() else {
+        notices[target] = .failed(.channelFailed(reason: "The pane could not be opened."))
+        return
+      }
+      guard let index = entries.firstIndex(where: { $0.id == watched.id }) else { return }
+      entries[index].role = .controller
+      entries[index].attachment = .controller(bridge)
+      flushHeld(to: entries[index].session, for: target)
+    }
   }
 
   /// Where to send someone whose pane has gone: the nearest live pane.

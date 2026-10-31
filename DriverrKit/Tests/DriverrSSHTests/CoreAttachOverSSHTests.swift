@@ -335,6 +335,37 @@ struct CoreAttachOverSSHTests {
     }
   }
 
+  /// An observer's agent quit. Promoting it paints the shell and leaves the desk alone, and the
+  /// first keystroke is what takes the size.
+  @Test("a promoted observer types, with the size the desk's until it does")
+  func promotedObserver() async throws {
+    try await withScratchCore(runs: "sh -c 'seq 1 300; exec sh'") { scratch in
+      try await Task.sleep(for: .milliseconds(300))
+      let attacher = try #require(scratch.control.paneAttacher(for: scratch.paneID))
+      let desk = try await attacher.open(
+        terminalID: scratch.address, size: TerminalSize(columns: 100, rows: 30))
+      try await waitUntil("the desk's size") { try await size(of: scratch) == [100, 30] }
+
+      let observer = try await attacher.observe(terminalID: scratch.address, size: Self.phone)
+      let output = ReadBack()
+      output.start(observer.output, on: observer as? any RawTerminalStream)
+      try await waitUntil("the observer's paint") { output.text.contains("$ ") }
+      #expect(!output.text.contains("\r\n150\r\n"), "an observer got history")
+      try await (observer as? any PaneBridge)?.resize(to: Self.phone)
+
+      let bridge = try await #require(observer as? any PromotableObserver).promote()
+      try await waitUntil("the history") { output.text.contains("\r\n150\r\n") }
+      try await (bridge as? any RawTerminalStream)?.focus(true)
+      try await Task.sleep(for: .milliseconds(300))
+      #expect(try await size(of: scratch) == [100, 30], "took the size with nothing typed")
+
+      try await bridge.send(text: "echo pro''moted\r")
+      try await waitUntil("the echo") { output.text.contains("promoted\r\n") }
+      #expect(try await size(of: scratch) == [40, 20])
+      await desk.release()
+    }
+  }
+
   @Test("the composer types through a 0x0 viewer without moving the size")
   func composer() async throws {
     try await withScratchCore { scratch in

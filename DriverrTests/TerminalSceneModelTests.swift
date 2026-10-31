@@ -723,6 +723,106 @@ struct TerminalSceneModelTests {
     #expect(attacher.log == ["open t7"])
   }
 
+  /// The scene on a core pane with an agent, read from its chat, and the control that can take
+  /// the agent away.
+  private func watchedAgentScene(
+    _ attacher: FakeCoreAttacher
+  ) async throws -> (TerminalSceneModel, FakeControl, FakeCoreViewer) {
+    let agent = FakeControl.seededTree.pane(id: "w1:p1")?.agent
+    let control = FakeControl(
+      tree: tree(withCorePane: "core:t7", agent: agent), attacher: attacher)
+    let (scene, _) = await makeScene(
+      initialTarget: .pane(id: "core:t7"), surface: .chat, herdr: control,
+      openSettlingWindow: .zero, responder: Self.everythingPaints)
+    let observer = try await opened(scene, attacher)
+    #expect(scene.currentRole == .observer)
+    return (scene, control, observer)
+  }
+
+  private func agentQuits(_ scene: TerminalSceneModel, _ control: FakeControl) async {
+    await control.update(to: tree(withCorePane: "core:t7"))
+    await scene.model.session?.refresh()
+    scene.treeChanged()
+    await scene.settle()
+  }
+
+  /// With no agent the pane has no chat, so the keyboard comes up on a terminal an observer
+  /// cannot type into. Every keystroke would be held for a controller nothing is opening.
+  @Test("an observer whose agent quits starts typing where it stands")
+  func anObserverLeftOnTheTerminalIsPromoted() async throws {
+    let attacher = FakeCoreAttacher()
+    let (scene, control, observer) = try await watchedAgentScene(attacher)
+    let session = try #require(scene.currentSession)
+
+    session.send(text: "before")
+    await agentQuits(scene, control)
+
+    #expect(observer.promotionCount == 1)
+    #expect(scene.currentRole == .controller)
+    #expect(scene.currentSession === session, "a new view would take the size from a desk")
+    #expect(attacher.log == ["observe t7"])
+
+    session.send(text: "after")
+    await waitUntilSignalled("the keys") { observer.sent == Data("beforeafter".utf8) }
+    session.resize(to: TerminalSize(columns: 52, rows: 22))
+    await waitUntilSignalled("the size") { !observer.resizes.isEmpty }
+  }
+
+  @Test("a tree change with the observer already promoted, or still on chat, does nothing")
+  func promotionHappensOnce() async throws {
+    let attacher = FakeCoreAttacher()
+    let (scene, control, observer) = try await watchedAgentScene(attacher)
+
+    scene.treeChanged()
+    await scene.settle()
+    #expect(observer.promotionCount == 0)
+
+    await agentQuits(scene, control)
+    scene.treeChanged()
+    await scene.settle()
+    #expect(observer.promotionCount == 1)
+  }
+
+  @Test("a refused promotion says so, and Retry opens the terminal")
+  func aRefusedPromotion() async throws {
+    let attacher = FakeCoreAttacher()
+    let (scene, control, observer) = try await watchedAgentScene(attacher)
+    observer.refusePromotion()
+
+    await agentQuits(scene, control)
+
+    #expect(scene.notice == .failed(.channelFailed(reason: "The pane could not be opened.")))
+    #expect(scene.currentRole == .observer)
+
+    scene.treeChanged()
+    await scene.settle()
+    #expect(observer.promotionCount == 1, "asked again on a tree change")
+
+    // What the view behind the chat measured, so the Retry attaches at once.
+    try #require(scene.currentSession).resize(to: Self.measured)
+    scene.retryOpen()
+    await scene.settle()
+    #expect(attacher.log == ["observe t7", "open t7"])
+    #expect(scene.currentRole == .controller)
+  }
+
+  /// Nobody is looking at it, and every pane on a host can lose its agent at once.
+  @Test("a warm observer whose agent quits stays an observer")
+  func aWarmObserverIsNotPromoted() async throws {
+    let attacher = FakeCoreAttacher()
+    let (scene, control, observer) = try await watchedAgentScene(attacher)
+    scene.select(.pane(id: "w1:p1"))
+    await scene.settle()
+
+    await control.update(to: tree(withCorePane: "core:t7"))
+    await scene.model.session?.refresh()
+    scene.treeChanged()
+    await scene.settle()
+
+    #expect(observer.promotionCount == 0)
+    #expect(scene.role(for: .pane(id: "core:t7")) == .observer)
+  }
+
   @Test("a shell that never comes ends in a sentence and a Retry")
   func aLostTerminalGivesUp() async throws {
     let attacher = FakeCoreAttacher()

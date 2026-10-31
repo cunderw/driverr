@@ -55,7 +55,9 @@ final class FakeCoreAttacher: PaneAttacher, @unchecked Sendable {
 }
 
 /// The far end of one attach.
-final class FakeCoreViewer: PaneBridge, PaneObserver, RawTerminalStream, @unchecked Sendable {
+final class FakeCoreViewer:
+  PaneBridge, PromotableObserver, RawTerminalStream, @unchecked Sendable
+{
   let output: AsyncThrowingStream<Data, any Error>
   private let continuation: AsyncThrowingStream<Data, any Error>.Continuation
   private let lock = NSLock()
@@ -65,6 +67,8 @@ final class FakeCoreViewer: PaneBridge, PaneObserver, RawTerminalStream, @unchec
   private var consumedBytes = 0
   private var releases = 0
   private var leavings = 0
+  private var promotions = 0
+  private var refusesPromotion = false
 
   init() {
     (output, continuation) = AsyncThrowingStream.makeStream(
@@ -79,6 +83,11 @@ final class FakeCoreViewer: PaneBridge, PaneObserver, RawTerminalStream, @unchec
   var consumedByteCount: Int { lock.withLock { consumedBytes } }
   var releaseCount: Int { lock.withLock { releases } }
   var leftAlternateScreenCount: Int { lock.withLock { leavings } }
+  var promotionCount: Int { lock.withLock { promotions } }
+
+  func refusePromotion() {
+    lock.withLock { refusesPromotion = true }
+  }
 
   func paint(_ text: String) {
     continuation.yield(Data(text.utf8))
@@ -101,6 +110,14 @@ final class FakeCoreViewer: PaneBridge, PaneObserver, RawTerminalStream, @unchec
   func focus(_ gained: Bool) async throws { record { focuses.append(gained) } }
   func consumed(_ bytes: Int) { record { consumedBytes += bytes } }
   func leftAlternateScreen() { record { leavings += 1 } }
+
+  func promote() async throws -> any PaneBridge {
+    record { promotions += 1 }
+    if lock.withLock({ refusesPromotion }) {
+      throw AppError.herdrCommandFailed(reason: "lost, waiting for its new shell")
+    }
+    return self
+  }
 
   func release() async {
     record { releases += 1 }

@@ -11,7 +11,9 @@ import Foundation
 /// **Credit is returned for what was consumed, not what was read.** The reader yields into
 /// an unbounded stream, so crediting there would let a burst run ahead of the main thread
 /// with nothing to stop it. Whoever renders the bytes calls `consumed(_:)`.
-final class CoreAttachment: PaneBridge, PaneObserver, RawTerminalStream, @unchecked Sendable {
+final class CoreAttachment:
+  PaneBridge, PromotableObserver, RawTerminalStream, @unchecked Sendable
+{
   /// How many consumed bytes to gather before sending CREDIT.
   ///
   /// A fraction of the stream's 256 KiB starting credit, so what is still owed can never
@@ -22,10 +24,12 @@ final class CoreAttachment: PaneBridge, PaneObserver, RawTerminalStream, @unchec
 
   private let connection: CoreConnection
   private let delivery: CoreViewerDelivery
-  private let isObserver: Bool
   /// A lock, not an actor: `consumed` runs on the main actor for every chunk and must not wait.
   private let lock = NSLock()
   private var channel: UInt32
+  private var isObserver: Bool
+  /// Promoted, and has neither typed nor resized. See `focus(_:)`.
+  private var awaitsActivity = false
   /// What an attach for this viewer asks for now, kept for `repaint()`.
   private var params: CoreAttachParams
   private var generation = 0
@@ -57,7 +61,7 @@ final class CoreAttachment: PaneBridge, PaneObserver, RawTerminalStream, @unchec
         "terminal.attach",
         params: params,
         as: CoreAttachResult.self,
-        handler: delivery.handler(generation: 0)
+        handler: delivery.handler(generation: 0, carriesHistory: params.history > 0)
       )
       return CoreAttachment(
         delivery: delivery,
@@ -96,6 +100,7 @@ final class CoreAttachment: PaneBridge, PaneObserver, RawTerminalStream, @unchec
   }
 
   func send(bytes: Data) async throws {
+    lock.withLock { awaitsActivity = false }
     try await connection.write(.data, bytes, toChannel: currentChannel)
   }
 
@@ -109,6 +114,7 @@ final class CoreAttachment: PaneBridge, PaneObserver, RawTerminalStream, @unchec
     lock.withLock {
       params.cols = size.columns
       params.rows = size.rows
+      awaitsActivity = false
     }
     try await connection.write(.resize, payload, toChannel: currentChannel)
   }
@@ -118,9 +124,12 @@ final class CoreAttachment: PaneBridge, PaneObserver, RawTerminalStream, @unchec
   func scroll(_ direction: ScrollDirection, lines: Int) async throws {}
   func click(_ cell: TerminalCell) async throws {}
 
+  /// An observer's focus means nothing to the core. A promoted viewer's gain is held back
+  /// until it has done something, because the core counts it as activity and would hand it the
+  /// size from a desk, for a keyboard coming up on a pane nobody has touched.
   func focus(_ gained: Bool) async throws {
-    // An observer's focus means nothing to the core.
-    guard !isObserver else { return }
+    let isDropped: Bool = lock.withLock { isObserver || (gained && awaitsActivity) }
+    guard !isDropped else { return }
     try await connection.write(.focus, Data([gained ? 1 : 0]), toChannel: currentChannel)
   }
 
@@ -130,7 +139,7 @@ final class CoreAttachment: PaneBridge, PaneObserver, RawTerminalStream, @unchec
   /// emulator has nothing behind `top`. Only a paint brings them back, and only an attach
   /// brings a paint. A stream that saw the program start and kept up has it all already.
   func leftAlternateScreen() {
-    guard !isObserver, delivery.takePaintedAlternateScreen() else { return }
+    guard !lock.withLock({ isObserver }), delivery.takePaintedAlternateScreen() else { return }
     let running = Task { await repaint() }
     lock.withLock { repainting = running }
   }
@@ -140,33 +149,61 @@ final class CoreAttachment: PaneBridge, PaneObserver, RawTerminalStream, @unchec
     await lock.withLock { repainting }?.value
   }
 
+  /// Replaces the observe channel with one that can type, in the same output.
+  ///
+  /// `resumed` like a repaint, with the history an observer never got.
+  func promote() async throws -> any PaneBridge {
+    try await replaceChannel {
+      $0.observe = false
+      $0.history = CoreControl.attachHistoryLines
+    }
+    lock.withLock {
+      params.observe = false
+      params.history = CoreControl.attachHistoryLines
+      isObserver = false
+      awaitsActivity = true
+    }
+    return self
+  }
+
   /// A second channel into the same output, so the emulator and its keyboard stay as they are.
   ///
-  /// `resumed`, because the phone did nothing: a desk that typed since keeps the size. No
-  /// history when the emulator already has it, which a repaint for falling behind leaves it
-  /// holding, or it would print twice.
+  /// No history when the emulator already has it, which a repaint for falling behind leaves it
+  /// holding, or it would print twice. If the attach is refused, the old channel stays and the
+  /// screen stays blank until the next open.
+  private func repaint() async {
+    let holdsHistory = delivery.holdsHistory
+    try? await replaceChannel { if holdsHistory { $0.history = 0 } }
+  }
+
+  /// Attaches again as `adjust` says, and moves this viewer to the new channel.
+  ///
+  /// `resumed`, because the phone did nothing: a desk that typed since keeps the size.
   ///
   /// The old channel delivers until the new one's first frame, whose paint covers anything cut
-  /// off. If the attach is refused, the old channel stays and the screen stays blank until the
-  /// next open.
-  private func repaint() async {
+  /// off.
+  private func replaceChannel(_ adjust: @Sendable (inout CoreAttachParams) -> Void) async throws {
     let next: (params: CoreAttachParams, generation: Int)? = lock.withLock {
       guard !isReleased else { return nil }
       generation += 1
       isRepainting = true
-      var repaint = params
-      repaint.resumed = true
-      if delivery.holdsHistory { repaint.history = 0 }
-      return (repaint, generation)
+      var replacement = params
+      replacement.resumed = true
+      adjust(&replacement)
+      return (replacement, generation)
     }
-    guard let next else { return }
+    guard let next else { throw AppError.channelFailed(reason: "The terminal has closed.") }
 
-    let opened = try? await connection.openChannel(
-      "terminal.attach",
-      params: next.params,
-      as: CoreAttachResult.self,
-      handler: delivery.handler(generation: next.generation)
-    )
+    let attached = await Result {
+      try await connection.openChannel(
+        "terminal.attach",
+        params: next.params,
+        as: CoreAttachResult.self,
+        handler: delivery.handler(
+          generation: next.generation, carriesHistory: next.params.history > 0)
+      )
+    }
+    let opened = try? attached.get()
     // Credit held meanwhile goes out here whether or not the attach worked. It may be all
     // the window had, and then no later `consumed` would come to send it.
     let settled: (unused: UInt32?, credit: (bytes: Int, channel: UInt32)?) = lock.withLock {
@@ -180,6 +217,7 @@ final class CoreAttachment: PaneBridge, PaneObserver, RawTerminalStream, @unchec
       await connection.credit(credit.bytes, toChannel: credit.channel)
     }
     if let unused = settled.unused { await connection.closeChannel(unused) }
+    _ = try attached.get()
   }
 
   func consumed(_ bytes: Int) {
@@ -253,7 +291,7 @@ private final class CoreViewerDelivery: @unchecked Sendable {
   /// `PaneBridge.output`'s contract: a clean finish for a program that ended, a
   /// `TerminalCloseReason` for anything else, and `.streamEnded` for a connection that went
   /// with no CLOSE.
-  func handler(generation: Int) -> CoreConnection.ChannelHandler {
+  func handler(generation: Int, carriesHistory: Bool) -> CoreConnection.ChannelHandler {
     { [self] event in
       let isCurrent: Bool = lock.withLock {
         guard generation >= self.generation else { return false }
@@ -266,7 +304,8 @@ private final class CoreViewerDelivery: @unchecked Sendable {
       case .connectionEnded:
         continuation.finish(throwing: TerminalCloseReason.streamEnded)
       case .frame(let frame) where frame.kind == .data:
-        continuation.yield(prepared(frame.payload, generation: generation))
+        continuation.yield(
+          prepared(frame.payload, generation: generation, carriesHistory: carriesHistory))
       case .frame(let frame) where frame.kind == .close:
         let reason = CoreAttachment.closeReason(from: frame.payload)
         if reason == .paneClosed {
@@ -280,16 +319,17 @@ private final class CoreViewerDelivery: @unchecked Sendable {
     }
   }
 
-  /// Only a channel's first paint can hold the history. A repaint for falling behind has none,
-  /// so one of the normal screen is no answer to a stream that never had it.
-  private func prepared(_ bytes: Data, generation: Int) -> Data {
+  /// Only a channel's first paint can hold the history, and only one that asked for it. A
+  /// repaint for falling behind has none, so one of the normal screen is no answer to a stream
+  /// that never had it.
+  private func prepared(_ bytes: Data, generation: Int, carriesHistory: Bool) -> Data {
     guard let paint = CorePaint(bytes) else { return bytes }
     lock.withLock {
       let isFirst = generation != paintedGeneration
       paintedGeneration = generation
       if paint.isOnAlternateScreen {
         paintedAlternateScreen = true
-      } else if isFirst || holdsHistoryNow {
+      } else if isFirst && carriesHistory || holdsHistoryNow {
         holdsHistoryNow = true
         paintedAlternateScreen = false
       }
@@ -331,5 +371,16 @@ struct CorePaint {
     bytes.replaceSubrange(leaving, with: Self.leaving)
     self.bytes = bytes
     isOnAlternateScreen = frame[resetEnd.upperBound...].starts(with: Self.enteringAlternateScreen)
+  }
+}
+
+extension Result where Failure == any Error {
+  /// `Result(catching:)`, for an async body.
+  fileprivate init(_ body: () async throws -> Success) async {
+    do {
+      self = .success(try await body())
+    } catch {
+      self = .failure(error)
+    }
   }
 }

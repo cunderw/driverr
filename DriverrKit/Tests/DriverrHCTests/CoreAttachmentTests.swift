@@ -327,7 +327,7 @@ struct CoreAttachmentTests {
   @Test("a second exit from the alternate screen attaches nothing more")
   func oneRepaintPerPaint() async throws {
     let stream = FakeCoreStream()
-    let (attachment, _) = try await attached(stream)
+    let (attachment, _) = try await attached(stream, history: 500)
     var iterator = attachment.output.makeAsyncIterator()
     stream.writeMessage(paint(alternate: true), onChannel: 4)
     _ = try #require(try await iterator.next())
@@ -540,5 +540,113 @@ struct CoreAttachmentTests {
 
     await attachment.repaintSettled()
     #expect(attachCount(stream) == 1)
+  }
+
+  // MARK: - An observer that starts typing
+
+  private func promoted(
+    _ stream: FakeCoreStream
+  ) async throws -> (CoreAttachment, AsyncThrowingStream<Data, any Error>.Iterator) {
+    let (attachment, _) = try await attached(stream, observe: true)
+    var iterator = attachment.output.makeAsyncIterator()
+    stream.writeMessage(paint(alternate: false), onChannel: 4)
+    _ = try #require(try await iterator.next())
+    stream.replies["terminal.attach"] = .after(
+      CoreFrame(channel: 5, kind: .data, payload: Data(paint(alternate: false).utf8)).encoded,
+      then: FakeCoreStream.attached(channel: 5)
+    )
+    _ = try await attachment.promote()
+    _ = try #require(try await iterator.next())
+    return (attachment, iterator)
+  }
+
+  @Test("a promoted observer paints the history as a viewer that is not active yet")
+  func promotionAttachesResumed() async throws {
+    let stream = FakeCoreStream()
+    let (attachment, _) = try await promoted(stream)
+
+    let params = try #require(try stream.params(of: "terminal.attach").last)
+    #expect(params["observe"] as? Bool == false)
+    #expect(params["resumed"] as? Bool == true)
+    #expect(params["history"] as? Int == 500)
+
+    try await waitUntil("the old CLOSE") { closed(4, on: stream) }
+    try await attachment.send(text: "k")
+    #expect(stream.streamFrames.last == CoreFrame(channel: 5, kind: .data, payload: Data("k".utf8)))
+  }
+
+  @Test("a promoted observer resizes on its new channel, and the attach used its latest size")
+  func promotionKeepsTheSize() async throws {
+    let stream = FakeCoreStream()
+    let (attachment, _) = try await attached(stream, observe: true)
+    try await attachment.resize(to: TerminalSize(columns: 50, rows: 21))
+    stream.replies["terminal.attach"] = .result(FakeCoreStream.attached(channel: 5))
+
+    _ = try await attachment.promote()
+
+    let params = try #require(try stream.params(of: "terminal.attach").last)
+    #expect(params["cols"] as? Int == 50)
+    #expect(params["rows"] as? Int == 21)
+    try await attachment.resize(to: TerminalSize(columns: 52, rows: 22))
+    #expect(stream.streamFrames.last?.channel == 5)
+    #expect(stream.streamFrames.last?.kind == .resize)
+  }
+
+  /// FOCUS counts as activity, so the keyboard coming up on the view that is already there
+  /// would take the size from a desk with nothing typed. Measured on a real core.
+  @Test("a promoted observer holds back focus until it has typed or resized")
+  func promotionHoldsFocus() async throws {
+    let stream = FakeCoreStream()
+    let (attachment, _) = try await promoted(stream)
+
+    try await attachment.focus(true)
+    #expect(!stream.streamFrames.contains { $0.kind == .focus })
+
+    try await attachment.send(text: "k")
+    try await attachment.focus(true)
+    #expect(stream.streamFrames.last?.kind == .focus)
+  }
+
+  @Test("a refused promotion leaves the observer as it was")
+  func refusedPromotion() async throws {
+    let stream = FakeCoreStream()
+    let (attachment, _) = try await attached(stream, observe: true)
+    stream.replies["terminal.attach"] = .error("lost, waiting for its new shell")
+
+    await #expect(
+      throws: AppError.herdrCommandFailed(reason: "lost, waiting for its new shell")
+    ) {
+      _ = try await attachment.promote()
+    }
+
+    try await attachment.focus(true)
+    #expect(stream.streamFrames.isEmpty)
+    stream.replies["terminal.attach"] = .result(FakeCoreStream.attached(channel: 5))
+    attachment.leftAlternateScreen()
+    await attachment.repaintSettled()
+    #expect(attachCount(stream) == 2, "still counted as an observer")
+  }
+
+  /// An observer's paint carries no history, so it cannot be why a repaint skips it.
+  @Test("after a promotion onto a full-screen program, leaving it asks for the history")
+  func promotionOntoAFullScreenProgram() async throws {
+    let stream = FakeCoreStream()
+    let (attachment, _) = try await attached(stream, observe: true)
+    var iterator = attachment.output.makeAsyncIterator()
+    stream.writeMessage(paint(alternate: false), onChannel: 4)
+    _ = try #require(try await iterator.next())
+    stream.replies["terminal.attach"] = .after(
+      CoreFrame(channel: 5, kind: .data, payload: Data(paint(alternate: true).utf8)).encoded,
+      then: FakeCoreStream.attached(channel: 5)
+    )
+    _ = try await attachment.promote()
+    _ = try #require(try await iterator.next())
+    stream.replies["terminal.attach"] = .result(FakeCoreStream.attached(channel: 6))
+
+    attachment.leftAlternateScreen()
+
+    await attachment.repaintSettled()
+    let params = try #require(try stream.params(of: "terminal.attach").last)
+    #expect(params["history"] as? Int == 500)
   }
 }
