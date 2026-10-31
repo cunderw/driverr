@@ -298,6 +298,34 @@ struct TerminalMouseReportingTests {
     withExtendedLifetime(hosted.window) {}
   }
 
+  /// A pan keeps tracking past the view's edge, and with the keyboard up a long swipe leaves a
+  /// short terminal. Below the grid the row already clamps, so the top must too, or the wheel
+  /// stops partway through the swipe.
+  @Test(
+    "a drag above the terminal reports the top row, and a tap there clicks nothing",
+    .timeLimit(.minutes(1))
+  )
+  func dragAboveTheTerminalClamps() async throws {
+    let hosted = try hosted(pane: false)
+    defer { hosted.finish() }
+    let view = hosted.view
+    view.feed(text: "\u{1b}[?1049h\u{1b}[?1000h\u{1b}[?1006h")
+    let dragPan = try #require(view.dragPan)
+    let coordinator = try #require(view.terminalDelegate as? DriverrTerminalView.Coordinator)
+
+    let grid = view.getOptimalFrameSize()
+    let cellWidth = grid.width / CGFloat(view.getTerminal().cols)
+    view.tapLocation = { _, _ in CGPoint(x: cellWidth * 9.5, y: -40) }
+
+    coordinator.deliverDrag(lines: 2, from: dragPan, in: view)
+
+    let expected = String(repeating: "\u{1b}[<64;10;1M", count: 2)
+    await waitUntilSignalled("the wheel") { hosted.farSide.text.count >= expected.count }
+    #expect(hosted.farSide.text == expected)
+    #expect(view.position(of: dragPan) == nil)
+    withExtendedLifetime(hosted.window) {}
+  }
+
   /// A selection drag already under way when the selection ends is cancelled at once, rather
   /// than left to deliver `.changed`, which SwiftTerm turns into cursor keys with no selection.
   @Test("a selection drag in flight is cancelled when the selection ends", arguments: [false, true])

@@ -265,7 +265,7 @@
         let direction: ScrollDirection = lines > 0 ? .up : .down
         if session.scrollsRemotely {
           session.scroll(direction, lines: abs(lines))
-        } else if let at = view.position(of: gesture) {
+        } else if let at = view.position(of: gesture, clampsAbove: true) {
           TerminalDragRoute.send(
             direction,
             lines: abs(lines),
@@ -383,8 +383,8 @@
 
     /// Gives the drag to the scroll view or to `dragPan`, as `TerminalDragRoute` says.
     ///
-    /// **Only from `mouseModeChanged` and `bufferActivated`, and only on a change.** Touching
-    /// `isScrollEnabled` from inside a gesture cancels the gesture.
+    /// **Only from `makeUIView`, `mouseModeChanged` and `bufferActivated`, and only on a
+    /// change.** Touching `isScrollEnabled` from inside a gesture cancels the gesture.
     func applyDragRoute() {
       guard followsDragRoute, let dragPan else { return }
       let isLocal = TerminalDragRoute.route(for: getTerminal()) == .localScrollback
@@ -483,7 +483,11 @@
     }
 
     /// The cell and device-pixel position under a gesture, or `nil` above the live screen.
-    func position(of gesture: UIGestureRecognizer) -> (
+    ///
+    /// - Parameter clampsAbove: take the top row instead of `nil`. A pan keeps tracking past
+    ///   the view's edge, and a long swipe over a short terminal must not stop partway. A tap
+    ///   up there is on scrollback, so it keeps the `nil`.
+    func position(of gesture: UIGestureRecognizer, clampsAbove: Bool = false) -> (
       cell: TerminalCell, pixelX: Int, pixelY: Int
     )? {
       let terminal = getTerminal()
@@ -498,7 +502,7 @@
       let location = tapLocation(gesture, self)
       let x = Double(location.x - bounds.minX)
       let y = Double(location.y) - liveScreenTop
-      guard y >= 0,
+      guard y >= 0 || clampsAbove,
         let cell = TerminalCell.at(
           x: x,
           y: y,

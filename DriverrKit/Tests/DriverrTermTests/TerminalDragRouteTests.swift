@@ -68,6 +68,14 @@ struct TerminalDragRouteTests {
     #expect(TerminalDragRoute.route(for: terminal) == .wheel)
   }
 
+  @Test("every mouse mode that reports buttons takes the wheel", arguments: [
+    "\u{1b}[?1000h", "\u{1b}[?1002h", "\u{1b}[?1003h",
+  ])
+  func mouseModesTakeTheWheel(output: String) {
+    let (terminal, _) = terminal(after: output)
+    #expect(TerminalDragRoute.route(for: terminal) == .wheel)
+  }
+
   /// Dragging down reveals older output, which is the wheel going up. Measured against a real
   /// Claude Code: one SGR 64 is one line back, one SGR 65 is one line forward, no release.
   @Test("a drag down is one SGR 64 per line, and a drag up one SGR 65", arguments: [
@@ -119,5 +127,11 @@ struct TerminalDragRouteTests {
   func x10StaysLocal() {
     let (terminal, _) = terminal(after: "\u{1b}[?9h")
     #expect(TerminalDragRoute.route(for: terminal) == .localScrollback)
+  }
+
+  @Test("X10 mode on the alternate screen takes cursor keys, as no mouse would")
+  func x10OnTheAlternateScreenTakesArrowKeys() {
+    let (terminal, _) = terminal(after: "\u{1b}[?1049h\u{1b}[?9h")
+    #expect(TerminalDragRoute.route(for: terminal) == .arrowKeys)
   }
 }
