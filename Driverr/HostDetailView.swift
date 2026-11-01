@@ -555,16 +555,12 @@ struct HostDetailView: View {
           .accessibilityIdentifier("herdr.ready")
         // Under the working line, in the same words a lone refused core gets.
         if let refusal = availability.coreRefusal {
-          Label(refusal, systemImage: "exclamationmark.triangle")
-            .font(.footnote)
-            .foregroundStyle(.orange)
+          RowProblemLabel(refusal, systemImage: "exclamationmark.triangle")
             .accessibilityIdentifier("herdr.coreRefused")
         }
       } else {
         // A glyph, so the line reads as a problem at a glance under a green "Connected".
-        Label(availability.message, systemImage: "exclamationmark.triangle")
-          .font(.footnote)
-          .foregroundStyle(.orange)
+        RowProblemLabel(availability.message, systemImage: "exclamationmark.triangle")
           .accessibilityIdentifier("herdr.unavailable")
       }
     } else {
@@ -602,10 +598,11 @@ struct HostDetailView: View {
     // A failed command's error shows here. It does not change the phase, because the link
     // is still healthy.
     if let failure = model.commandFailure {
-      Label(failure.errorDescription ?? "The command could not be run.", systemImage: "xmark.octagon")
-        .font(.footnote)
-        .foregroundStyle(.orange)
-        .accessibilityIdentifier("connect.commandError")
+      RowProblemLabel(
+        failure.errorDescription ?? "The command could not be run.",
+        systemImage: "xmark.octagon"
+      )
+      .accessibilityIdentifier("connect.commandError")
     }
   }
 

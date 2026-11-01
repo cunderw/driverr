@@ -281,7 +281,11 @@ final class SessionModel {
 
   var canStartTerminal: Bool { control.canStartTerminal }
 
-  var offersTerminalStart: Bool { canStartTerminal }
+  /// Whether the empty state offers New Terminal, as far as this session can say. A core refused
+  /// by this build is the host screen's to rule out, because it shows on the connection.
+  ///
+  /// Not over a lost link, where a start would get no answer.
+  var offersTerminalStart: Bool { canStartTerminal && isEmptySession && !pollingPaused }
 
   /// The terminal being waited for, and what wakes the wait. One, because `terminalStart` lets
   /// one start run at a time.
@@ -413,12 +417,23 @@ final class SessionModel {
       while !Task.isCancelled {
         try? await Task.sleep(for: pollInterval)
         guard !Task.isCancelled, let self else { return }
-        if self.needsPolling { await self.refresh() }
+        if self.needsPolling { await self.poll() }
       }
     }
   }
 
   private var needsPolling: Bool { control.needsPolling || lastFailure != nil }
+
+  /// One tick of the timer. `.loading` only until a tree has landed: past that it would swap an
+  /// empty session's row for the loading row for the length of every read, and New Terminal, a
+  /// start under way and its failure all go with it.
+  private func poll() async {
+    guard hasReadATree else {
+      await refresh()
+      return
+    }
+    await read { [control] in try await control.snapshot() }
+  }
 
   /// Releases one consumer's hold, and stops polling when the last one lets go. A warm
   /// connection is idle; a polling one runs a command on the user's machine every tick.

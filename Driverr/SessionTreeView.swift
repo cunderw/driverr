@@ -247,11 +247,15 @@ struct SessionTreeView: View {
 
       default:
         if model.tree.isEmpty {
-          Text("herdr is running here, but has no workspaces open.")
-            .foregroundStyle(.secondary)
-            .accessibilityIdentifier("session.empty")
-          // Not over a link that has gone, where a start would get no answer.
-          if let onStartTerminal, !model.pollingPaused {
+          // A core has terminals and no workspaces, so the sentence follows who can start one.
+          Text(
+            onStartTerminal == nil
+              ? "herdr is running here, but has no workspaces open."
+              : "No terminals are open here."
+          )
+          .foregroundStyle(.secondary)
+          .accessibilityIdentifier("session.empty")
+          if let onStartTerminal, model.offersTerminalStart {
             startTerminalRows(onStartTerminal)
           }
         } else {
@@ -301,9 +305,11 @@ struct SessionTreeView: View {
   @ViewBuilder
   private func startTerminalRows(_ start: @escaping () -> Void) -> some View {
     if model.terminalStart == .starting {
-      HStack {
-        ProgressView()
+      // A `Label`, so the words stay on New Terminal's edge and the row does not jump.
+      Label {
         Text("Starting a terminal…")
+      } icon: {
+        ProgressView()
       }
       .accessibilityIdentifier("session.startingTerminal")
     } else {
@@ -312,14 +318,10 @@ struct SessionTreeView: View {
       }
       .accessibilityIdentifier("session.newTerminal")
       if case .failed(let error) = model.terminalStart {
-        // The glyph takes the orange. In footnote text it reads at about 2:1 on a light row.
-        Label {
-          Text(verbatim: error.errorDescription ?? "The terminal could not be started.")
-        } icon: {
-          Image(systemName: "xmark.octagon")
-            .foregroundStyle(.orange)
-        }
-        .font(.footnote)
+        RowProblemLabel(
+          error.errorDescription ?? "The terminal could not be started.",
+          systemImage: "xmark.octagon"
+        )
         .accessibilityIdentifier("session.newTerminal.error")
       }
     }

@@ -162,7 +162,7 @@ struct CoreActionsOverSSHTests {
     #expect(CoreControl.isCoreVersion(String(decoding: output, as: UTF8.self)))
   }
 
-  @Test("close ends what ignores it, inside a call's deadline; New terminal starts a shell")
+  @Test("a start from nothing lands in its home; close ends what ignores it; New terminal works")
   func actions() async throws {
     let server = try await EmbeddedSSHServer(
       username: Self.username,
@@ -201,8 +201,16 @@ struct CoreActionsOverSSHTests {
   /// Before anything else runs, so the core really has no terminal, and on its own control, so
   /// it names a home. The address in the reply is the one the tree goes on to list.
   private func startFromNothing(over transport: NIOSSHTransport) async throws {
-    let directory = FileManager.default.temporaryDirectory.path
-    let control = try control(on: Self.adding, over: transport, home: directory)
+    let created = FileManager.default.temporaryDirectory
+      .appendingPathComponent("driverr-actions-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: created, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: created) }
+    // Without its symlinks, because that is the path a terminal reports.
+    let resolved = try #require(realpath(created.path, nil))
+    defer { free(resolved) }
+    let home = String(cString: resolved)
+
+    let control = try control(on: Self.adding, over: transport, home: home)
     #expect(try await control.snapshot().isEmpty)
 
     let id = try await control.startTerminal()
@@ -210,7 +218,7 @@ struct CoreActionsOverSSHTests {
 
     let new = try await record(Self.adding, try #require(pane.terminalID))
     #expect(new.argv.first?.hasSuffix("sh") == true, "the machine's shell: \(new.argv)")
-    #expect(new.cwd.hasSuffix(URL(fileURLWithPath: directory).lastPathComponent))
+    #expect(new.cwd == home)
     #expect(new.labels.isEmpty)
     #expect(!new.keep)
     #expect(new.state == "live")
