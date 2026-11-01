@@ -268,7 +268,8 @@ final class ScreenshotTourUITests: XCTestCase {
   /// Goes back to the host list with the host still connected. For the stack only: in the
   /// split view the list never went away.
   private func returnToHostList(_ app: XCUIApplication) {
-    let back = app.navigationBars.buttons.element(boundBy: 0)
+    let inBar = app.navigationBars.buttons.element(boundBy: 0)
+    let back = inBar.exists ? inBar : sideToolbarBackButton(app)
     XCTAssertTrue(
       back.waitForExistence(timeout: 10),
       "Expected a back button on the host screen. Tree was:\n\(app.debugDescription)"

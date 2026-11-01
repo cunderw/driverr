@@ -128,12 +128,19 @@ most often gets wrong:
   `DriverrTests` and the UI classes a diff reaches are still a local run before a pull
   request. A green claim must come from output you read.
 
-**Three named simulators.** `Driverr iPhone 17` (device type `iPhone-17`) is the default.
+**Four named simulators.** `Driverr iPhone 17` (device type `iPhone-17`) is the default.
 `Driverr iPad` (`iPad-Pro-13-inch-M4-8GB`) is the iPad pass. `Driverr iPhone 17 Pro Max`
 (`iPhone-17-Pro-Max`) is for App Store screenshots only, because App Store Connect requires
-a 6.9" set. Keep the name and device type together when you create one: an iPad name on an
-iPhone type lets the iPad checks pass against a phone. Keep exactly one available device
-per name, and remove a duplicate by UDID, never with `delete unavailable`.
+a 6.9" set, and so is `Driverr iPhone Duo` (`iPhone-Duo`), which publishes the Duo set. Keep
+the name and device type together when you create one: an iPad name on an iPhone type lets
+the iPad checks pass against a phone. Keep exactly one available device per name, and remove
+a duplicate by UDID, never with `delete unavailable`.
+
+**iPhone Duo has two displays, and its simulator boots closed.** A boot lands on the outer
+display, which is compact, so the app is the phone stack. Its bars are a column at the right,
+so `app.navigationBars.buttons` is empty there and the back button is in `app.toolbars`. Only
+the Device Hub window opens the device; `simctl` and XCUITest have no fold control, and a
+reboot closes it again. The inner display is regular width, so the app is the split view.
 
 **Nothing here names an Xcode or an iOS version, deliberately. Do not add one.** Runs use
 whatever Xcode is active and whatever runtime the named device sits on. `README.md` states
@@ -351,8 +358,8 @@ The release procedure lives outside this repo. These are only the facts about th
 - **Never commit a `CURRENT_PROJECT_VERSION` bump.** The build number is supplied on the
   archive command line.
 - **The whole App Store listing is `docs/appstore/copy.json`.** There is no prose mirror.
-- **Screenshots** are in `docs/app-store-assets/iphone-max` and
-  `docs/app-store-assets/ipad`. Each is a real tour capture in a device frame under a
+- **Screenshots** are in `docs/app-store-assets/iphone-max`, `docs/app-store-assets/ipad`
+  and `docs/app-store-assets/iphone-duo`. Each is a real tour capture in a device frame under a
   caption, drawn by `scripts/frame-screenshots.swift`, which also holds their order and
   captions. The app UI inside the frame must stay an unedited capture (App Review
   guideline 2.3.3). The captures themselves are in `docs/app-store-assets/raw/<kind>`, and
@@ -360,11 +367,12 @@ The release procedure lives outside this repo. These are only the facts about th
   upload read those directories. Regenerate with `scripts/screenshots.sh`, which checks the
   raw captures' sizes and count per kind, frames them, and checks the framed set's sizes,
   count and alpha, and it changes nothing in the tree unless every step passed. It shuts
-  each device down and boots it before the tour, and it fails the phone set if a capture
-  draws the home indicator (`scripts/home-indicator.sh`).
+  each device down and boots it before the tour, and it fails a phone set if a capture
+  draws the home indicator (`scripts/home-indicator.sh`). That boot is why the Duo set is
+  the outer display only.
   `scripts/screenshots.sh --frame` frames the committed captures again with no tour. They
-  upload in filename order. Both sets are `01-` to `06-` and start with Needs You. The
-  phone's `raw/iphone-max/hosts.png` is captured and not published.
+  upload in filename order. All three sets are `01-` to `06-` and start with Needs You. The
+  phones' `hosts.png` is captured and not published.
 - **The product page header** is `docs/app-store-assets/header/header.png`, drawn by the
   same script and uploaded by hand. Each run also writes `.build-logs/header-crops/`, which
   shows what the header and search results keep after Apple's centre crop. The crops are

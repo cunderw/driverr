@@ -694,11 +694,17 @@ func waitForPaneScene(
 private func paneSceneLeaveControl(_ app: XCUIApplication) -> XCUIElement {
   let named = app.descendants(matching: .any).matching(identifier: "terminal.back").firstMatch
   if named.exists { return named }
-  return app.navigationBars
-    .containing(.any, identifier: paneSceneMarker)
-    .firstMatch
-    .buttons
-    .element(boundBy: 0)
+  let bar = app.navigationBars.containing(.any, identifier: paneSceneMarker).firstMatch
+  return bar.exists ? bar.buttons.element(boundBy: 0) : sideToolbarBackButton(app)
+}
+
+/// The system back button when the bar's items are drawn in a column at the side.
+///
+/// iPhone Duo's outer display does that: the navigation bar keeps the title and no button, so
+/// `app.navigationBars.buttons` is empty, and the toolbar holds the system's `BackButton`.
+@MainActor
+func sideToolbarBackButton(_ app: XCUIApplication) -> XCUIElement {
+  app.toolbars.buttons["BackButton"].firstMatch
 }
 
 /// Leaves the pane scene by whichever control this route offers.
