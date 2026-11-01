@@ -91,8 +91,8 @@ struct AppEnvironment {
     settingsStore: UserDefaultsSettingsStore(),
     makeTransport: { NIOSSHTransport() },
     // Discover the binary: an exec channel runs a non-login shell, whose PATH may lack
-    // Homebrew's prefix or `~/.local/bin`. A host without herdr gets a control bound to the bare
-    // name, whose first command reports `herdrNotInstalled`.
+    // Homebrew's prefix or `~/.local/bin`. A host with neither herdr nor a core gets a control
+    // bound to the bare name, whose first command reports `herdrNotInstalled`.
     makeHerdrControl: { transport in
       let run: CommandRunner = { try await transport.execChannel(command: $0) }
       async let tui = CLIControl.discovering(run: run)

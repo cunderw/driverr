@@ -33,7 +33,7 @@ why they are identical on every run.*
 - **A real terminal when you want one** — attach to any pane, with a key row for the
   characters iOS hides, and themes and type sizes you can change while looking at it.
 - **Pane controls** — rename or close a pane from the toolbar, and open a new one from the
-  pane switcher.
+  pane switcher. A herdr-core terminal has no rename, so it offers only close and new.
 - **herdr-core and the desktop app** — a host can run the herdr TUI,
   [herdr-core](https://github.com/herdrdev/herdr-core), the
   [Herdr desktop app](https://github.com/herdrdev/herdr-app), or more than one of them.
