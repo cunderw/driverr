@@ -83,6 +83,7 @@ final class SessionModel {
   /// How many consumers hold live updates open. See `startLiveUpdates`.
   @ObservationIgnored private var consumers = 0
   @ObservationIgnored private let pollInterval: Duration
+  @ObservationIgnored private let terminalArrivalLimit: Duration
   private(set) var pollingPaused = false
 
   /// Reads under way, so a change that lands during one waits for it. See `changedOnHost()`.
@@ -99,15 +100,22 @@ final class SessionModel {
   /// Three seconds is a judgement, not a measurement.
   static let defaultPollInterval = Duration.seconds(3)
 
+  /// How long a started terminal has to reach `reportedTree`. See `startTerminal()`.
+  ///
+  /// A call's deadline, because an arrival that takes longer has lost more than one event.
+  static let defaultTerminalArrivalLimit = Duration.seconds(5)
+
   /// - Parameter coveringCoreIDs: the cores of the other hosts Driverr holds a link to. See
   ///   `ConnectionRegistry.coreIDs(coveringHost:)`.
   init(
     control: any HerdrControl,
     pollInterval: Duration = SessionModel.defaultPollInterval,
+    terminalArrivalLimit: Duration = SessionModel.defaultTerminalArrivalLimit,
     coveringCoreIDs: @escaping @MainActor () -> Set<String> = { [] }
   ) {
     self.control = control
     self.pollInterval = pollInterval
+    self.terminalArrivalLimit = terminalArrivalLimit
     self.coveringCoreIDs = coveringCoreIDs
   }
 
@@ -162,6 +170,7 @@ final class SessionModel {
       hasReadATree = true
       state = .loaded(tree)
       lastFailure = nil
+      noteTerminalStart(in: tree)
       onSessionChanged?(changes)
     } catch let error as AppError {
       state = .failed(error)
@@ -260,6 +269,86 @@ final class SessionModel {
     renameInFlight = nil
   }
 
+  // MARK: - Starting a terminal
+
+  /// A start under way, or the one that failed. On the model for `RenamePrompt`'s reason.
+  enum TerminalStart: Equatable {
+    case starting
+    case failed(AppError)
+  }
+
+  private(set) var terminalStart: TerminalStart?
+
+  var canStartTerminal: Bool { control.canStartTerminal }
+
+  /// Whether the empty state offers New Terminal, as far as this session can say. A core refused
+  /// by this build is the host screen's to rule out, because it shows on the connection.
+  ///
+  /// Not over a lost link, where a start would get no answer.
+  var offersTerminalStart: Bool { canStartTerminal && isEmptySession && !pollingPaused }
+
+  /// The terminal being waited for, and what wakes the wait. One, because `terminalStart` lets
+  /// one start run at a time.
+  @ObservationIgnored private var awaitedTerminal:
+    (id: String, arrived: CheckedContinuation<Void, Never>)?
+
+  /// Starts a terminal and answers with its pane id once a scene can open it, or `nil` with
+  /// `terminalStart` saying why.
+  ///
+  /// **The wait is the point.** `TerminalSceneModel` opens only what `reportedTree` lists and
+  /// returns silently otherwise, and the reply can land before the feed has applied its own
+  /// `created` event. `terminalArrivalLimit` bounds it. A terminal later than that opens nothing:
+  /// the row it gets is the answer, and a scene that opened by itself would take over the screen.
+  func startTerminal() async -> String? {
+    guard terminalStart != .starting else { return nil }
+    terminalStart = .starting
+    do {
+      let id = try await control.startTerminal()
+      await arrival(of: id)
+      guard reportedTree.pane(id: id) != nil else {
+        terminalStart = .failed(
+          .herdrCommandFailed(reason: "The terminal started, but the session has not listed it."))
+        return nil
+      }
+      terminalStart = nil
+      return id
+    } catch let error as AppError {
+      terminalStart = .failed(error)
+    } catch {
+      terminalStart = .failed(.herdrCommandFailed(reason: "herdr could not be reached."))
+    }
+    return nil
+  }
+
+  /// Returns when `id` is in `reportedTree` or the limit has passed. `load` does the waking.
+  ///
+  /// One read first, for a control whose news is already in hand. Not `refresh()`: `.loading`
+  /// over an empty tree swaps the start's own spinner for the session's.
+  private func arrival(of id: String) async {
+    await changedOnHost()
+    guard reportedTree.pane(id: id) == nil else { return }
+
+    let deadline = Task { [self, terminalArrivalLimit] in
+      try? await Task.sleep(for: terminalArrivalLimit)
+      guard !Task.isCancelled else { return }
+      awaitedTerminalEnded()
+    }
+    defer { deadline.cancel() }
+    await withCheckedContinuation { awaitedTerminal = (id, $0) }
+  }
+
+  private func awaitedTerminalEnded() {
+    awaitedTerminal?.arrived.resume()
+    awaitedTerminal = nil
+  }
+
+  /// What a new tree means for a start: the wait is over if it lists the terminal, and a failure
+  /// is over once there is a tree to show, because the empty state it sits in has gone.
+  private func noteTerminalStart(in tree: SessionTree) {
+    if let awaited = awaitedTerminal, tree.pane(id: awaited.id) != nil { awaitedTerminalEnded() }
+    if case .failed = terminalStart, !self.tree.isEmpty { terminalStart = nil }
+  }
+
   func isWorkspaceExpanded(_ workspace: Workspace) -> Bool {
     (expandedWorkspaceIDs ?? tree.defaultExpandedWorkspaceIDs).contains(workspace.id)
   }
@@ -328,12 +417,23 @@ final class SessionModel {
       while !Task.isCancelled {
         try? await Task.sleep(for: pollInterval)
         guard !Task.isCancelled, let self else { return }
-        if self.needsPolling { await self.refresh() }
+        if self.needsPolling { await self.poll() }
       }
     }
   }
 
   private var needsPolling: Bool { control.needsPolling || lastFailure != nil }
+
+  /// One tick of the timer. `.loading` only until a tree has landed: past that it would swap an
+  /// empty session's row for the loading row for the length of every read, and New Terminal, a
+  /// start under way and its failure all go with it.
+  private func poll() async {
+    guard hasReadATree else {
+      await refresh()
+      return
+    }
+    await read { [control] in try await control.snapshot() }
+  }
 
   /// Releases one consumer's hold, and stops polling when the last one lets go. A warm
   /// connection is idle; a polling one runs a command on the user's machine every tick.

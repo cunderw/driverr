@@ -118,6 +118,19 @@ public protocol HerdrControl: Sendable {
   /// `RenameTarget` says which. As with `perform`, the next snapshot shows the result; see
   /// `SessionModel.commitRename`.
   func rename(_ target: RenameTarget, to label: String) async throws
+
+  /// Whether this host can start a terminal with no pane to start it from.
+  ///
+  /// Defaulted to `false`: only a core has one, because a herdr pane is opened inside a tab.
+  var canStartTerminal: Bool { get }
+
+  /// Starts a terminal in the host's own shell and returns the id its pane will have.
+  ///
+  /// Not a `PaneAction`, because there is no pane to name, and unlike one it has an answer worth
+  /// reading: the id says which terminal this call started, where a diff of the tree could pick
+  /// an older one that had not been listed yet. That terminal may not be in the next snapshot;
+  /// see `SessionModel.startTerminal()`.
+  func startTerminal() async throws -> String
 }
 
 extension HerdrControl {
@@ -128,6 +141,10 @@ extension HerdrControl {
   public func paneAttacher(for paneID: String) -> (any PaneAttacher)? { nil }
   public func canPerform(_ kind: PaneActionKind, on paneID: String) -> Bool { true }
   public func canRename(_ target: RenameTarget) -> Bool { true }
+  public var canStartTerminal: Bool { false }
+  public func startTerminal() async throws -> String {
+    throw AppError.herdrCommandFailed(reason: "This host cannot start a terminal.")
+  }
 }
 
 /// Drives herdr through its command-line interface.

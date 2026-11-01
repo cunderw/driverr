@@ -38,6 +38,9 @@ public actor FakeControl: HerdrControl {
   private let attacher: (any PaneAttacher)?
   /// What this fake has no equivalent for, as a core has no rename. See `canPerform(_:on:)`.
   private let unsupported: Set<PaneActionKind>
+  /// What a start answers with, in place of a new pane. Not `failure`, which would also fail
+  /// the read that puts the empty state on screen.
+  private let startFailure: AppError?
 
   /// Every snapshot request, refused ones included.
   public private(set) var snapshotCount = 0
@@ -53,7 +56,9 @@ public actor FakeControl: HerdrControl {
     ),
     screen: PaneScreen? = nil,
     attacher: (any PaneAttacher)? = nil,
-    unsupported: Set<PaneActionKind> = []
+    unsupported: Set<PaneActionKind> = [],
+    canStartTerminal: Bool = false,
+    startFailure: AppError? = nil
   ) {
     script = []
     self.tree = tree
@@ -62,6 +67,8 @@ public actor FakeControl: HerdrControl {
     screenOverride = screen
     self.attacher = attacher
     self.unsupported = unsupported
+    self.canStartTerminal = canStartTerminal
+    self.startFailure = startFailure
   }
 
   /// A session that changes as it is polled, for exercising live updates.
@@ -73,6 +80,8 @@ public actor FakeControl: HerdrControl {
     screenOverride = nil
     attacher = nil
     unsupported = []
+    canStartTerminal = false
+    startFailure = nil
   }
 
   /// A fake that fails, for exercising the error surfaces without a broken host.
@@ -111,6 +120,8 @@ public actor FakeControl: HerdrControl {
   public nonisolated func canRename(_ target: RenameTarget) -> Bool {
     !unsupported.contains(.rename)
   }
+
+  public nonisolated let canStartTerminal: Bool
 
   public nonisolated func attachCommand(for pane: Pane) -> String {
     // The same command and branch `CLIControl` produces. Every seeded pane has a terminal
@@ -370,6 +381,60 @@ public actor FakeControl: HerdrControl {
     tree = Self.tree(tree, renaming: target, to: label)
     // Stop the script, as in `perform`.
     scriptOverridden = true
+  }
+
+  /// How many terminals this fake was asked to start.
+  ///
+  /// A count, because a start takes nothing. A refused start is counted and not acted on.
+  public private(set) var terminalStarts = 0
+
+  /// Lists the new terminal in the fake's own tree, in the group a core gives one with no space,
+  /// and answers with its id, as `CoreControl` does.
+  public func startTerminal() async throws -> String {
+    terminalStarts += 1
+    if let startFailure { throw startFailure }
+
+    let address = "t\(tree.allPanes.count + 1)"
+    tree = Self.tree(tree, startingTerminalAt: address)
+    // Stop the script, as in `perform`.
+    scriptOverridden = true
+    return CorePaneID.id(forAddress: address)
+  }
+
+  private static func tree(
+    _ tree: SessionTree,
+    startingTerminalAt address: String
+  ) -> SessionTree {
+    let workspaceID = CorePaneID.prefix + "workspace"
+    let tabID = CorePaneID.prefix + "tab"
+    let pane = Pane(
+      id: CorePaneID.id(forAddress: address),
+      tabID: tabID,
+      workspaceID: workspaceID,
+      title: "shell",
+      terminalID: address,
+      directory: "~"
+    )
+    let started = tree.workspaces.first { $0.id == workspaceID }?.tabs.first?.panes ?? []
+    let group = Workspace(
+      id: workspaceID,
+      number: tree.workspaces.count + 1,
+      label: "herdr-core",
+      tabs: [
+        Tab(
+          id: tabID,
+          workspaceID: workspaceID,
+          number: 1,
+          label: "Terminals",
+          isAutoNamed: true,
+          panes: started + [pane]
+        )
+      ]
+    )
+    return SessionTree(
+      workspaces: tree.workspaces.filter { $0.id != workspaceID } + [group],
+      focusedPaneID: tree.focusedPaneID
+    )
   }
 
   /// One workspace or one tab, relabelled, with everything else left alone.

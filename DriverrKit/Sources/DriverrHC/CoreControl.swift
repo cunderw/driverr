@@ -229,6 +229,18 @@ public struct CoreControl: HerdrControl {
     throw Self.noRename
   }
 
+  public var canStartTerminal: Bool { true }
+
+  /// A plain call, like `perform`. The address is the reply's, so it names this terminal even
+  /// when an older one has not reached the tree yet.
+  public func startTerminal() async throws -> String {
+    let (connection, handshake) = await link.established()
+    guard let connection else { throw Self.failure(for: handshake) }
+    let started = try await connection.call(
+      "terminal.run", params: CoreRunParams(shellIn: home), as: CoreTerminal.self)
+    return CorePaneID.id(forAddress: started.address)
+  }
+
   private static let noRename = AppError.herdrCommandFailed(reason: "herdr-core has no rename.")
 
   private static func availability(for handshake: CoreHandshake) -> HerdrAvailability {

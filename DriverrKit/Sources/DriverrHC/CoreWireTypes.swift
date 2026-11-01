@@ -90,6 +90,17 @@ struct CoreRunParams: Encodable, Sendable {
     self.labels = labels
     keep = true
   }
+
+  /// A shell on this machine, in `directory`, for a host with no terminal to start one beside.
+  ///
+  /// **`nil` names no directory.** The terminal then lands where the core was started, and `~`
+  /// is `spawn_failed`, because the core expands nothing. No space, so no labels, as above.
+  init(shellIn directory: String?) {
+    cwd = directory
+    on = nil
+    labels = nil
+    keep = nil
+  }
 }
 
 /// Just enough of a reply to find the stream it opened.

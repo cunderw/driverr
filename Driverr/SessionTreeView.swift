@@ -30,6 +30,10 @@ struct SessionTreeView: View {
   /// and a sheet attached inside a `List` row never presents.
   var onReply: ((Pane) -> Void)?
 
+  /// Start a terminal, on a host that can with nothing open. `nil` offers nothing, which is
+  /// what a TUI host gets. A callback, for `onReply`'s reason: the start ends in a presentation.
+  var onStartTerminal: (() -> Void)?
+
   /// Only the rename row is a text input in this tree, so this focus cannot bind to
   /// anything else.
   @FocusState private var isRenameFieldFocused: Bool
@@ -243,9 +247,17 @@ struct SessionTreeView: View {
 
       default:
         if model.tree.isEmpty {
-          Text("herdr is running here, but has no workspaces open.")
-            .foregroundStyle(.secondary)
-            .accessibilityIdentifier("session.empty")
+          // A core has terminals and no workspaces, so the sentence follows who can start one.
+          Text(
+            onStartTerminal == nil
+              ? "herdr is running here, but has no workspaces open."
+              : "No terminals are open here."
+          )
+          .foregroundStyle(.secondary)
+          .accessibilityIdentifier("session.empty")
+          if let onStartTerminal, model.offersTerminalStart {
+            startTerminalRows(onStartTerminal)
+          }
         } else {
           ForEach(model.tree.workspaces) { workspace in
             // **Above the row it renames.** After the disclosure group it lands below the
@@ -287,6 +299,32 @@ struct SessionTreeView: View {
       Text("Reading the session…")
     }
     .accessibilityIdentifier("session.loading")
+  }
+
+  /// The empty state's one action, then what became of it. Inline, as `renameRow` is.
+  @ViewBuilder
+  private func startTerminalRows(_ start: @escaping () -> Void) -> some View {
+    if model.terminalStart == .starting {
+      // A `Label`, so the words stay on New Terminal's edge and the row does not jump.
+      Label {
+        Text("Starting a terminal…")
+      } icon: {
+        ProgressView()
+      }
+      .accessibilityIdentifier("session.startingTerminal")
+    } else {
+      Button(action: start) {
+        Label("New Terminal", systemImage: "plus.rectangle")
+      }
+      .accessibilityIdentifier("session.newTerminal")
+      if case .failed(let error) = model.terminalStart {
+        RowProblemLabel(
+          error.errorDescription ?? "The terminal could not be started.",
+          systemImage: "xmark.octagon"
+        )
+        .accessibilityIdentifier("session.newTerminal.error")
+      }
+    }
   }
 
   /// Whether this workspace is expanded. Toggling sends nothing to the host, because

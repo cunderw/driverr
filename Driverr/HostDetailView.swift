@@ -92,6 +92,9 @@ struct HostDetailView: View {
   /// `ConnectionDetailsDisclosure` weighs this against the phase and the user's own tap.
   @State private var isUnattendedConnect = false
 
+  /// Whether this screen is up, so a start that ends after someone left opens nothing.
+  @State private var isOnScreen = false
+
   var body: some View {
     form
       // A reading measure for the prose on a wide iPad column. Compact width applies nothing,
@@ -122,7 +125,8 @@ struct HostDetailView: View {
               },
               // Opens the pane's own screen with its composer focused. The request goes to the
               // root, which shows the pane scene.
-              onReply: { pane in presenter.reply(host: host, model: model, pane: pane) }
+              onReply: { pane in presenter.reply(host: host, model: model, pane: pane) },
+              onStartTerminal: terminalStart(model, session)
             )
             .task {
               session.startLiveUpdates()
@@ -164,6 +168,8 @@ struct HostDetailView: View {
         }
       }
     }
+    .onAppear { isOnScreen = true }
+    .onDisappear { isOnScreen = false }
     // Reset whenever the connection is not up. Otherwise a person's earlier tap would keep a
     // dropped link's address, password and Reconnect folded behind "Connection lost".
     .onChange(of: model?.phase) { _, phase in
@@ -253,6 +259,28 @@ struct HostDetailView: View {
     }
     // ⌘W's Leave Host does nothing behind this alert. See `PaneCommands`.
     .focusedSceneValue(\.isHostScreenPresenting, isConfirmingForget)
+  }
+
+  /// What New Terminal does, or `nil` where it would not be offered.
+  ///
+  /// `nil` for a core this build refuses: a `CoreControl` is there and would say yes, but nothing
+  /// it could start would ever be shown.
+  ///
+  /// **Opens only if the person is still here.** A start can take seconds, and a scene
+  /// presented over wherever they went since would take the screen from them. The session is
+  /// checked too, because a reconnect replaces it, and the id is then for the old one.
+  private func terminalStart(
+    _ model: ConnectionModel,
+    _ session: SessionModel
+  ) -> (() -> Void)? {
+    guard session.canStartTerminal, model.herdrAvailability?.coreRefusal == nil else { return nil }
+    return {
+      Task {
+        guard let id = await session.startTerminal(), isOnScreen, model.session === session
+        else { return }
+        presenter.present(host: host, model: model, target: .pane(id: id))
+      }
+    }
   }
 
   /// The old key's fingerprint, grouped like the trust prompt's so it can be compared with
@@ -527,16 +555,12 @@ struct HostDetailView: View {
           .accessibilityIdentifier("herdr.ready")
         // Under the working line, in the same words a lone refused core gets.
         if let refusal = availability.coreRefusal {
-          Label(refusal, systemImage: "exclamationmark.triangle")
-            .font(.footnote)
-            .foregroundStyle(.orange)
+          RowProblemLabel(refusal, systemImage: "exclamationmark.triangle")
             .accessibilityIdentifier("herdr.coreRefused")
         }
       } else {
         // A glyph, so the line reads as a problem at a glance under a green "Connected".
-        Label(availability.message, systemImage: "exclamationmark.triangle")
-          .font(.footnote)
-          .foregroundStyle(.orange)
+        RowProblemLabel(availability.message, systemImage: "exclamationmark.triangle")
           .accessibilityIdentifier("herdr.unavailable")
       }
     } else {
@@ -574,10 +598,11 @@ struct HostDetailView: View {
     // A failed command's error shows here. It does not change the phase, because the link
     // is still healthy.
     if let failure = model.commandFailure {
-      Label(failure.errorDescription ?? "The command could not be run.", systemImage: "xmark.octagon")
-        .font(.footnote)
-        .foregroundStyle(.orange)
-        .accessibilityIdentifier("connect.commandError")
+      RowProblemLabel(
+        failure.errorDescription ?? "The command could not be run.",
+        systemImage: "xmark.octagon"
+      )
+      .accessibilityIdentifier("connect.commandError")
     }
   }
 
