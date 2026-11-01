@@ -250,7 +250,7 @@ struct SessionTreeView: View {
           Text("herdr is running here, but has no workspaces open.")
             .foregroundStyle(.secondary)
             .accessibilityIdentifier("session.empty")
-          // Not over a link that has gone: `load` got no answer, and a start would get none.
+          // Not over a link that has gone, where a start would get no answer.
           if let onStartTerminal, !model.pollingPaused {
             startTerminalRows(onStartTerminal)
           }
