@@ -515,7 +515,8 @@ struct SessionModelTests {
     await control.release()
   }
 
-  /// `.loading` is the only row a host never read can show, so its first tick keeps it.
+  /// Until a tree lands, each tick still goes through `.loading`, so this host's `session.error`
+  /// row gives way to the loading row for every read. `poll()` steadies only a host it has read.
   @Test("a poll of a host never read still says it is reading")
   func pollBeforeAnyTreeLoads() async throws {
     let control = PushingControl(needsPolling: true)
