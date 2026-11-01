@@ -398,7 +398,10 @@ struct TerminalSceneModelTests {
     #expect(scene.currentRole == .ended)
     #expect(scene.model.phase == .connected)
 
-    // Installed, not left in `pending`, where it would have no view to hear from.
+    // Installed, not left in `pending`, where it would have no view to hear from. Nothing here
+    // reports a size, so this attach is waiting on a deadline of its own, and at the first one's
+    // 10 ms the role can end before it is read.
+    scene.coreSizeDeadline = .seconds(60)
     scene.retryOpen()
     await scene.settle()
     #expect(scene.currentRole == .controller)

@@ -30,6 +30,25 @@ private final class Streams: @unchecked Sendable {
 ///
 /// A wait here is on the tree, or on a count that only rises. Nothing asserts that a signal has
 /// not come, because that would be a sleep. `CoreSignalPacerTests` holds the rate.
+/// Counts signals, so a wait on one fails at a deadline and not at the suite's time limit.
+private final class SignalCount: @unchecked Sendable {
+  private let lock = NSLock()
+  private var count = 0
+
+  var value: Int { lock.withLock { count } }
+
+  func add() {
+    lock.withLock { count += 1 }
+  }
+
+  /// Counts what `changes` says, until cancelled.
+  func listen(to changes: AsyncStream<Void>) -> Task<Void, Never> {
+    Task {
+      for await _ in changes { add() }
+    }
+  }
+}
+
 @Suite("Core event feed", .timeLimit(.minutes(1)))
 struct CoreEventFeedTests {
   private let shell = #"{"address":"t1","state":"live","title":"a"}"#
@@ -196,16 +215,124 @@ struct CoreEventFeedTests {
     try await tree(of: control) { $0.allPanes.map(\.id) == ["core:t2", "core:t4"] }
   }
 
-  @Test("a line that is not JSON ends the connection, and the next read starts clean")
+  /// Every viewer on the link would go with it, for one line nobody could read.
+  @Test("a line that is not JSON ends the subscription, and leaves the connection and its viewers")
   func brokenLine() async throws {
-    let broken = subscribing(shell)
-    let replacement = subscribing(#"{"address":"t2","state":"live"}"#)
-    let control = control(Streams(broken, replacement))
+    let stream = subscribing(shell)
+    stream.replies["terminal.attach"] = .result(FakeCoreStream.attached(channel: 3))
+    let streams = Streams(stream)
+    let control = control(streams)
+    _ = try await control.snapshot()
+    let viewer = try await control.observe(
+      terminalID: "t1", size: TerminalSize(columns: 80, rows: 24))
+
+    stream.replies["events.subscribe"] = .result(
+      FakeCoreStream.subscribed([#"{"address":"t2","state":"live"}"#], seq: 9))
+    stream.emit("this is not json")
+    try await waitUntil("the CLOSE") {
+      stream.streamFrames.contains {
+        $0.channel == FakeCoreStream.eventChannel && $0.kind == .close
+      }
+    }
+
+    try await tree(of: control) { $0.allPanes.map(\.id) == ["core:t2"] }
+    #expect(stream.closes == 0)
+    #expect(streams.opened == 1)
+    stream.writeMessage("still here", onChannel: 3)
+    var output = viewer.output.makeAsyncIterator()
+    #expect(try await output.next() == Data("still here".utf8))
+  }
+
+  /// The poll retried in 3 s. Without this a core that was busy for one read leaves the rows
+  /// in the wrong order until the app's document next changes.
+  @Test("a document read that got no answer is asked again, and stops once it has one")
+  func documentRetried() async throws {
+    let stream = subscribing(shell)
+    stream.replies["doc.get"] = .error("unavailable")
+    let control = control(Streams(stream), heartbeatTick: .milliseconds(50))
     _ = try await control.snapshot()
 
-    broken.emit("this is not json")
-    try await waitUntil("the close") { broken.closes == 1 }
-    try await tree(of: control) { $0.allPanes.map(\.id) == ["core:t2"] }
+    stream.replies["doc.get"] = .result(FakeCoreStream.noDocument)
+    try await waitUntil("the second read") { stream.calls(of: "doc.get") == 2 }
+    for _ in 0..<30 {
+      stream.emit(#"{"jsonrpc":"2.0","method":"heartbeat","params":{"seq":0}}"#)
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(stream.calls(of: "doc.get") == 2)
+  }
+
+  /// The app's format is private, so a value this build cannot read stays that way until a
+  /// `doc` event says it changed.
+  @Test("a document that answered and cannot be read is not asked for again")
+  func unreadableDocumentNotRetried() async throws {
+    let stream = subscribing(shell)
+    stream.replies["doc.get"] = .result(#"{"value":5,"version":8}"#)
+    let control = control(Streams(stream), heartbeatTick: .milliseconds(50))
+    _ = try await control.snapshot()
+
+    for _ in 0..<30 {
+      stream.emit(#"{"jsonrpc":"2.0","method":"heartbeat","params":{"seq":0}}"#)
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(stream.calls(of: "doc.get") == 1)
+  }
+
+  /// Waits out what subscribing signalled, so the next signal can only be the next change's.
+  private func quiet() async throws {
+    try await Task.sleep(for: CoreSignalPacer.promptGap * 2)
+  }
+
+  /// A `doc` event says only that the document moved. The read is what there is to draw.
+  @Test("a document read reaches the screen by its own signal")
+  func documentSignals() async throws {
+    let spaces = #"""
+      {"address":"t1","state":"live","labels":{"herdr.space":"a"}},
+      {"address":"t2","state":"live","labels":{"herdr.space":"b"}}
+      """#
+    let stream = subscribing(spaces)
+    let control = control(stream)
+    _ = try await control.snapshot()
+    try await quiet()
+    let signals = SignalCount()
+    let listener = signals.listen(to: try #require(control.changes))
+    defer { listener.cancel() }
+
+    stream.replies["doc.get"] = .result(
+      #"{"value":{"spaces":[{"id":"b","name":"Bee","tabs":[]}]},"version":8}"#)
+    stream.event("doc", #"{"name":"herdr-app","version":8}"#)
+
+    try await waitUntil("the signal") { signals.value >= 1 }
+    #expect(try await control.snapshot().workspaces.map(\.id) == ["core:b", "core:a"])
+  }
+
+  /// `/clear`'s status has been signalled by the time the read lands, and the new id is what a
+  /// chat needs to hear.
+  @Test("a session id that moved reaches the screen by its own signal")
+  func sessionSignals() async throws {
+    let home = "/home/x"
+    let path = "\(home)/.claude/sessions/101.json"
+    let claude =
+      #"{"address":"t1","state":"live","foreground":{"argv":["claude"],"pid":101},"#
+      + #""status":{"app":"claude-code","state":"idle"}}"#
+    let record = { (id: String) in
+      FakeCoreStream.Reply.result(
+        #"{"text":"{\"pid\":101,\"sessionId\":\"\#(id)\"}"}"#)
+    }
+    let stream = subscribing(claude)
+    stream.files = [path: record("before")]
+    let control = CoreControl(binaryPath: "hc", home: home, open: { _ in stream })
+    _ = try await control.snapshot()
+    try await quiet()
+    let signals = SignalCount()
+    let listener = signals.listen(to: try #require(control.changes))
+    defer { listener.cancel() }
+
+    stream.files = [path: .late(#"{"text":"{\"pid\":101,\"sessionId\":\"after\"}"}"#, delay: .milliseconds(100))]
+    stream.event("status", on: "t1", #"{"status":{"app":"claude-code","state":"idle"}}"#)
+
+    try await waitUntil("the status's signal, then the read's") { signals.value >= 2 }
+    #expect(
+      try await control.snapshot().pane(id: "core:t1")?.agent?.session?.identifier == "after")
   }
 
   @Test("a connection that dies signals, and the read that follows subscribes on a new one")
@@ -292,6 +419,19 @@ struct CoreEventFeedTests {
     try await waitUntil("the close") { stream.closes == 1 }
     _ = await changes.next()
     await #expect(throws: AppError.self) { try await control.snapshot() }
+  }
+
+  /// A sleep is never short, so this cannot fail on a slow machine. Asserts the floor only.
+  @Test("it takes all nine silent ticks")
+  func nineTicks() async throws {
+    let tick = Duration.milliseconds(100)
+    let stream = subscribing(shell)
+    let started = ContinuousClock.now
+    let control = control(Streams(stream), heartbeatTick: tick)
+    _ = try await control.snapshot()
+
+    try await waitUntil("the close") { stream.closes == 1 }
+    #expect(ContinuousClock.now - started >= tick * 9)
   }
 
   /// A tick is long enough that heartbeats sent every twentieth of one are never late, however

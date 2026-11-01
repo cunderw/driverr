@@ -204,7 +204,7 @@ struct SessionModelTests {
   }
 
   /// Started and through its first reads, with `polls` counting from here.
-  private func listening(_ control: PushingControl) async -> (SessionModel, PollRecorder) {
+  private func listening(_ control: any HerdrControl) async -> (SessionModel, PollRecorder) {
     let (model, polls) = live(control, pollInterval: .seconds(30))
     model.startLiveUpdates()
     await polls.waitForPolls(2)
@@ -323,6 +323,25 @@ struct SessionModelTests {
     await polls.waitForPolls(done + 2)
     #expect(model.tree.allPanes.map(\.id) == ["core:t2"])
     #expect(await control.changedSnapshots == changedReads + 1)
+  }
+
+  /// A tree that left a side's panes out would be diffed and sent on, and
+  /// `ConnectionModel.apply` then forgets each of those panes' chat, screen and draft.
+  @Test("a link that goes under a combined host keeps its tree, and tells nobody that panes left")
+  func linkLossForgetsNothing() async throws {
+    let tui = PushingControl(oneTerminal("w1:p1"))
+    let core = PushingControl(oneTerminal("core:t1"))
+    let (model, polls) = await listening(CombinedControl(tui: tui, core: core))
+    defer { model.stopLiveUpdates() }
+    let told = polls.completed
+
+    await tui.moved(to: .failure(.channelFailed(reason: "the link went")))
+    await core.moved(to: .failure(.channelFailed(reason: "the link went")))
+    core.signal()
+    try await until { model.failure != nil }
+
+    #expect(model.tree.allPanes.map(\.id) == ["w1:p1", "core:t1"])
+    #expect(polls.completed == told)
   }
 
   @Test("a control that cannot push is polled as before")

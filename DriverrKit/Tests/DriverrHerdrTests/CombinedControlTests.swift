@@ -60,29 +60,25 @@ private actor Side: HerdrControl {
   }
 }
 
-/// A TUI whose calls can be counted, whose answer can change, and whose command can take long
-/// enough for something else to happen.
+/// A TUI whose calls can be counted and whose answer can change.
 private actor CountingTUI: HerdrControl {
   nonisolated let binaryPath = "herdr"
   private var read: Result<SessionTree, AppError>
   private let answer: HerdrAvailability
-  private let whileRunning: @Sendable () async -> Void
   private(set) var snapshots = 0
   private(set) var availabilityChecks = 0
 
-  init(
-    read: Result<SessionTree, AppError>,
-    answer: HerdrAvailability = .notInstalled,
-    whileRunning: @escaping @Sendable () async -> Void = {}
-  ) {
+  init(read: Result<SessionTree, AppError>, answer: HerdrAvailability = .notInstalled) {
     self.read = read
     self.answer = answer
-    self.whileRunning = whileRunning
+  }
+
+  func moved(to read: Result<SessionTree, AppError>) {
+    self.read = read
   }
 
   func snapshot() async throws -> SessionTree {
     snapshots += 1
-    await whileRunning()
     return try read.get()
   }
 
@@ -321,7 +317,8 @@ struct CombinedControlTests {
     await #expect(throws: tuiFailure) { try await combined.changedSnapshot() }
   }
 
-  @Test("a core that fails through a change leaves the TUI's last tree")
+  /// As a poll would answer: the TUI's tree only if the TUI still gives one.
+  @Test("a core that fails through a change asks the TUI, and a TUI that answers still stands")
   func changeWithCoreFailing() async throws {
     let tui = CountingTUI(read: .success(tuiTree))
     let core = PushingCore(read: .success(coreTree))
@@ -330,17 +327,21 @@ struct CombinedControlTests {
 
     await core.moved(to: .failure(coreFailure))
     #expect(try await combined.changedSnapshot().allPanes.map(\.id) == ["w1:p1"])
+    #expect(await tui.snapshots == 2)
   }
 
-  /// A push during the poll is read first and lands first, so this tree must not put the core
-  /// back to where it was when the poll started.
-  @Test("a poll takes the core's tree from after the TUI's command, not from before it")
-  func pollEndsOnTheLatest() async throws {
+  /// The feed signals as soon as a connection ends, and the TUI's last tree is from a link that
+  /// is just as dead. Passed over as a tree, that forgets every core pane's chat and draft.
+  @Test("a link that has gone fails a change, and does not answer with the TUI's last tree")
+  func changeWithTheLinkGone() async throws {
+    let tui = CountingTUI(read: .success(tuiTree))
     let core = PushingCore(read: .success(coreTree))
-    let moved = tree("core:workspace", panes: ["core:t2"])
-    let tui = CountingTUI(read: .success(tuiTree)) { await core.moved(to: .success(moved)) }
     let combined = CombinedControl(tui: tui, core: core)
-    #expect(try await combined.snapshot().allPanes.map(\.id) == ["w1:p1", "core:t2"])
+    _ = try await combined.snapshot()
+
+    await tui.moved(to: .failure(tuiFailure))
+    await core.moved(to: .failure(coreFailure))
+    await #expect(throws: tuiFailure) { try await combined.changedSnapshot() }
   }
 
   @Test("a combined host still polls, for the TUI, and hears the core's changes")

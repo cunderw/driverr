@@ -155,8 +155,9 @@ final class TerminalSceneModel {
   /// How long a controller's session holds its first size. Injected, like `stepDeadline`,
   /// because a core attach waits on it.
   private let openSettlingWindow: Duration
-  /// How long a core attach may wait for a terminal view to report a size.
-  private let coreSizeDeadline: Duration
+  /// How long a core attach may wait for a terminal view to report a size. A `var`, so a test
+  /// can run out one attach's wait and not the next one's.
+  var coreSizeDeadline: Duration
 
   /// How often a lost terminal is tried, and how many times. About a minute more than the
   /// core's own backoff reaches, so a slow recovery is still caught.

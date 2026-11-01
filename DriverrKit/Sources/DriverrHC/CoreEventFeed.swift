@@ -133,6 +133,8 @@ actor CoreEventFeed {
   private var document: CoreAppDocument?
   private var sessions: [String: String] = [:]
   private var documentIsStale = false
+  /// The last read of it got no answer, so the watchdog's next tick asks again.
+  private var documentReadWentUnanswered = false
   private var staleSessions: Set<String> = []
   private var reading: Task<Void, Never>?
   private var pacer = CoreSignalPacer()
@@ -228,7 +230,8 @@ actor CoreEventFeed {
           }
         } catch {
           // Nothing later can be trusted once a line is lost, and the way back is a new reply.
-          await connection.close()
+          // Only this channel: the connection is fine, and every viewer on it would go too.
+          await connection.closeChannel(channel)
           break frames
         }
         await connection.credit(frame.payload.count, toChannel: channel)
@@ -273,6 +276,11 @@ actor CoreEventFeed {
     while !Task.isCancelled {
       try? await Task.sleep(for: heartbeatTick)
       guard !Task.isCancelled, subscription?.id == id else { return }
+      if documentReadWentUnanswered {
+        documentReadWentUnanswered = false
+        documentIsStale = true
+        _ = startReading()
+      }
       subscription?.silentTicks += 1
       guard let silent = subscription?.silentTicks, silent >= Self.silentTicksAllowed else {
         continue
@@ -300,20 +308,31 @@ actor CoreEventFeed {
       documentIsStale = false
       staleSessions = []
 
-      async let read: CoreDocGetResult<CoreAppDocument>? =
-        readsDocument
-        ? try? held.connection.call(
-          "doc.get",
-          params: CoreDocGetParams(name: CoreAppDocument.name),
-          as: CoreDocGetResult<CoreAppDocument>.self)
-        : nil
+      async let documentRead: Void = readDocument(if: readsDocument, over: held.connection)
       await readSessions(of: addresses, over: held.connection)
-      if let read = await read {
-        document = read.value
-        changed(.prompt)
-      }
+      await documentRead
     }
     reading = nil
+  }
+
+  /// Only a read with no answer goes again. The app's format is private, so a value this build
+  /// cannot read stays that way until a `doc` event says it changed. By tick and not from the
+  /// loop above, which would spin on a core that refuses, and not on the next event, which can
+  /// be Claude Code's spinner.
+  private func readDocument(if isStale: Bool, over connection: CoreConnection) async {
+    guard isStale else { return }
+    do {
+      let read = try await connection.call(
+        "doc.get",
+        params: CoreDocGetParams(name: CoreAppDocument.name),
+        as: CoreDocGetResult<CoreAppDocument>.self)
+      document = read.value
+      changed(.prompt)
+    } catch AppError.herdrResponseUnreadable {
+      return
+    } catch {
+      documentReadWentUnanswered = true
+    }
   }
 
   private func readSessions(of addresses: Set<String>, over connection: CoreConnection) async {

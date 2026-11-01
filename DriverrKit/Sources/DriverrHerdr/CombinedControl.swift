@@ -83,9 +83,15 @@ public struct CombinedControl: HerdrControl {
 
   /// The core's news on the TUI's last tree, with no command on the host. The TUI's own poll
   /// goes on regardless, so that tree is at most a tick old.
+  ///
+  /// **A core that failed goes back to a whole poll.** It usually means the link went, and the
+  /// TUI's last tree came over that link. Answered with it, the core's panes look gone, and
+  /// `ConnectionModel.apply` forgets each one's chat, screen and draft.
   public func changedSnapshot() async throws -> SessionTree {
     guard let tuiSide = await memory.tui else { return try await snapshot() }
-    return try merged(tuiSide, await Result { try await core.changedSnapshot() })
+    let coreRead = await Result { try await core.changedSnapshot() }
+    guard case .success = coreRead else { return try await snapshot() }
+    return try merged(tuiSide, coreRead)
   }
 
   /// The TUI's panes, then the core's.
@@ -100,10 +106,10 @@ public struct CombinedControl: HerdrControl {
   public func snapshot() async throws -> SessionTree {
     async let tuiTree = Result { try await tui.snapshot() }
     async let coreTree = Result { try await core.snapshot() }
-    let (tuiRead, firstCoreRead) = await (tuiTree, coreTree)
+    let (tuiRead, coreRead) = await (tuiTree, coreTree)
 
     let tuiSide: TUISide
-    switch (tuiRead, firstCoreRead) {
+    switch (tuiRead, coreRead) {
     case (.success(let tree), _):
       tuiSide = .tree(tree)
     case (.failure(let failure), .success):
@@ -112,13 +118,6 @@ public struct CombinedControl: HerdrControl {
       tuiSide = .failed(failure)
     }
     await memory.remember(tuiSide)
-
-    // Events can have moved the core on while the TUI's command ran. This tree lands after any
-    // refresh that signal caused, and must not put the older status back.
-    var coreRead = firstCoreRead
-    if case .success = coreRead, !core.needsPolling {
-      coreRead = await Result { try await core.snapshot() }
-    }
     return try merged(tuiSide, coreRead)
   }
 

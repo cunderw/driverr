@@ -239,6 +239,12 @@ public struct TranscriptNotice: Equatable, Sendable {
           symbolName: "exclamationmark.triangle"
         )
       }
+    case .noReadableTurns where agentStatus == .idle:
+      self.init(
+        title: "No turns yet",
+        message: "Nothing has been said in this session.",
+        symbolName: "ellipsis.bubble"
+      )
     case .noReadableTurns:
       self.init(
         title: "No readable turns in this file",

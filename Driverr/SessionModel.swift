@@ -35,8 +35,9 @@ final class SessionModel {
   /// The most recent failed read, retained until a later read succeeds.
   private(set) var lastFailure: AppError?
 
-  /// What changed between two polls. The poll is the only thing that sees panes move, so
-  /// the chat's freshness hangs off it rather than off a second poller.
+  /// What changed between two reads of the session, polled or pushed. Those reads are the only
+  /// thing that sees panes move, so the chat's freshness hangs off them rather than off a second
+  /// poller.
   struct Changes: Equatable {
     /// Panes whose agent status, reported session, agent kind or working directory moved.
     /// See `hasMoved(from:to:)`.
@@ -44,15 +45,15 @@ final class SessionModel {
     /// Every pane id still in the tree, so holders of per-pane state can drop the rest.
     var liveIDs: Set<String> = []
     /// Every pane in the new tree, so a model made from a view's older value is corrected on
-    /// the next poll, not on the pane's next move.
+    /// the next read, not on the pane's next move.
     var livePanes: [Pane] = []
 
     var isEmpty: Bool { moved.isEmpty }
   }
 
-  /// Told what moved after every successful poll. `ConnectionModel` sets it and feeds its
-  /// per-pane caches, so the session knows nothing about them. Called from `refresh()` in a
-  /// task, not a view body, so the handler may mutate observable state.
+  /// Told what moved after every successful read. `ConnectionModel` sets it and feeds its
+  /// per-pane caches, so the session knows nothing about them. Called from a task, not a view
+  /// body, so the handler may mutate observable state.
   @ObservationIgnored var onSessionChanged: ((Changes) -> Void)?
 
   @ObservationIgnored private let control: any HerdrControl

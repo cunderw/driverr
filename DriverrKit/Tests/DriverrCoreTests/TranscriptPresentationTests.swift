@@ -392,6 +392,18 @@ struct TranscriptPresentationTests {
     )
   }
 
+  /// What `/clear` leaves: a file with a session's opening lines, and an agent waiting for its
+  /// first prompt. Nothing has gone wrong, so the fault wording would be false.
+  @Test("an idle agent's file with no turns is a session that has not started")
+  func noTurnsYet() {
+    let notice = TranscriptNotice(
+      outcome: .noReadableTurns, turnCount: 0, bytesFetched: 1_126, agentStatus: .idle
+    )
+    #expect(notice?.title == "No turns yet")
+    #expect(notice?.message == "Nothing has been said in this session.")
+    #expect(notice?.symbolName == "ellipsis.bubble")
+  }
+
   @Test("a page that parsed cleanly carries no notice")
   func aCleanPageCarriesNoNotice() {
     #expect(
