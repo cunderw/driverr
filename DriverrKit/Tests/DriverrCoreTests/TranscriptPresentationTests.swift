@@ -404,6 +404,16 @@ struct TranscriptPresentationTests {
     #expect(notice?.symbolName == "ellipsis.bubble")
   }
 
+  /// `.noReadableTurns` says only that this page held no turns. A file with this much in it has
+  /// had something said in it, in a shape this build cannot read.
+  @Test("an idle agent's large file with no turns keeps the fault wording")
+  func noTurnsInALargeFile() {
+    let notice = TranscriptNotice(
+      outcome: .noReadableTurns, turnCount: 0, bytesFetched: 512_000, agentStatus: .idle
+    )
+    #expect(notice?.title == "No readable turns in this file")
+  }
+
   @Test("a page that parsed cleanly carries no notice")
   func aCleanPageCarriesNoNotice() {
     #expect(

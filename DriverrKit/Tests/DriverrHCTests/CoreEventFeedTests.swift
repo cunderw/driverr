@@ -26,10 +26,6 @@ private final class Streams: @unchecked Sendable {
   }
 }
 
-/// The subscription through `CoreControl`, because what matters is the tree it leaves.
-///
-/// A wait here is on the tree, or on a count that only rises. Nothing asserts that a signal has
-/// not come, because that would be a sleep. `CoreSignalPacerTests` holds the rate.
 /// Counts signals, so a wait on one fails at a deadline and not at the suite's time limit.
 private final class SignalCount: @unchecked Sendable {
   private let lock = NSLock()
@@ -49,6 +45,10 @@ private final class SignalCount: @unchecked Sendable {
   }
 }
 
+/// The subscription through `CoreControl`, because what matters is the tree it leaves.
+///
+/// A wait here is on the tree, or on a count that only rises. Nothing asserts that a signal has
+/// not come, because that would be a sleep. `CoreSignalPacerTests` holds the rate.
 @Suite("Core event feed", .timeLimit(.minutes(1)))
 struct CoreEventFeedTests {
   private let shell = #"{"address":"t1","state":"live","title":"a"}"#

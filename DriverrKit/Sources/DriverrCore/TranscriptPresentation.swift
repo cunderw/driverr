@@ -206,6 +206,9 @@ public struct TranscriptNotice: Equatable, Sendable {
     offersScreen && !inSubagentChat && canReadScreen
   }
 
+  /// How much of a file can be a session's opening lines and nothing else.
+  static let unstartedSessionBytes = 4 * 1024
+
   /// The exits' titles, kept with the rest of the screen's copy.
   public static let showScreenTitle = "Show the Screen"
   public static let chooseFileTitle = "Choose a File"
@@ -239,7 +242,9 @@ public struct TranscriptNotice: Equatable, Sendable {
           symbolName: "exclamationmark.triangle"
         )
       }
-    case .noReadableTurns where agentStatus == .idle:
+    // The outcome says only that this page held no turns, so the size has to say the rest. What
+    // `/clear` leaves measured 1.1 KB, and a large file has had something said in it.
+    case .noReadableTurns where agentStatus == .idle && bytesFetched < Self.unstartedSessionBytes:
       self.init(
         title: "No turns yet",
         message: "Nothing has been said in this session.",
