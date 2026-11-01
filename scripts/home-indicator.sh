@@ -12,8 +12,9 @@
 # otherwise ship unnoticed. It reads the raw captures, not the framed store images, because
 # the rows it samples are a bare capture's.
 #
-# It reads the 6.9" phone captures in light appearance and nothing else, and it fails on a
-# capture it cannot read. The rows it samples are that screen's. On the iPad they cross the
+# It reads the 6.9" phone's and iPhone Duo's outer display captures in light appearance and
+# nothing else, and it fails on a capture it cannot read. The rows it samples are those
+# screens', which draw the indicator the same distance from the bottom edge. On the iPad they cross the
 # keyboard's bottom edge, which read as an indicator in three of five captures. The dark
 # indicator sits within the threshold of its background, so a dark capture that drew it
 # read as "none".
@@ -31,7 +32,7 @@ for tool in python3 sips; do
     || { echo "error: $tool is not on PATH. README.md, \"Building it\", lists what to install" >&2; exit 2; }
 done
 
-readonly SIZE="1320x2868"
+readonly SIZES="1320x2868 1398x2034"
 # The darkest background a light capture may have on the row above the indicator. The light
 # captures measured 225 to 255 and the dark ones 32 to 34.
 readonly LIGHT=128
@@ -47,8 +48,8 @@ for shot in "$dir"/*.png; do
   name="$(basename "$shot")"
   height="$(sips -g pixelHeight "$shot" | awk '/pixelHeight/{print $2}')"
   width="$(sips -g pixelWidth "$shot" | awk '/pixelWidth/{print $2}')"
-  if [ "${width}x${height}" != "$SIZE" ]; then
-    echo "$name: cannot classify, ${width}x${height} is not the $SIZE phone capture" >&2
+  if [[ " $SIZES " != *" ${width}x${height} "* ]]; then
+    echo "$name: cannot classify, ${width}x${height} is not one of the phone sizes, $SIZES" >&2
     unread=$((unread + 1))
     continue
   fi
@@ -74,8 +75,9 @@ def luminance(x, y):
     b, g, r = data[offset + row * stride + x * depth : offset + row * stride + x * depth + 3]
     return (2126 * r + 7152 * g + 722 * b) // 10000
 
-# The indicator is 15 rows tall, y 2829 to 2843, with 24 clear rows below it. `inside` is a
-# row through it and `above` a row clear of it, both counted from the bottom edge.
+# The indicator is 15 rows tall with 24 clear rows below it, y 2829 to 2843 of 2868 and 1995
+# to 2009 of 2034. `inside` is a row through it and `above` a row clear of it, both counted
+# from the bottom edge.
 inside, above = height - 32, height - 50
 columns = range(width * 35 // 100, width * 65 // 100, 8)
 through = [luminance(x, inside) for x in columns]

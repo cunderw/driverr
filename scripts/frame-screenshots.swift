@@ -6,6 +6,7 @@
 //
 //   swift scripts/frame-screenshots.swift iphone-max <raw dir> <out dir>
 //   swift scripts/frame-screenshots.swift ipad       <raw dir> <out dir>
+//   swift scripts/frame-screenshots.swift iphone-duo <raw dir> <out dir>
 //   swift scripts/frame-screenshots.swift header     <raw root> <out dir> [<crops dir>]
 //   swift scripts/frame-screenshots.swift --list     the published names, one per line
 //
@@ -56,7 +57,14 @@ struct Kind {
   /// corners, which iOS draws concentric with the display: about 180 on the 6.9" phone and
   /// 55 on the 13" iPad. Rounded up, because a clip smaller than the drawn corner leaves a
   /// sliver of the app's background between the keyboard and the frame.
+  ///
+  /// The trailing corners' radius on a display whose two sides differ. See `hingeRadius`.
   let screenRadius: CGFloat
+  /// The radius of the leading corners in capture pixels, or nil when all four corners are
+  /// `screenRadius`. iPhone Duo's outer display meets the hinge on its leading side, and its
+  /// corners there are nearly square. Read from the framebuffer mask in the simulator's device
+  /// type: 186 at the top row on the free side, and 8 points at 3x on the hinge side.
+  var hingeRadius: CGFloat? = nil
   /// The Dynamic Island in capture pixels, or nil for a device without one. The simulator
   /// does not draw it, and the status bar leaves its place empty, so drawing it covers no
   /// app UI.
@@ -81,6 +89,12 @@ let kinds: [String: Kind] = [
     canvas: CGSize(width: 2064, height: 2752), capture: CGSize(width: 2064, height: 2752),
     screenRadius: 60, island: nil, bezel: 40, captionSize: 132, top: 160, gap: 120,
     bottom: 130),
+  // The outer display, the one the simulator boots on. Its camera is not drawn: the device
+  // type's sensor artwork is empty, so nothing says where it sits.
+  "iphone-duo": Kind(
+    canvas: CGSize(width: 1398, height: 2034), capture: CGSize(width: 1398, height: 2034),
+    screenRadius: 186, hingeRadius: 24, island: nil, bezel: 24, captionSize: 104, top: 100,
+    gap: 80, bottom: 90),
 ]
 
 /// The header fills both the product page header and the search results, and Apple crops
@@ -210,6 +224,34 @@ func drawBackground(_ context: CGContext) {
     endRadius: max(size.width, size.height) * 0.6, options: [])
 }
 
+/// A device outline: `radius` at all four corners, or `radius` on the trailing side and
+/// `hinge` on the leading side.
+func deviceOutline(_ rect: CGRect, radius: CGFloat, hinge: CGFloat?) -> CGPath {
+  guard let hinge else {
+    return CGPath(roundedRect: rect, cornerWidth: radius, cornerHeight: radius, transform: nil)
+  }
+  let path = CGMutablePath()
+  path.move(to: CGPoint(x: rect.minX + hinge, y: rect.minY))
+  path.addArc(
+    tangent1End: CGPoint(x: rect.maxX, y: rect.minY), tangent2End: rect.topRight, radius: radius)
+  path.addArc(
+    tangent1End: rect.topRight, tangent2End: rect.topLeft, radius: radius)
+  path.addArc(
+    tangent1End: rect.topLeft, tangent2End: rect.bottomLeft, radius: hinge)
+  path.addArc(
+    tangent1End: rect.bottomLeft, tangent2End: rect.bottomRight, radius: hinge)
+  path.closeSubpath()
+  return path
+}
+
+extension CGRect {
+  /// CoreGraphics measures from the bottom, so "top" here is `maxY`.
+  var topLeft: CGPoint { CGPoint(x: minX, y: maxY) }
+  var topRight: CGPoint { CGPoint(x: maxX, y: maxY) }
+  var bottomLeft: CGPoint { CGPoint(x: minX, y: minY) }
+  var bottomRight: CGPoint { CGPoint(x: maxX, y: minY) }
+}
+
 func loadImage(_ url: URL) -> CGImage {
   guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
     let image = CGImageSourceCreateImageAtIndex(source, 0, nil)
@@ -232,6 +274,8 @@ func drawDevice(
   let outer = screen.insetBy(dx: -kind.bezel, dy: -kind.bezel)
   let screenRadius = kind.screenRadius * scale
   let outerRadius = screenRadius + kind.bezel
+  let screenHinge = kind.hingeRadius.map { $0 * scale }
+  let outerHinge = screenHinge.map { $0 + kind.bezel }
 
   // The shadow goes on the body only. It is cleared before the capture is drawn, or the
   // screen casts one of its own onto the bezel.
@@ -239,9 +283,7 @@ func drawDevice(
   context.setShadow(
     offset: CGSize(width: 0, height: -outer.height * 0.018), blur: outer.height * 0.05,
     color: CGColor(srgbRed: 0, green: 0, blue: 0, alpha: 0.45))
-  context.addPath(
-    CGPath(roundedRect: outer, cornerWidth: outerRadius, cornerHeight: outerRadius,
-      transform: nil))
+  context.addPath(deviceOutline(outer, radius: outerRadius, hinge: outerHinge))
   context.setFillColor(RGB(hex: 0x5C5C60).cg())
   context.fillPath()
   context.restoreGState()
@@ -250,15 +292,12 @@ func drawDevice(
   let rim = max(3, kind.bezel * 0.14)
   let bezel = outer.insetBy(dx: rim, dy: rim)
   context.addPath(
-    CGPath(roundedRect: bezel, cornerWidth: outerRadius - rim, cornerHeight: outerRadius - rim,
-      transform: nil))
+    deviceOutline(bezel, radius: outerRadius - rim, hinge: outerHinge.map { $0 - rim }))
   context.setFillColor(RGB(hex: 0x0B0B0C).cg())
   context.fillPath()
 
   context.saveGState()
-  context.addPath(
-    CGPath(roundedRect: screen, cornerWidth: screenRadius, cornerHeight: screenRadius,
-      transform: nil))
+  context.addPath(deviceOutline(screen, radius: screenRadius, hinge: screenHinge))
   context.clip()
   context.draw(capture, in: screen)
   if let island = kind.island {
@@ -489,7 +528,7 @@ if arguments == ["--list"] {
 }
 guard arguments.count == 3 || (arguments.count == 4 && arguments[0] == "header") else {
   fail(
-    "usage: frame-screenshots.swift iphone-max|ipad <raw dir> <out dir>, "
+    "usage: frame-screenshots.swift iphone-max|ipad|iphone-duo <raw dir> <out dir>, "
       + "header <raw root> <out dir> [<crops dir>], or --list")
 }
 let job = arguments[0]
@@ -506,6 +545,6 @@ print(
 switch job {
 case "header": frameHeader(rawRoot: raw, out: out, crops: crops)
 default:
-  guard let kind = kinds[job] else { fail("unknown kind '\(job)' (iphone-max|ipad|header)") }
+  guard let kind = kinds[job] else { fail("unknown kind '\(job)' (iphone-max|ipad|iphone-duo|header)") }
   frameSet(job, kind: kind, raw: raw, out: out)
 }

@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 #
-# Capture the App Store screenshot tour at the two sizes App Store Connect requires, and
-# frame the captures for the store.
+# Capture the App Store screenshot tour at each size this app publishes, and frame the
+# captures for the store.
 #
-#   scripts/screenshots.sh              both sizes
+#   scripts/screenshots.sh              every size
 #   scripts/screenshots.sh iphone-max   just the 6.9" iPhone
 #   scripts/screenshots.sh ipad         just the 13" iPad
+#   scripts/screenshots.sh iphone-duo   just iPhone Duo's outer display
 #   scripts/screenshots.sh --frame      no tour: frame the committed captures again
 #   scripts/screenshots.sh --help       this text. It touches no simulator
 #
@@ -18,7 +19,7 @@
 #                 their order and captions. These are what the store upload reads.
 #   header/       the product page header, header.png, uploaded by hand.
 #
-# The header is drawn from both kinds' raw captures, so every run draws it again. Two crops
+# The header is drawn from the phone's and the iPad's raw captures, so every run draws it again. Two crops
 # of it, at the shapes Apple cuts it to for the product page and for search results, go to
 # .build-logs/header-crops/, which git ignores. Open them to check that nothing that matters
 # is cut off.
@@ -30,8 +31,8 @@
 #
 # Each tour runs on this repo's own named simulator for that device kind, and a capture's
 # size comes from the device and is checked, never produced by scaling. The framing then
-# scales each capture down into its device frame (about 0.75 on the phone and 0.71 on the
-# iPad) and rounds its corners to the display's. Nothing else changes the app's pixels. The
+# scales each capture down into its device frame (about 0.75 on the phone, 0.71 on the iPad
+# and 0.73 on iPhone Duo) and rounds its corners to the display's. Nothing else changes the app's pixels. The
 # store image's size is the canvas the framing draws on, which is checked too.
 #
 # The status bar is overridden for the run (9:41 on a fixed date, four bars, a full
@@ -41,6 +42,10 @@
 # Each device is shut down and booted before its tour, and the phone set fails if an image
 # draws the home indicator. `capture_one` says why. The shutdown stops anything else that is
 # using that simulator, so run nothing else on it while this script runs.
+#
+# iPhone Duo's simulator boots closed, so that tour always runs on the outer display, whatever
+# posture the device was left in. Nothing but the Device Hub window can open it, so the inner
+# display is not in the store set.
 #
 # Everything is made in one staging directory first: each tour's captures, after their count,
 # size and home-indicator checks, then each framed set, after its count, size and alpha
@@ -71,6 +76,7 @@ expected_size() {
   case "$1" in
     iphone-max) echo "1320x2868" ;;
     ipad) echo "2064x2752" ;;
+    iphone-duo) echo "1398x2034" ;;
     *) echo "" ;;
   esac
 }
@@ -82,6 +88,7 @@ expected_count() {
   case "$1" in
     iphone-max) echo "7" ;;
     ipad) echo "6" ;;
+    iphone-duo) echo "7" ;;
     *) echo "" ;;
   esac
 }
@@ -189,7 +196,8 @@ frame_one() {
   note "$kind: $listed store images, all ${want}, no alpha"
 }
 
-# Draws the header from both kinds' staged captures, and its two crops into $CROPS.
+# Draws the header from the phone's and the iPad's staged captures, and its two crops into
+# $CROPS.
 frame_header() {
   note "header: drawing it"
   local out="$STAGE/header"
@@ -222,6 +230,7 @@ capture_one() {
   case "$kind" in
     ipad)       device="Driverr iPad" ;;
     iphone-max) device="Driverr iPhone 17 Pro Max" ;;
+    iphone-duo) device="Driverr iPhone Duo" ;;
     *) fail "unknown simulator kind '$kind'" ;;
   esac
 
@@ -301,9 +310,9 @@ PY
   note "$kind: checking the captures in $fresh"
   check_count "$kind" "$fresh" "$(expected_count "$kind")"
 
-  # The phone set has no home indicator, and the simulator decides that, not the tour. The
-  # check reads the 6.9" phone captures only. The iPad captures have never drawn one.
-  if [ "$kind" = "iphone-max" ]; then
+  # The phone sets have no home indicator, and the simulator decides that, not the tour. The
+  # check reads the phone captures only. The iPad captures have never drawn one.
+  if [ "$kind" != "ipad" ]; then
     "$REPO_ROOT/scripts/home-indicator.sh" none "$fresh" \
       || fail "$kind drew the home indicator, or the check could not read it." \
         "The captures are in $fresh. Run the script again."
@@ -348,10 +357,10 @@ main() {
     shift
   fi
   local kinds=("$@")
-  [ ${#kinds[@]} -gt 0 ] || kinds=(iphone-max ipad)
+  [ ${#kinds[@]} -gt 0 ] || kinds=(iphone-max ipad iphone-duo)
   local kind
   for kind in "${kinds[@]}"; do
-    [ -n "$(expected_size "$kind")" ] || fail "unknown size $kind (iphone-max|ipad)"
+    [ -n "$(expected_size "$kind")" ] || fail "unknown size $kind (iphone-max|ipad|iphone-duo)"
   done
   # The committed captures first, so the header can draw on a kind this run does not capture.
   STAGE="$(mktemp -d)"

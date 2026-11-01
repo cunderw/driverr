@@ -109,9 +109,9 @@ xcrun simctl list devices available | grep -q '    Driverr iPad (' ||
 ```
 
 Keep the name and the device type together: an iPad name created with an iPhone type would
-let the iPad checks pass against a phone. A third device, `Driverr iPhone 17 Pro Max`
-(`iPhone-17-Pro-Max`), exists only to regenerate the App Store screenshots — contributing
-does not need it.
+let the iPad checks pass against a phone. Two more devices, `Driverr iPhone 17 Pro Max`
+(`iPhone-17-Pro-Max`) and `Driverr iPhone Duo` (`iPhone-Duo`), exist only to regenerate the
+App Store screenshots — contributing does not need them.
 
 | Command (all prefixed `npx -y xcodebuildmcp@2.7.0`) | What it runs |
 | --- | --- |
