@@ -42,8 +42,6 @@ This file holds the rules and traps on top of that.
   a pane open or keeps state per pane, or the machine's own host connecting closes a scene
   and forgets a chat. A background pass has no registry, so it takes the other hosts' cores
   from the standing card (`HostSummary.coreID`).
-- **Core detection is `#if DEBUG` in `AppEnvironment.live` until #21.** Every push to `main`
-  uploads to TestFlight, and a tap guard would not cover every way into `openBridge`.
 - **`DriverrTerm` must not import `DriverrSSH`.** It renders a `TerminalFeed`, a struct of
   closures over a byte stream, so a PTY channel, a herdr pane or a recorded transcript can
   drive it. The adapter is in the app target, `Driverr/TerminalFeed+PTYChannel.swift`, the

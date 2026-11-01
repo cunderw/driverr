@@ -91,20 +91,13 @@ struct AppEnvironment {
     settingsStore: UserDefaultsSettingsStore(),
     makeTransport: { NIOSSHTransport() },
     // Discover the binary: an exec channel runs a non-login shell, whose PATH may lack
-    // Homebrew's prefix or `~/.local/bin`. A host without herdr gets a control bound to the bare
-    // name, whose first command reports `herdrNotInstalled`.
-    //
-    // herdr-core stays out of Release until #21, because every push to `main` uploads to
-    // TestFlight and a core host cannot yet do everything a pane offers.
+    // Homebrew's prefix or `~/.local/bin`. A host with neither herdr nor a core gets a control
+    // bound to the bare name, whose first command reports `herdrNotInstalled`.
     makeHerdrControl: { transport in
       let run: CommandRunner = { try await transport.execChannel(command: $0) }
-      #if DEBUG
       async let tui = CLIControl.discovering(run: run)
       async let core = CoreControl.discovering(transport: transport)
       return await CombinedControl.joining(tui: tui, core: core) ?? CLIControl(run: run)
-      #else
-      return await CLIControl.discovering(run: run) ?? CLIControl(run: run)
-      #endif
     },
     makeTranscriptReader: { TranscriptReader(transport: $0) },
     notifications: LiveNotificationCenter(),
