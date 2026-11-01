@@ -2451,6 +2451,28 @@ struct TerminalSceneModelTests {
     #expect(scene.current == .pane(id: "w1:p1"), "the scene stopped watching long before")
   }
 
+  @Test("a split the host refuses says so on the pane, and the scene stays and stops watching")
+  func refusedSplitReachesThePrompt() async throws {
+    let refused = AppError.herdrCommandFailed(reason: "the directory is gone")
+    let control = SilentSplitControl(refusal: refused)
+    let (scene, _) = await makeScene(herdr: control, responder: Self.everythingPaints)
+    scene.start()
+    await scene.settle()
+
+    scene.newPane()
+    await scene.settle()
+
+    #expect(scene.actions?.prompt == .failed(refused))
+    #expect(scene.actions?.failure == refused)
+    #expect(scene.current == .pane(id: "w1:p1"))
+
+    await control.add(pane: "w9:p9")
+    await scene.model.session?.refresh()
+    scene.adoptNewPane()
+    await scene.settle()
+    #expect(scene.current == .pane(id: "w1:p1"), "no split, so no pane to adopt")
+  }
+
   @Test("the plain shell has nothing to split, so New pane does nothing from it")
   func newPaneNeedsAPane() async throws {
     let (scene, _) = await makeScene(
@@ -2467,6 +2489,16 @@ struct TerminalSceneModelTests {
     let herdr = try #require(scene.model.herdr as? FakeControl)
     #expect(await herdr.performed.isEmpty)
     #expect(scene.current == .shell)
+    #expect(!scene.canStartNewPane)
+  }
+
+  @Test("a pane can start a new pane")
+  func newPaneFromAPane() async {
+    let (scene, _) = await makeScene(responder: Self.everythingPaints)
+    scene.start()
+    await scene.settle()
+
+    #expect(scene.canStartNewPane)
   }
 
   // MARK: - What a thumbnail reads
@@ -3635,8 +3667,14 @@ private final class HerdrAttachTokens: TransportConnectionHooks, @unchecked Send
 /// bound on watching for a stranger.
 private actor SilentSplitControl: HerdrControl {
   private var tree = FakeControl.seededTree
+  /// What a split throws, when it should fail rather than produce nothing.
+  private let refusal: AppError?
   /// The panes a split was asked for, in order.
   private(set) var splits: [String] = []
+
+  init(refusal: AppError? = nil) {
+    self.refusal = refusal
+  }
 
   nonisolated var binaryPath: String { "herdr" }
 
@@ -3659,6 +3697,7 @@ private actor SilentSplitControl: HerdrControl {
 
   func perform(_ action: PaneAction, on paneID: String) async throws {
     if case .split = action { splits.append(paneID) }
+    if let refusal { throw refusal }
   }
 
   func rename(_ target: RenameTarget, to label: String) async throws {}

@@ -435,7 +435,7 @@ struct HostDetailView: View {
     // `.statusUnreadable` belongs here: a session is already running, so offering to start
     // one would be the wrong next step.
     case .notInstalled, .tooOld, .ready, .statusUnreadable, .coreReady, .combined,
-      .coreIncompatible, nil:
+      .coreIncompatible, .readyWithCoreRefused, nil:
       "Open Shell"
     }
   }
@@ -525,6 +525,13 @@ struct HostDetailView: View {
           .font(.footnote)
           .foregroundStyle(.secondary)
           .accessibilityIdentifier("herdr.ready")
+        // Under the working line, in the same words a lone refused core gets.
+        if let refusal = availability.coreRefusal {
+          Label(refusal, systemImage: "exclamationmark.triangle")
+            .font(.footnote)
+            .foregroundStyle(.orange)
+            .accessibilityIdentifier("herdr.coreRefused")
+        }
       } else {
         // A glyph, so the line reads as a problem at a glance under a green "Connected".
         Label(availability.message, systemImage: "exclamationmark.triangle")

@@ -53,6 +53,45 @@ struct CoreReadResult: Decodable, Sendable {
   let text: String
 }
 
+/// `terminal.get` and `terminal.kill`, which take nothing else Driverr needs.
+struct CoreTerminalParams: Encodable, Sendable {
+  let terminal: String
+}
+
+/// `terminal.run` of that machine's own shell: no `argv` and no `line` is what asks for it.
+///
+/// **No `env`.** A core started by `hc connect` has no `TERM` of its own, and its terminals still
+/// get `xterm-256color`, `TERM_PROGRAM` and `COLORTERM`, measured on core 0.1.15.
+struct CoreRunParams: Encodable, Sendable {
+  var argv: [String] = []
+  /// The API's own default is the core's directory, which is nobody's.
+  let cwd: String?
+  /// The machine, for a terminal on one this core added.
+  let on: String?
+  let labels: [String: String]?
+  /// `true` as the desktop app's own terminals are, and `nil` for one it will never see.
+  let keep: Bool?
+
+  /// A shell where `source` is now, on its machine.
+  ///
+  /// **The desktop app adopts a terminal labelled `herdr.space`**, into the tab `herdr.tab`
+  /// names, so these are the labels the app gives a terminal it opens. A terminal with no space
+  /// is left unlabelled, and the app does not show it: there is no space to put it in.
+  init(shellBeside source: CoreTerminal) {
+    cwd = source.foreground?.cwd ?? source.cwd
+    on = source.machine
+    guard let space = source.labels?["herdr.space"] else {
+      labels = nil
+      keep = nil
+      return
+    }
+    var labels = ["herdr.space": space, "herdr.seen": "0"]
+    labels["herdr.tab"] = source.labels?["herdr.tab"]
+    self.labels = labels
+    keep = true
+  }
+}
+
 /// Just enough of a reply to find the stream it opened.
 struct CoreChannelResult: Decodable, Sendable {
   let channel: UInt32?

@@ -62,6 +62,9 @@ final class PaneActionsModel {
 
   var isBusy: Bool { inFlight != nil }
 
+  /// Whether this pane has a name Driverr can change. A core terminal has none.
+  var canRename: Bool { control.canPerform(.rename, on: pane.id) }
+
   /// Runs it, or asks first if it can lose work. `PaneAction.isDestructive` decides, so a
   /// new destructive action gets the prompt without anyone remembering.
   func request(_ action: PaneAction) async {
@@ -132,14 +135,19 @@ final class PaneActionsModel {
         didClose = true
         onClosed()
       }
-    } catch let error as AppError {
-      failure = error
-      prompt = .failed(error)
     } catch {
-      let mapped = AppError.herdrCommandFailed(reason: "herdr could not be reached.")
-      failure = mapped
-      prompt = .failed(mapped)
+      report(error)
     }
     inFlight = nil
+  }
+
+  /// Puts an action's failure on the pane's prompt bar.
+  ///
+  /// Not private, because the switcher's New pane cell runs through the scene, which adopts what
+  /// it made, and has no prompt of its own to say it failed on.
+  func report(_ error: any Error) {
+    let mapped = error as? AppError ?? .herdrCommandFailed(reason: "herdr could not be reached.")
+    failure = mapped
+    prompt = .failed(mapped)
   }
 }

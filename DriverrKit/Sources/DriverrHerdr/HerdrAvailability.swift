@@ -36,10 +36,21 @@ public enum HerdrAvailability: Equatable, Sendable {
   /// `nil` when the core refused the opening without saying what it speaks. A core of
   /// another generation refuses that way.
   case coreIncompatible(version: String?, generation: Int?, missingMethods: [String])
+  /// The TUI answered, and a core beside it is one this build cannot use.
+  ///
+  /// Ready, because the TUI's panes are all there. The first two are the TUI's `.ready`, and
+  /// the rest are the core's `.coreIncompatible`, which `coreRefusal` says in words.
+  case readyWithCoreRefused(
+    version: String,
+    protocolVersion: Int,
+    coreVersion: String?,
+    coreGeneration: Int?,
+    coreMissingMethods: [String]
+  )
 
   public var isReady: Bool {
     switch self {
-    case .ready, .coreReady, .combined: true
+    case .ready, .coreReady, .combined, .readyWithCoreRefused: true
     case .serverNotRunning, .notInstalled, .tooOld, .statusUnreadable, .coreIncompatible: false
     }
   }
@@ -50,18 +61,30 @@ public enum HerdrAvailability: Equatable, Sendable {
   /// herdr. With both, the TUI's: its version is the one with a floor.
   public var readyVersion: String? {
     switch self {
-    case .ready(let version, _), .combined(let version, _): version
+    case .ready(let version, _), .combined(let version, _),
+      .readyWithCoreRefused(let version, _, _, _, _):
+      version
     case .coreReady(let version): "core \(version)"
     case .serverNotRunning, .notInstalled, .tooOld, .statusUnreadable, .coreIncompatible: nil
     }
   }
 
+  /// Why the core beside a working TUI is not in use, or `nil` when none is being passed over.
+  public var coreRefusal: String? {
+    guard case let .readyWithCoreRefused(_, _, version, generation, missingMethods) = self else {
+      return nil
+    }
+    return Self.coreIncompatible(
+      version: version, generation: generation, missingMethods: missingMethods
+    ).message
+  }
+
   /// What to tell the user, and what they can do about it.
   public var message: String {
     switch self {
-    case let .ready(version, _):
+    case let .ready(version, _), let .readyWithCoreRefused(version, _, _, _, _):
       // No protocol number: it has no next action and would draw attention from
-      // "Connected".
+      // "Connected". The refused core is `coreRefusal`, a line of its own.
       "herdr \(version)"
     case let .serverNotRunning(version):
       // Names the next step, the Open Shell button below.

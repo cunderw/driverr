@@ -8,7 +8,19 @@ import Testing
 @Suite("Core discovery", .timeLimit(.minutes(1)))
 struct CoreDiscoveryTests {
   private func answering(_ output: String) -> CommandRunner {
-    { _ in CommandResult(standardOutput: output, standardError: "", exitStatus: 0) }
+    answering(path: output, version: CommandResult(
+      standardOutput: "hc 0.1.15\n", standardError: "", exitStatus: 0))
+  }
+
+  /// The probe finds `path`, and `--version` answers `version`, or fails if it is `nil`.
+  private func answering(path: String, version: CommandResult?) -> CommandRunner {
+    { command in
+      guard command.hasSuffix(" --version") else {
+        return CommandResult(standardOutput: path, standardError: "", exitStatus: 0)
+      }
+      guard let version else { throw AppError.channelFailed(reason: "gone") }
+      return version
+    }
   }
 
   private func opening(_ stream: FakeCoreStream) -> StreamRunner {
@@ -58,6 +70,9 @@ struct CoreDiscoveryTests {
 
   private func answering(path: String, home: CommandResult?) -> CommandRunner {
     { command in
+      guard !command.hasSuffix(" --version") else {
+        return CommandResult(standardOutput: "hc 0.1.15\n", standardError: "", exitStatus: 0)
+      }
       guard command == CoreControl.homeCommand else {
         return CommandResult(standardOutput: path, standardError: "", exitStatus: 0)
       }
@@ -183,6 +198,84 @@ struct CoreDiscoveryTests {
       open: neverOpens
     )
     #expect(control == nil)
+  }
+
+  // MARK: - A stranger called hc
+
+  @Test("hc's version is a name and a number, on the last line")
+  func versionLine() {
+    #expect(CoreControl.isCoreVersion("hc 0.1.15\n"))
+    #expect(CoreControl.isCoreVersion("Welcome to the box\nhc 0.1.15\n"))
+    #expect(CoreControl.isCoreVersion("hc 2.0.0-rc.1"))
+    #expect(!CoreControl.isCoreVersion(""))
+    #expect(!CoreControl.isCoreVersion("hc\n"))
+    #expect(!CoreControl.isCoreVersion("hc version 3\n"))
+    #expect(!CoreControl.isCoreVersion("hc unknown\n"))
+    #expect(!CoreControl.isCoreVersion("Hashcat 6.2.6\n"))
+    #expect(!CoreControl.isCoreVersion("hc 0.1.15\nand more\n"))
+  }
+
+  /// Commands the search ran, so a test can see what never ran.
+  private final class Ran: @unchecked Sendable {
+    private let lock = NSLock()
+    private var commands: [String] = []
+    var all: [String] { lock.withLock { commands } }
+    func add(_ command: String) { lock.withLock { commands.append(command) } }
+  }
+
+  @Test(
+    "an hc that does not answer as hc is never connected to",
+    arguments: [
+      CommandResult(standardOutput: "HashiCorp thing 1.2\n", standardError: "", exitStatus: 0),
+      CommandResult(standardOutput: "", standardError: "hc: bad option\n", exitStatus: 2),
+      CommandResult(standardOutput: "hc 0.1.15\n", standardError: "", exitStatus: 1),
+      CommandResult(standardOutput: "", standardError: "", exitStatus: 0),
+    ]
+  )
+  func strangerNeverConnects(version: CommandResult) async {
+    let answer = answering(path: "/usr/bin/hc\n", version: version)
+    let control = await CoreControl.discovering(run: answer, open: neverOpens)
+    #expect(control == nil)
+  }
+
+  @Test("an hc that cannot be asked is never connected to")
+  func unaskableStranger() async {
+    let control = await CoreControl.discovering(
+      run: answering(path: "/usr/bin/hc\n", version: nil),
+      open: neverOpens
+    )
+    #expect(control == nil)
+  }
+
+  @Test("the version is asked of the quoted path, before anything connects")
+  func askedByPath() async {
+    let ran = Ran()
+    let answer = answering("/home/my user/bin/hc\n")
+    _ = await CoreControl.discovering(
+      run: { command in
+        ran.add(command)
+        return try await answer(command)
+      },
+      open: opening(FakeCoreStream())
+    )
+    #expect(ran.all.contains("'/home/my user/bin/hc' --version"))
+  }
+
+  @Test("herdr-core is unambiguous, so it is not asked")
+  func herdrCoreSkipsTheGate() async {
+    let ran = Ran()
+    let answer = answering(
+      path: "/home/me/.local/bin/herdr-core\n",
+      version: CommandResult(standardOutput: "not it\n", standardError: "", exitStatus: 1))
+    let control = await CoreControl.discovering(
+      run: { command in
+        ran.add(command)
+        return try await answer(command)
+      },
+      open: opening(FakeCoreStream())
+    )
+    #expect(control?.binaryPath == "/home/me/.local/bin/herdr-core")
+    #expect(!ran.all.contains { $0.hasSuffix(" --version") })
   }
 
   @Test("another program called hc, which exits, is not a core")

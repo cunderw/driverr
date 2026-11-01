@@ -153,22 +153,33 @@ public struct CombinedControl: HerdrControl {
   /// | TUI | core | answer |
   /// |---|---|---|
   /// | ready | ready | `.combined` |
+  /// | ready | refused | `.readyWithCoreRefused`, because a core is there and is not shown |
   /// | ready | anything else | the TUI's |
   /// | anything else | ready | `.coreReady`, because there are terminals to show |
   /// | anything else | anything else | the TUI's |
-  ///
-  /// So a core this build refuses is deliberately not surfaced beside a working TUI. That
-  /// stays so until #21.
   public func availability() async -> HerdrAvailability {
     async let tuiCheck = tui.availability()
     async let coreCheck = core.availability()
     let (tuiAnswer, coreAnswer) = await (tuiCheck, coreCheck)
 
-    guard case .coreReady(let coreVersion) = coreAnswer else { return tuiAnswer }
-    if case .ready(let herdrVersion, _) = tuiAnswer {
+    switch (tuiAnswer, coreAnswer) {
+    case (.ready(let herdrVersion, _), .coreReady(let coreVersion)):
       return .combined(herdrVersion: herdrVersion, coreVersion: coreVersion)
+    case let (
+      .ready(herdrVersion, protocolVersion), .coreIncompatible(version, generation, missingMethods)
+    ):
+      return .readyWithCoreRefused(
+        version: herdrVersion,
+        protocolVersion: protocolVersion,
+        coreVersion: version,
+        coreGeneration: generation,
+        coreMissingMethods: missingMethods
+      )
+    case (_, .coreReady):
+      return coreAnswer
+    default:
+      return tuiAnswer
     }
-    return coreAnswer
   }
 
   public func attachCommand(for pane: Pane) -> String {
@@ -205,16 +216,20 @@ public struct CombinedControl: HerdrControl {
     try await side(for: pane.id).readScreen(of: pane, lines: lines)
   }
 
+  public func canPerform(_ kind: PaneActionKind, on paneID: String) -> Bool {
+    side(for: paneID).canPerform(kind, on: paneID)
+  }
+
   public func perform(_ action: PaneAction, on paneID: String) async throws {
     try await side(for: paneID).perform(action, on: paneID)
   }
 
+  public func canRename(_ target: RenameTarget) -> Bool {
+    side(for: target.id).canRename(target)
+  }
+
   public func rename(_ target: RenameTarget, to label: String) async throws {
-    let id =
-      switch target {
-      case .workspace(let id), .tab(let id): id
-      }
-    try await side(for: id).rename(target, to: label)
+    try await side(for: target.id).rename(target, to: label)
   }
 
   private func side(for id: String) -> any HerdrControl {

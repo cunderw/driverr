@@ -44,6 +44,9 @@ final class FakeCoreStream: HerdrStream, @unchecked Sendable {
 
   /// What `file.read` answers, by path. A path with no entry is a file that is not there.
   var files: [String: Reply] = [:]
+  /// What `terminal.read` answers, by terminal, in place of `replies` once it has an entry. A
+  /// terminal with no entry is one the core does not have.
+  var screens: [String: Reply] = [:]
 
   let output: AsyncThrowingStream<Data, any Error>
   private let continuation: AsyncThrowingStream<Data, any Error>.Continuation
@@ -116,6 +119,10 @@ final class FakeCoreStream: HerdrStream, @unchecked Sendable {
         let path = try required(params?["path"] as? String)
         lock.withLock { askedPaths.append(path) }
         answer(id: id, reply: files[path] ?? .error("no file \(path)"))
+      } else if method == "terminal.read", !screens.isEmpty {
+        let params = object?["params"] as? [String: Any]
+        let terminal = try required(params?["terminal"] as? String)
+        answer(id: id, reply: screens[terminal] ?? .error("no terminal \(terminal)"))
       } else {
         answer(id: id, reply: replies[method] ?? .error("no such method"))
       }

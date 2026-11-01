@@ -1,4 +1,5 @@
 import DriverrCore
+import DriverrHerdr
 import DriverrTerm
 import SwiftUI
 
@@ -475,8 +476,8 @@ struct PaneSheetView: View {
 
   private static let thumbnailFontSize: CGFloat = 8
 
-  /// Splits the current pane. Disabled on the plain shell, because `pane split` needs a
-  /// herdr pane and Driverr's own pty is not one.
+  /// Splits the current pane, or on a core starts a terminal beside it. Disabled on the plain
+  /// shell, because both need a herdr pane and Driverr's own pty is not one.
   private var newPaneCell: some View {
     Button {
       onNewPane?()
@@ -513,10 +514,13 @@ struct PaneSheetView: View {
 
   /// `Split "index rebuild"`, or the bare verb when the scene is on its plain shell and
   /// there is no pane to name.
+  ///
+  /// On a core, `New terminal`, with no name: it opens its own terminal and divides nothing.
   private var newPaneTitle: String {
-    guard let current = places.first(where: \.isCurrent), current.pane != nil else {
+    guard let current = places.first(where: \.isCurrent), let pane = current.pane else {
       return "Split pane"
     }
+    if CorePaneID.isCore(pane.id) { return "New terminal" }
     return "Split \u{201C}\(current.title)\u{201D}"
   }
 }

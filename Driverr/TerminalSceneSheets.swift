@@ -62,13 +62,13 @@ struct TerminalSceneSheets: ViewModifier {
           scene.select(target)
           scene.hidePaneSheet()
         },
-        // `pane split` needs a pane to split, and Driverr's own pty is not one.
-        onNewPane: scene.currentPane == nil
-          ? nil
-          : {
+        // It needs a pane to start beside, and Driverr's own pty is not one.
+        onNewPane: scene.canStartNewPane
+          ? {
             scene.newPane()
             scene.hidePaneSheet()
-          },
+          }
+          : nil,
         // A closure, because dismissing is the scene's business.
         onDone: { scene.hidePaneSheet() },
         // From the registry's existing models, whose trees are already polled, so this

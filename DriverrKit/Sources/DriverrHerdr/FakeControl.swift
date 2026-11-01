@@ -36,6 +36,8 @@ public actor FakeControl: HerdrControl {
   private let screenOverride: PaneScreen?
   /// What opens a core pane, for a test of that path. A pane on the TUI gets the bridge.
   private let attacher: (any PaneAttacher)?
+  /// What this fake has no equivalent for, as a core has no rename. See `canPerform(_:on:)`.
+  private let unsupported: Set<PaneActionKind>
 
   /// Every snapshot request, refused ones included.
   public private(set) var snapshotCount = 0
@@ -50,7 +52,8 @@ public actor FakeControl: HerdrControl {
       protocolVersion: HerdrProtocol.lastVerified
     ),
     screen: PaneScreen? = nil,
-    attacher: (any PaneAttacher)? = nil
+    attacher: (any PaneAttacher)? = nil,
+    unsupported: Set<PaneActionKind> = []
   ) {
     script = []
     self.tree = tree
@@ -58,6 +61,7 @@ public actor FakeControl: HerdrControl {
     availabilityOverride = availability
     screenOverride = screen
     self.attacher = attacher
+    self.unsupported = unsupported
   }
 
   /// A session that changes as it is polled, for exercising live updates.
@@ -68,6 +72,7 @@ public actor FakeControl: HerdrControl {
     availabilityOverride = .ready(version: "0.9.1", protocolVersion: HerdrProtocol.lastVerified)
     screenOverride = nil
     attacher = nil
+    unsupported = []
   }
 
   /// A fake that fails, for exercising the error surfaces without a broken host.
@@ -97,6 +102,14 @@ public actor FakeControl: HerdrControl {
 
   public nonisolated func paneAttacher(for paneID: String) -> (any PaneAttacher)? {
     CorePaneID.isCore(paneID) ? attacher : nil
+  }
+
+  public nonisolated func canPerform(_ kind: PaneActionKind, on paneID: String) -> Bool {
+    !unsupported.contains(kind)
+  }
+
+  public nonisolated func canRename(_ target: RenameTarget) -> Bool {
+    !unsupported.contains(.rename)
   }
 
   public nonisolated func attachCommand(for pane: Pane) -> String {

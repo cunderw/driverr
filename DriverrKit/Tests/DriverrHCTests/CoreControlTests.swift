@@ -16,6 +16,8 @@ private final class CoreHost: @unchecked Sendable {
   }
 
   var opened: [String] { lock.withLock { commands } }
+  /// The streams not yet handed out.
+  var waiting: [FakeCoreStream] { lock.withLock { streams } }
 
   func open(_ command: String) async throws -> any HerdrStream {
     try lock.withLock {
@@ -498,23 +500,262 @@ struct CoreControlTests {
     }
   }
 
-  @Test("what is not built yet refuses instead of reporting success")
-  func notBuiltYet() async {
-    let control = control(CoreHost())
-    let pane = Pane(id: "core:t1", tabID: "x", workspaceID: "y", title: "z", terminalID: "t1")
-    let refused = AppError.herdrCommandFailed(
-      reason: "Driverr can't do this on a herdr-core terminal yet.")
+  // MARK: - Acting on a terminal
 
-    await #expect(throws: refused) { try await control.perform(.close, on: pane.id) }
-    await #expect(throws: refused) {
-      try await control.rename(.tab(id: "core:tab"), to: "x")
+  /// A stream that answers `terminal.get` with `source` and starts `t9`.
+  private func acting(source: String = #"{"address":"t7"}"#) -> FakeCoreStream {
+    let stream = FakeCoreStream()
+    stream.replies["terminal.get"] = .result(source)
+    stream.replies["terminal.run"] = .result(#"{"address":"t9"}"#)
+    stream.replies["terminal.kill"] = .result(
+      #"{"address":"t7","state":"finished","reason":"killed"}"#)
+    return stream
+  }
+
+  /// What `terminal.run` was given, as the one call it should have been.
+  private func started(on stream: FakeCoreStream) throws -> [String: Any] {
+    let calls = try stream.params(of: "terminal.run")
+    #expect(calls.count == 1)
+    return try #require(calls.first)
+  }
+
+  @Test("every action is mapped or hidden, and only what is hidden refuses")
+  func everyActionIsAnswered() async throws {
+    let actions: [PaneActionKind: PaneAction] = [
+      .split: .split(.right), .rename: .rename("x"), .close: .close,
+    ]
+    #expect(Set(actions.keys) == Set(PaneActionKind.allCases))
+
+    for kind in PaneActionKind.allCases {
+      let stream = acting()
+      let control = control(CoreHost(stream))
+      let action = try #require(actions[kind])
+      #expect(action.kind == kind)
+
+      if control.canPerform(kind, on: "core:t7") {
+        try await control.perform(action, on: "core:t7")
+        #expect(!stream.methods.isEmpty, "\(kind) said it could and asked for nothing")
+      } else {
+        await #expect(throws: AppError.self) { try await control.perform(action, on: "core:t7") }
+      }
     }
   }
 
-  @Test("a read maps every pane to empty, as a pane that could not be read")
-  func readPanes() async throws {
-    let panes = try await control(CoreHost()).readPanes(ids: ["core:t1", "core:t2"], lines: 5)
+  @Test("a core has no rename, for a terminal, a space or a tab, and asks for nothing")
+  func renameIsHidden() async {
+    let stream = acting()
+    let control = control(CoreHost(stream))
+
+    #expect(!control.canPerform(.rename, on: "core:t7"))
+    #expect(!control.canPerform(.rename, on: "core:box/t7"))
+    #expect(!control.canRename(.workspace(id: "core:workspace")))
+    #expect(!control.canRename(.workspace(id: "core:box/space")))
+    #expect(!control.canRename(.tab(id: "core:tab")))
+
+    let refused = AppError.herdrCommandFailed(reason: "herdr-core has no rename.")
+    await #expect(throws: refused) { try await control.perform(.rename("x"), on: "core:t7") }
+    await #expect(throws: refused) { try await control.rename(.tab(id: "core:tab"), to: "x") }
+    #expect(stream.calls(of: "terminal.label") == 0)
+  }
+
+  @Test("close and a new terminal are offered")
+  func offered() {
+    let control = control(CoreHost())
+    #expect(control.canPerform(.close, on: "core:t7"))
+    #expect(control.canPerform(.split, on: "core:t7"))
+  }
+
+  @Test("close is one terminal.kill of the address, and no terminal.rm")
+  func close() async throws {
+    let stream = acting()
+    try await control(CoreHost(stream)).perform(.close, on: "core:box/t7")
+
+    #expect(try stream.params(of: "terminal.kill").map { $0["terminal"] as? String } == ["box/t7"])
+    #expect(stream.calls(of: "terminal.rm") == 0)
+  }
+
+  @Test("a close the core refuses reaches the screen in the core's words")
+  func closeRefused() async {
+    let stream = acting()
+    stream.replies["terminal.kill"] = .error("no terminal t7")
+    await #expect(throws: AppError.herdrCommandFailed(reason: "no terminal t7")) {
+      try await control(CoreHost(stream)).perform(.close, on: "core:t7")
+    }
+  }
+
+  @Test("a new terminal from an unlabelled one is that machine's shell, where the source is now")
+  func newTerminalUnlabelled() async throws {
+    let stream = acting(
+      source: #"""
+        {"address":"t7","cwd":"/srv","foreground":{"cwd":"/srv/app"},"keep":true,"labels":{"x":"y"}}
+        """#)
+    try await control(CoreHost(stream)).perform(.split(.right), on: "core:t7")
+
+    #expect(try stream.params(of: "terminal.get").map { $0["terminal"] as? String } == ["t7"])
+    let params = try started(on: stream)
+    #expect(params["argv"] as? [String] == [])
+    #expect(params["cwd"] as? String == "/srv/app")
+    // Not labels, `keep`, `on` or `env`: an unlabelled terminal stays out of the desktop app,
+    // and a shell has the core's own TERM.
+    #expect(Set(params.keys) == ["argv", "cwd"])
+  }
+
+  @Test("with nothing in the foreground, a new terminal starts where the source started")
+  func newTerminalFromTheSourcesCwd() async throws {
+    let stream = acting(source: #"{"address":"t7","cwd":"/srv","foreground":null}"#)
+    try await control(CoreHost(stream)).perform(.split(.down), on: "core:t7")
+    #expect(try started(on: stream)["cwd"] as? String == "/srv")
+  }
+
+  @Test("a new terminal from the desktop app's joins its space and tab, as the app's own do")
+  func newTerminalLabelled() async throws {
+    let stream = acting(
+      source: #"""
+        {"address":"t7","cwd":"/srv","labels":{
+        "herdr.space":"s1","herdr.tab":"t1","herdr.seen":"3","where":"dev / 1","mine":"x"}}
+        """#)
+    try await control(CoreHost(stream)).perform(.split(.right), on: "core:t7")
+
+    let params = try started(on: stream)
+    #expect(
+      params["labels"] as? [String: String]
+        == ["herdr.space": "s1", "herdr.tab": "t1", "herdr.seen": "0"])
+    #expect(params["keep"] as? Bool == true)
+  }
+
+  @Test("a space with no tab label gets no tab label")
+  func newTerminalInASpaceAlone() async throws {
+    let stream = acting(source: #"{"address":"t7","labels":{"herdr.space":"s1"}}"#)
+    try await control(CoreHost(stream)).perform(.split(.right), on: "core:t7")
+    #expect(
+      try started(on: stream)["labels"] as? [String: String]
+        == ["herdr.space": "s1", "herdr.seen": "0"])
+  }
+
+  @Test("a new terminal from a machine's starts on that machine")
+  func newTerminalOnAMachine() async throws {
+    let stream = acting(source: #"{"address":"box/t7","cwd":"/home/me"}"#)
+    try await control(CoreHost(stream)).perform(.split(.right), on: "core:box/t7")
+
+    #expect(try stream.params(of: "terminal.get").map { $0["terminal"] as? String } == ["box/t7"])
+    let params = try started(on: stream)
+    #expect(params["on"] as? String == "box")
+    #expect(params["cwd"] as? String == "/home/me")
+  }
+
+  @Test("a source the core cannot find starts nothing")
+  func newTerminalWithNoSource() async throws {
+    let stream = acting()
+    stream.replies["terminal.get"] = .error("no terminal t7")
+    await #expect(throws: AppError.herdrCommandFailed(reason: "no terminal t7")) {
+      try await control(CoreHost(stream)).perform(.split(.right), on: "core:t7")
+    }
+    #expect(stream.calls(of: "terminal.run") == 0)
+  }
+
+  @Test("an action with no core says so")
+  func actionWithNoCore() async {
+    let control = control(CoreHost())
+    await #expect(throws: AppError.herdrCommandFailed(reason: "herdr-core is not answering.")) {
+      try await control.perform(.close, on: "core:t7")
+    }
+  }
+
+  // MARK: - The sheet's tiles
+
+  private func tiles(_ screens: [String: FakeCoreStream.Reply]) -> FakeCoreStream {
+    let stream = FakeCoreStream()
+    stream.screens = screens
+    return stream
+  }
+
+  @Test("each tile is one terminal.read of the screen alone, on the one connection")
+  func readPanesParams() async throws {
+    let host = CoreHost(
+      tiles([
+        "t1": .result(FakeCoreStream.screenRead("a")),
+        "box/t2": .result(FakeCoreStream.screenRead("b")),
+      ]))
+    let stream = try #require(host.waiting.first)
+    let panes = try await control(host).readPanes(ids: ["core:t1", "core:box/t2"], lines: 6)
+
+    #expect(panes == ["core:t1": ["a"], "core:box/t2": ["b"]])
+    let params = try stream.params(of: "terminal.read")
+    #expect(params.count == 2)
+    #expect(params.allSatisfy { Set($0.keys) == ["terminal", "lines"] && $0["lines"] as? Int == 0 })
+    #expect(Set(params.compactMap { $0["terminal"] as? String }) == ["t1", "box/t2"])
+    #expect(host.opened.count == 1)
+    #expect(stream.calls(of: "terminal.attach") == 0, "a tile is no viewer")
+  }
+
+  @Test("a tile is the screen's last rows, sanitised like any screen")
+  func readPanesRows() async throws {
+    let stream = tiles(["t1": .result(FakeCoreStream.screenRead(#"one\ntwo\n\u001b[2Jthree"#))])
+    let panes = try await control(CoreHost(stream)).readPanes(ids: ["core:t1"], lines: 2)
+    #expect(panes == ["core:t1": ["two", "three"]])
+  }
+
+  @Test("one pane that cannot be read is empty, and the others still come back")
+  func readPanesMix() async throws {
+    let stream = tiles([
+      "t1": .result(FakeCoreStream.screenRead("a")),
+      "t3": .silent,
+    ])
+    let control = control(CoreHost(stream), deadline: .milliseconds(100))
+
+    let panes = try await control.readPanes(ids: ["core:t1", "core:gone", "core:t3"], lines: 6)
+
+    #expect(panes == ["core:t1": ["a"], "core:gone": [], "core:t3": []])
+  }
+
+  @Test("a stalled link is a failure to ask: every read timed out, and the pictures stay")
+  func readPanesAllTimeOut() async {
+    let stream = tiles(["t1": .silent, "t2": .silent])
+    let control = control(CoreHost(stream), deadline: .milliseconds(100))
+
+    await #expect(throws: AppError.herdrCommandFailed(reason: "herdr-core is not answering.")) {
+      _ = try await control.readPanes(ids: ["core:t1", "core:t2"], lines: 6)
+    }
+  }
+
+  @Test("one refusal among timeouts is an answer, so the core is there and nothing throws")
+  func readPanesRefusalAmongTimeouts() async throws {
+    let stream = tiles(["t1": .silent, "t2": .error("not_found")])
+    let control = control(CoreHost(stream), deadline: .milliseconds(100))
+
+    let panes = try await control.readPanes(ids: ["core:t1", "core:t2"], lines: 6)
+
     #expect(panes == ["core:t1": [], "core:t2": []])
+  }
+
+  @Test("no tiles ask for nothing, so a TUI's batch on a combined host opens no connection")
+  func readPanesEmpty() async throws {
+    let host = CoreHost()
+    #expect(try await control(host).readPanes(ids: [], lines: 6) == [:])
+    #expect(host.opened.isEmpty)
+  }
+
+  @Test("no core is a failure to ask, which keeps the pictures, and not every pane empty")
+  func readPanesWithNoCore() async {
+    let control = control(CoreHost())
+    await #expect(throws: AppError.herdrCommandFailed(reason: "herdr-core is not answering.")) {
+      _ = try await control.readPanes(ids: ["core:t1"], lines: 6)
+    }
+  }
+
+  @Test("a link that goes during a read is a failure to ask, not panes with nothing on them")
+  func readPanesLinkGoes() async throws {
+    let stream = tiles(["t1": .silent])
+    let control = control(CoreHost(stream))
+    _ = try await control.snapshot()
+
+    let read = Task { try await control.readPanes(ids: ["core:t1"], lines: 6) }
+    try await waitUntil("the read is on the wire") { stream.calls(of: "terminal.read") == 1 }
+    stream.finish()
+
+    await #expect(throws: AppError.herdrCommandFailed(reason: "herdr-core is not answering.")) {
+      _ = try await read.value
+    }
   }
 
   @Test("a socket path changes nothing: a core is not a herdr session")

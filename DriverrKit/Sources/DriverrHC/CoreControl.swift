@@ -8,10 +8,11 @@ import Foundation
 /// about 3 s of quiet and refuse a blocked agent. See `typing(into:_:)`.
 ///
 /// **Reading a screen opens nothing.** `terminal.read` is a plain call on the connection, so it
-/// is no viewer and cannot take the size. See `readScreen(of:lines:)`.
+/// is no viewer and cannot take the size. See `readScreen(of:lines:)` and `readPanes(ids:lines:)`.
 ///
-/// Acting on a pane is not here yet and throws. `readPanes` reads nothing, because its contract
-/// already maps an unreadable pane to an empty one.
+/// **A core has no rename.** `name` is `terminal.run`'s alone, a label means nothing to the core,
+/// and the desktop app keeps a space's or tab's name in its own document, which Driverr never
+/// writes. So `canPerform` and `canRename` hide it, and the rest of an action is plain calls.
 public struct CoreControl: HerdrControl {
   /// How long one call may take, the opening included.
   public static let defaultCallDeadline: Duration = .seconds(5)
@@ -135,33 +136,100 @@ public struct CoreControl: HerdrControl {
     await connection.closeChannel(viewer.channel)
   }
 
+  /// One `terminal.read` per pane, side by side on the one connection, each bounded by its own
+  /// deadline. There is no batch call. `PaneThumbnailModel` is the only caller, and it asks only
+  /// for the tiles with no emulator, on its tick, while the sheet is up.
+  ///
+  /// **No answer to any read throws, and so does a connection gone by the end.** Each is a
+  /// failure to ask, and tiles answered empty would replace the pictures the sheet keeps through
+  /// one. A stalled link stays open and only ever times out. A core that refuses a read has
+  /// answered, so that pane alone is empty.
   public func readPanes(ids: [String], lines: Int) async throws -> [String: [String]] {
-    Dictionary(uniqueKeysWithValues: ids.map { ($0, []) })
+    // A combined host's TUI batch comes through here with no core panes in it.
+    guard !ids.isEmpty else { return [:] }
+    let (connection, handshake) = await link.established()
+    guard let connection else { throw Self.failure(for: handshake) }
+
+    typealias Read = (id: String, rows: [String], answered: Bool)
+    let reads = await withTaskGroup(of: Read.self) { group in
+      for id in ids {
+        group.addTask {
+          do {
+            let screen = try await Self.screen(ofPane: id, lines: lines, on: connection)
+            return (id, screen.lines.map(\.text), true)
+          } catch {
+            return (id, [], !CoreConnection.gotNoAnswer(error, to: "terminal.read"))
+          }
+        }
+      }
+      return await group.reduce(into: []) { $0.append($1) }
+    }
+    guard reads.contains(where: \.answered), await connection.isOpen else {
+      throw Self.failure(for: .notCore)
+    }
+    return Dictionary(reads.map { ($0.id, $0.rows) }, uniquingKeysWith: { first, _ in first })
+  }
+
+  public func readScreen(of pane: Pane, lines: Int) async throws -> PaneScreen {
+    let (connection, handshake) = await link.established()
+    guard let connection else { throw Self.failure(for: handshake) }
+    return try await Self.screen(ofPane: pane.id, lines: lines, on: connection)
   }
 
   /// The screen alone, whatever `lines` asks for: `lines` bounds what is handed on, and asking
   /// the core for history could have it scroll a full-screen app.
-  public func readScreen(of pane: Pane, lines: Int) async throws -> PaneScreen {
-    let (connection, handshake) = await link.established()
-    guard let connection else { throw Self.failure(for: handshake) }
+  private static func screen(
+    ofPane paneID: String,
+    lines: Int,
+    on connection: CoreConnection
+  ) async throws -> PaneScreen {
     let read = try await connection.call(
       "terminal.read",
-      params: CoreReadParams(terminal: CorePaneID.address(of: pane.id)),
+      params: CoreReadParams(terminal: CorePaneID.address(of: paneID)),
       as: CoreReadResult.self
     )
     return PaneScreen.sanitised(read.text, lines: lines)
   }
 
+  /// An exhaustive switch, so a new action does not compile until it is answered here.
+  public func canPerform(_ kind: PaneActionKind, on paneID: String) -> Bool {
+    switch kind {
+    case .split, .close: true
+    case .rename: false
+    }
+  }
+
+  public func canRename(_ target: RenameTarget) -> Bool { false }
+
+  /// Plain calls, not a viewer, so the desk keeps its size.
   public func perform(_ action: PaneAction, on paneID: String) async throws {
-    throw Self.notYet
+    let (connection, handshake) = await link.established()
+    guard let connection else { throw Self.failure(for: handshake) }
+    let terminal = CoreTerminalParams(terminal: CorePaneID.address(of: paneID))
+
+    switch action {
+    case .close:
+      // Hangup, then terminate, then kill. Even a program that ignores all of it normally ends
+      // inside a call's deadline, and a call that expires reaches the failure prompt. No
+      // `terminal.rm`, because a finished terminal has already left the tree.
+      _ = try await connection.call("terminal.kill", params: terminal, as: CoreTerminal.self)
+    case .split:
+      // The direction means nothing here: a core has no layout, so the new terminal is its own,
+      // and the desktop app decides where one with a space goes.
+      let source = try await connection.call(
+        "terminal.get", params: terminal, as: CoreTerminal.self)
+      _ = try await connection.call(
+        "terminal.run", params: CoreRunParams(shellBeside: source), as: CoreTerminal.self)
+    case .rename:
+      throw Self.noRename
+    }
   }
 
   public func rename(_ target: RenameTarget, to label: String) async throws {
-    throw Self.notYet
+    throw Self.noRename
   }
 
-  private static let notYet = AppError.herdrCommandFailed(
-    reason: "Driverr can't do this on a herdr-core terminal yet.")
+  private static let noRename = AppError.herdrCommandFailed(reason: "herdr-core has no rename.")
 
   private static func availability(for handshake: CoreHandshake) -> HerdrAvailability {
     switch handshake {

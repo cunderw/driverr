@@ -11,6 +11,8 @@ private actor Side: HerdrControl {
   private let snapshotFailure: AppError?
   private let answer: HerdrAvailability
   private let attacher: (any PaneAttacher)?
+  /// Whether every action on this side is one it has no equivalent for.
+  private nonisolated let refuses: Bool
   private(set) var calls: [String] = []
 
   init(
@@ -18,8 +20,10 @@ private actor Side: HerdrControl {
     tree: SessionTree = .empty,
     snapshotFailure: AppError? = nil,
     answer: HerdrAvailability = .notInstalled,
-    attacher: (any PaneAttacher)? = nil
+    attacher: (any PaneAttacher)? = nil,
+    refuses: Bool = false
   ) {
+    self.refuses = refuses
     self.binaryPath = binaryPath
     self.tree = tree
     self.snapshotFailure = snapshotFailure
@@ -28,6 +32,9 @@ private actor Side: HerdrControl {
   }
 
   nonisolated func paneAttacher(for paneID: String) -> (any PaneAttacher)? { attacher }
+
+  nonisolated func canPerform(_ kind: PaneActionKind, on paneID: String) -> Bool { !refuses }
+  nonisolated func canRename(_ target: RenameTarget) -> Bool { !refuses }
 
   func snapshot() async throws -> SessionTree {
     if let snapshotFailure { throw snapshotFailure }
@@ -405,17 +412,48 @@ struct CombinedControlTests {
     #expect(await combined.availability() == .coreReady(version: "0.1.14"))
   }
 
-  @Test("a core this build refuses does not disturb a working TUI")
+  @Test("a core this build refuses is said beside a working TUI, which stays ready")
   func coreIncompatible() async {
-    let ready = HerdrAvailability.ready(version: "0.9.1", protocolVersion: 22)
-    let combined = control(
-      tui: Side(binaryPath: "herdr", answer: ready),
+    let combined = CombinedControl(
+      tui: Side(binaryPath: "herdr", answer: .ready(version: "0.9.1", protocolVersion: 22)),
       core: Side(
         binaryPath: "hc",
-        answer: .coreIncompatible(version: "9", generation: 2, missingMethods: [])
+        answer: .coreIncompatible(version: "9", generation: 2, missingMethods: ["terminal.x"])
       )
     )
-    #expect(await combined.availability() == ready)
+    let answer = await combined.availability()
+    #expect(
+      answer
+        == .readyWithCoreRefused(
+          version: "0.9.1", protocolVersion: 22, coreVersion: "9", coreGeneration: 2,
+          coreMissingMethods: ["terminal.x"]))
+    #expect(answer.isReady)
+    #expect(answer.readyVersion == "0.9.1")
+    #expect(answer.message == "herdr 0.9.1")
+    #expect(answer.coreRefusal == "herdr-core 9 has no terminal.x. Update herdr-core.")
+  }
+
+  @Test("a TUI that is not ready keeps its own next step over a refused core")
+  func coreIncompatibleBesideNoTUI() async {
+    let combined = CombinedControl(
+      tui: Side(binaryPath: "herdr", answer: .serverNotRunning(version: "0.9.1")),
+      core: Side(
+        binaryPath: "hc",
+        answer: .coreIncompatible(version: nil, generation: nil, missingMethods: [])
+      )
+    )
+    #expect(await combined.availability() == .serverNotRunning(version: "0.9.1"))
+  }
+
+  @Test("a core that is simply absent says nothing beside a working TUI")
+  func coreAbsent() async {
+    let combined = CombinedControl(
+      tui: Side(binaryPath: "herdr", answer: .ready(version: "0.9.1", protocolVersion: 22)),
+      core: Side(binaryPath: "hc", answer: .notInstalled)
+    )
+    let answer = await combined.availability()
+    #expect(answer == .ready(version: "0.9.1", protocolVersion: 22))
+    #expect(answer.coreRefusal == nil)
   }
 
   @Test("neither ready is the TUI's answer, which has the next step")
@@ -446,6 +484,31 @@ struct CombinedControlTests {
     let verbs = ["sendText", "submitText", "sendKeys", "readScreen", "perform"]
     #expect(await tui.calls == verbs.map { "\($0) w1:p1" })
     #expect(await core.calls == verbs.map { "\($0) core:t1" })
+  }
+
+  @Test("what a pane can do is the owning side's answer, for every action")
+  func capabilityRoutes() {
+    let combined = CombinedControl(
+      tui: Side(binaryPath: "herdr"),
+      core: Side(binaryPath: "hc", refuses: true)
+    )
+    for kind in PaneActionKind.allCases {
+      #expect(combined.canPerform(kind, on: "w1:p1"))
+      #expect(!combined.canPerform(kind, on: "core:t1"))
+      #expect(!combined.canPerform(kind, on: "core:box/t1"))
+    }
+  }
+
+  @Test("what can be renamed is the owning side's answer")
+  func renameCapabilityRoutes() {
+    let combined = CombinedControl(
+      tui: Side(binaryPath: "herdr"),
+      core: Side(binaryPath: "hc", refuses: true)
+    )
+    #expect(combined.canRename(.workspace(id: "w1")))
+    #expect(combined.canRename(.tab(id: "w1:t1")))
+    #expect(!combined.canRename(.workspace(id: "core:workspace")))
+    #expect(!combined.canRename(.tab(id: "core:box/tab")))
   }
 
   @Test("the attach command is the owning side's")

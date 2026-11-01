@@ -519,6 +519,16 @@ struct SessionModelTests {
 
   // MARK: - Renaming a workspace or a tab
 
+  @Test("a workspace or tab is offered a rename only where the control can do it")
+  func canRenameIsTheControlsAnswer() {
+    let targets: [RenameTarget] = [.workspace(id: "w1"), .tab(id: "w1:t1")]
+    let plain = SessionModel(control: FakeControl())
+    let hidden = SessionModel(control: FakeControl(unsupported: [.rename]))
+
+    #expect(targets.allSatisfy(plain.canRename))
+    #expect(!targets.contains(where: hidden.canRename))
+  }
+
   @Test("the rename row opens with the name the row has now already in it")
   func renameOpensWithTheCurrentName() async {
     let model = SessionModel(control: FakeControl())

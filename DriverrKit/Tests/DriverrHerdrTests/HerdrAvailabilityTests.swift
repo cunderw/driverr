@@ -47,6 +47,35 @@ struct HerdrAvailabilityTests {
         .isReady)
   }
 
+  @Test("a refused core beside a working TUI is ready, and says why on a line of its own")
+  func coreRefusedBesideTUI() {
+    let answer = HerdrAvailability.readyWithCoreRefused(
+      version: "0.9.1", protocolVersion: 22, coreVersion: nil, coreGeneration: nil,
+      coreMissingMethods: [])
+    #expect(answer.isReady)
+    #expect(answer.readyVersion == "0.9.1")
+    #expect(answer.message == "herdr 0.9.1")
+    #expect(
+      answer.coreRefusal
+        == "This herdr-core doesn't speak protocol generation 1. Update herdr-core or Driverr.")
+  }
+
+  @Test("no other answer carries a core refusal, a lone refused core included")
+  func noCoreRefusal() {
+    let others: [HerdrAvailability] = [
+      .ready(version: "0.9.1", protocolVersion: 22),
+      .serverNotRunning(version: nil),
+      .notInstalled,
+      .tooOld(version: "0.7", protocolVersion: 16),
+      .statusUnreadable(version: nil),
+      .coreReady(version: "0.1.15"),
+      .combined(herdrVersion: "0.9.1", coreVersion: "0.1.15"),
+      // Its refusal is `message`, which the screen already draws.
+      .coreIncompatible(version: nil, generation: nil, missingMethods: []),
+    ]
+    #expect(others.allSatisfy { $0.coreRefusal == nil })
+  }
+
   @Test("the host list's version is the one that answered")
   func readyVersion() {
     #expect(HerdrAvailability.ready(version: "0.9.1", protocolVersion: 22).readyVersion == "0.9.1")

@@ -206,6 +206,11 @@ final class SessionModel {
   /// `.disabled` is only a backstop.
   private(set) var renameInFlight: RenameTarget?
 
+  /// Whether this workspace or tab has a name Driverr can change. A core's have none.
+  func canRename(_ target: RenameTarget) -> Bool {
+    control.canRename(target)
+  }
+
   /// Opens the rename row on this target, with the name it has now already in it.
   func startRenaming(_ target: RenameTarget, currentLabel: String) {
     renameDraft = currentLabel

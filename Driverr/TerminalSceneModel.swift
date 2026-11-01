@@ -560,7 +560,15 @@ final class TerminalSceneModel {
     enqueue(on: target) { [weak self] in await self?.openController(for: target, takeover: true) }
   }
 
-  /// Splits the current pane and goes to whatever the split made.
+  /// Whether the switcher's New pane cell does anything here: a pane, on a control that can
+  /// start one beside it. With no control, `newPane()` drops the tap, as it always has.
+  var canStartNewPane: Bool {
+    guard let pane = currentPane else { return false }
+    return model.herdr?.canPerform(.split, on: pane.id) ?? true
+  }
+
+  /// Splits the current pane, or on a core starts a terminal beside it, and goes to whatever
+  /// that made.
   ///
   /// **The next snapshot identifies the new pane, not the command.** `pane split` returns no
   /// id, so the ids present at the tap are banked and the first new one to appear is
@@ -582,8 +590,9 @@ final class TerminalSceneModel {
         try await herdr.perform(.split(.right), on: paneID)
       } catch {
         // No split, no pane to adopt. A bank left set would jump to the next pane the user
-        // opens at their desk.
+        // opens at their desk. The sheet is already down, so the pane's prompt bar says why.
         pendingSplit = nil
+        actions?.report(error)
         return
       }
       await model.session?.refresh()
