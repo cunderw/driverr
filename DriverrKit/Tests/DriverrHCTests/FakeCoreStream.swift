@@ -289,6 +289,12 @@ final class FakeCoreStream: HerdrStream, @unchecked Sendable {
       + #""paste_gap_ms":\#(gap)}}"#
   }
 
+  /// What `terminal.read` answers, as a real core 0.1.15 wrote it. `text` is JSON already, so a
+  /// test can spell an escape.
+  static func screenRead(_ text: String) -> String {
+    #"{"complete":true,"how":"screen","text":"\#(text)"}"#
+  }
+
   /// Where `subscribed` says events arrive.
   static let eventChannel: UInt32 = 9
 

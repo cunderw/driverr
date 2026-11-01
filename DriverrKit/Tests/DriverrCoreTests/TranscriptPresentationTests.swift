@@ -1258,40 +1258,8 @@ struct TranscriptPresentationTests {
     #expect(!notice.message.contains("Claude"))
   }
 
-  /// The usual first state of a new Claude on a core, and neither sentence may name a button
-  /// that is not there.
-  @Test(
-    "with no screen to read, a missing file names no way out",
-    arguments: [AgentStatus.idle, .working],
-    [
-      TranscriptAbsence.noSessionFiles(directory: "/p"),
-      .reportedSessionMissing(sessionID: "s", directory: "/p"),
-    ])
-  func aMissingFileWithNoScreen(status: AgentStatus, absence: TranscriptAbsence) {
-    let notice = TranscriptNotice(absence: absence, agentStatus: status, canReadScreen: false)
-    #expect(!notice.message.contains(TranscriptNotice.showScreenTitle))
-    #expect(!notice.offersScreen(inSubagentChat: false, canReadScreen: false))
-    #expect(notice.offersRetry)
-  }
-
-  @Test("with no screen to read, a pane that left its directory is still told why")
-  func leftTheDirectoryWithNoScreen() {
-    let absence = TranscriptAbsence.reportedSessionMissing(sessionID: "s", directory: "/p")
-    let waiting = TranscriptNotice(absence: absence, agentStatus: .idle, canReadScreen: false)
-    #expect(
-      waiting.message
-        == "The agent has not written its session file for /p yet. Send a message below to "
-        + "start the conversation. If this pane has left the directory the agent started in, "
-        + "the file will not appear here.")
-    let fault = TranscriptNotice(absence: absence, agentStatus: .done, canReadScreen: false)
-    #expect(
-      fault.message
-        == "The agent has started, but Driverr found no session file for /p. If this pane has "
-        + "left the directory the agent started in, the file will not appear here.")
-  }
-
-  /// The sentences a TUI pane has always read, whole, so the core wording cannot move them.
-  @Test("a pane whose screen can be read keeps its sentences")
+  /// Whole, because these are the only sentences here that name the button.
+  @Test("a pane that left its directory is told to use the screen")
   func aMissingFileWithAScreen() {
     let absence = TranscriptAbsence.reportedSessionMissing(sessionID: "s", directory: "/p")
     #expect(
@@ -1305,25 +1273,8 @@ struct TranscriptPresentationTests {
         + "left the directory the agent started in, use Show the Screen.")
   }
 
-  /// Every notice, not only the two that word it: all of them reach the same button.
-  @Test("no notice offers a screen Driverr cannot read")
-  func noNoticeOffersAnUnreadableScreen() throws {
-    let notices = [
-      TranscriptNotice(failure: .transcriptUnreadable(reason: "gone")),
-      TranscriptNotice(absence: .paneHasNoDirectory, agentStatus: nil),
-      TranscriptNotice(absence: .agentNotSupported(agent: "Cursor"), agentStatus: nil),
-      try #require(TranscriptNotice(ambiguous: "/p", candidates: [])),
-      try #require(
-        TranscriptNotice(
-          outcome: .noReadableTurns, turnCount: 0, bytesFetched: 0, agentStatus: nil)),
-    ]
-    for notice in notices {
-      #expect(notice.offersScreen(inSubagentChat: false, canReadScreen: true))
-      #expect(!notice.offersScreen(inSubagentChat: false, canReadScreen: false))
-    }
-  }
-
-  @Test("an agent on an added machine says where it is, with no way out that would fail")
+  /// The screen is the one thing a core can read there, so it is the way out.
+  @Test("an agent on an added machine says where it is, and offers its screen")
   func anAgentOnAnAddedMachine() {
     let notice = TranscriptNotice(
       absence: .agentOnAddedMachine(agent: "Claude", machine: "box"), agentStatus: .working)
@@ -1332,12 +1283,13 @@ struct TranscriptPresentationTests {
       notice.message
         == "Driverr reads conversations on the computer it connected to, and this terminal is "
         + "on box.")
-    #expect(!notice.offersScreen)
+    #expect(notice.offersScreen)
     #expect(!notice.offersRetry)
     #expect(!notice.offersFilePicker)
   }
 
-  /// `true` would draw the captured screen in its place, and Driverr reads none from a core.
+  /// `true` would draw the captured screen in its place, with nothing to say why there is no
+  /// chat. The screen is behind its button.
   @Test("an added machine is not an agent Driverr can never read")
   func anAddedMachineKeepsItsNotice() {
     let absence = TranscriptAbsence.agentOnAddedMachine(agent: "Claude", machine: "box")

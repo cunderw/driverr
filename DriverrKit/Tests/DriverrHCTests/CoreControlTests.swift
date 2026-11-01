@@ -418,6 +418,86 @@ struct CoreControlTests {
     }
   }
 
+  private func corePane(_ address: String) -> Pane {
+    Pane(
+      id: CorePaneID.id(forAddress: address), tabID: "x", workspaceID: "y", title: "z",
+      terminalID: address)
+  }
+
+  /// One connected core that answers `terminal.read`.
+  private func readable(_ reply: FakeCoreStream.Reply) -> FakeCoreStream {
+    let stream = FakeCoreStream()
+    stream.replies = ["terminal.read": reply]
+    return stream
+  }
+
+  /// No channel is what keeps a read off the size and out of a viewer's place, and no history
+  /// is what keeps the core from scrolling a full-screen app to find it.
+  @Test("a screen is one terminal.read of the screen alone, and nothing is attached")
+  func readScreen() async throws {
+    let stream = readable(.result(FakeCoreStream.screenRead(#"one\ntwo"#)))
+    let control = control(CoreHost(stream))
+
+    let screen = try await control.readScreen(of: corePane("box/t7"), lines: 5)
+
+    #expect(screen.text == "one\ntwo")
+    #expect(stream.methods == ["terminal.read"])
+    #expect(stream.streamFrames.isEmpty)
+    let params = try #require(try stream.params(of: "terminal.read").first)
+    #expect(Set(params.keys) == ["terminal", "lines"])
+    #expect(params["terminal"] as? String == "box/t7")
+    #expect(params["lines"] as? Int == 0)
+  }
+
+  @Test("the rows asked for bound what comes back, not what the core is asked for")
+  func readScreenLines() async throws {
+    let stream = readable(.result(FakeCoreStream.screenRead(#"one\ntwo\nthree"#)))
+    let control = control(CoreHost(stream))
+
+    let screen = try await control.readScreen(of: corePane("t7"), lines: 2)
+
+    #expect(screen.text == "two\nthree")
+    #expect(try stream.params(of: "terminal.read").first?["lines"] as? Int == 0)
+  }
+
+  /// A core joins soft wraps, so one row can be wider than any pane.
+  @Test("what a core says is sanitised and bounded like any screen")
+  func readScreenSanitises() async throws {
+    let long = String(repeating: "x", count: PaneScreen.maximumLineLength + 1)
+    let stream = readable(.result(FakeCoreStream.screenRead(#"\#(long)\n\u001b[2Jplain"#)))
+    let control = control(CoreHost(stream))
+
+    let screen = try await control.readScreen(of: corePane("t7"), lines: 5)
+
+    #expect(screen.lines.map(\.isTruncated) == [true, false])
+    #expect(screen.lines.last?.text == "plain")
+  }
+
+  @Test("a refused read reaches the reader in the core's words, not as a blank screen")
+  func readScreenRefused() async {
+    let stream = readable(.error(#"no terminal \"t9zz\""#))
+    let control = control(CoreHost(stream))
+
+    await #expect(throws: AppError.herdrCommandFailed(reason: #"no terminal "t9zz""#)) {
+      _ = try await control.readScreen(of: corePane("t9zz"), lines: 5)
+    }
+  }
+
+  @Test("an empty answer is a blank screen")
+  func readScreenBlank() async throws {
+    let stream = readable(.result(FakeCoreStream.screenRead("")))
+    let control = control(CoreHost(stream))
+    #expect(try await control.readScreen(of: corePane("t7"), lines: 5) == .blank)
+  }
+
+  @Test("a read with no core says so")
+  func readScreenWithNoCore() async {
+    let control = control(CoreHost())
+    await #expect(throws: AppError.herdrCommandFailed(reason: "herdr-core is not answering.")) {
+      _ = try await control.readScreen(of: corePane("t7"), lines: 5)
+    }
+  }
+
   @Test("what is not built yet refuses instead of reporting success")
   func notBuiltYet() async {
     let control = control(CoreHost())
@@ -425,7 +505,6 @@ struct CoreControlTests {
     let refused = AppError.herdrCommandFailed(
       reason: "Driverr can't do this on a herdr-core terminal yet.")
 
-    await #expect(throws: refused) { _ = try await control.readScreen(of: pane, lines: 5) }
     await #expect(throws: refused) { try await control.perform(.close, on: pane.id) }
     await #expect(throws: refused) {
       try await control.rename(.tab(id: "core:tab"), to: "x")

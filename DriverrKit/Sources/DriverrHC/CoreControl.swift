@@ -7,8 +7,11 @@ import Foundation
 /// **Typing goes through a viewer**, never `terminal.send` or `terminal.keys`, which wait for
 /// about 3 s of quiet and refuse a blocked agent. See `typing(into:_:)`.
 ///
-/// Reading a screen and acting on a pane are not here yet and throw, except `readPanes`, whose
-/// contract already maps an unreadable pane to an empty one.
+/// **Reading a screen opens nothing.** `terminal.read` is a plain call on the connection, so it
+/// is no viewer and cannot take the size. See `readScreen(of:lines:)`.
+///
+/// Acting on a pane is not here yet and throws. `readPanes` reads nothing, because its contract
+/// already maps an unreadable pane to an empty one.
 public struct CoreControl: HerdrControl {
   /// How long one call may take, the opening included.
   public static let defaultCallDeadline: Duration = .seconds(5)
@@ -136,8 +139,17 @@ public struct CoreControl: HerdrControl {
     Dictionary(uniqueKeysWithValues: ids.map { ($0, []) })
   }
 
+  /// The screen alone, whatever `lines` asks for: `lines` bounds what is handed on, and asking
+  /// the core for history could have it scroll a full-screen app.
   public func readScreen(of pane: Pane, lines: Int) async throws -> PaneScreen {
-    throw Self.notYet
+    let (connection, handshake) = await link.established()
+    guard let connection else { throw Self.failure(for: handshake) }
+    let read = try await connection.call(
+      "terminal.read",
+      params: CoreReadParams(terminal: CorePaneID.address(of: pane.id)),
+      as: CoreReadResult.self
+    )
+    return PaneScreen.sanitised(read.text, lines: lines)
   }
 
   public func perform(_ action: PaneAction, on paneID: String) async throws {

@@ -1,4 +1,5 @@
 import DriverrCore
+import DriverrHerdr
 import DriverrTerm
 import Foundation
 import SwiftUI
@@ -186,7 +187,8 @@ struct PaneScreenView: View {
   /// The leading inset is 18, not the app's usual 16, so the sentence starts on the rows'
   /// first character column (`gutter` + `ruleWidth` + `ruleSpacing`).
   private func caption(_ screen: PaneScreen) -> some View {
-    let caption = PaneScreenCaption(screen: screen)
+    let caption = PaneScreenCaption(
+      screen: screen, earlierOutputIsKept: CorePaneID.isCore(model.pane.id))
     return HStack(alignment: .firstTextBaseline, spacing: 10) {
       Text(caption.lines)
         .font(.caption2)
