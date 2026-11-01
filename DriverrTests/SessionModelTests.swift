@@ -191,9 +191,11 @@ struct SessionModelTests {
   /// the loop starts, or the first poll is finished before anything is listening.
   private func live(
     _ control: any HerdrControl,
-    pollInterval: Duration
+    pollInterval: Duration,
+    terminalArrivalLimit: Duration = SessionModel.defaultTerminalArrivalLimit
   ) -> (SessionModel, PollRecorder) {
-    let model = SessionModel(control: control, pollInterval: pollInterval)
+    let model = SessionModel(
+      control: control, pollInterval: pollInterval, terminalArrivalLimit: terminalArrivalLimit)
     let polls = PollRecorder()
     model.onSessionChanged = polls.record
     return (model, polls)
@@ -230,8 +232,12 @@ struct SessionModelTests {
   }
 
   /// Started and through its first reads, with `polls` counting from here.
-  private func listening(_ control: any HerdrControl) async -> (SessionModel, PollRecorder) {
-    let (model, polls) = live(control, pollInterval: .seconds(30))
+  private func listening(
+    _ control: any HerdrControl,
+    terminalArrivalLimit: Duration = SessionModel.defaultTerminalArrivalLimit
+  ) async -> (SessionModel, PollRecorder) {
+    let (model, polls) = live(
+      control, pollInterval: .seconds(30), terminalArrivalLimit: terminalArrivalLimit)
     model.startLiveUpdates()
     await polls.waitForPolls(2)
     return (model, polls)
@@ -411,16 +417,17 @@ struct SessionModelTests {
   private let oldest = "core:t3"
   private let started = "core:t7"
 
-  /// A start under way on `control`, with its tree read and its first look at the tree done.
+  /// A start under way on `control`, past the read it makes of its own.
+  ///
+  /// The limit is out of reach, because the wait here ends on what the tree says, and a deadline
+  /// is a fact about the machine.
   private func starting(
     on control: PushingControl
-  ) async throws -> (SessionModel, PollRecorder, Task<String?, Never>) {
-    let (model, polls) = await listening(control)
-    let reads = await control.changedSnapshots
+  ) async -> (SessionModel, PollRecorder, Task<String?, Never>) {
+    let (model, polls) = await listening(control, terminalArrivalLimit: .seconds(600))
+    let told = polls.completed
     let start = Task { await model.startTerminal() }
-    try await until { await control.starts == 1 }
-    try await until { await control.changedSnapshots > reads }
-    await polls.waitForPolls(polls.completed + 1)
+    await polls.waitForPolls(told + 1)
     return (model, polls, start)
   }
 
@@ -448,10 +455,11 @@ struct SessionModelTests {
   /// The `created` event beat the reply on 20 of 20 real runs, but the feed may not have applied
   /// it. An older terminal listed first is not the one that opens.
   @Test("a terminal the tree does not list yet is waited for, by its own id")
-  func waitsForTheTerminal() async throws {
+  func waitsForTheTerminal() async {
     let control = PushingControl()
-    let (model, polls, start) = try await starting(on: control)
+    let (model, polls, start) = await starting(on: control)
     defer { model.stopLiveUpdates() }
+    #expect(await control.starts == 1)
 
     await control.moved(to: .success(oneTerminal(oldest)))
     control.signal()
