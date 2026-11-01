@@ -281,6 +281,8 @@ final class SessionModel {
 
   var canStartTerminal: Bool { control.canStartTerminal }
 
+  var offersTerminalStart: Bool { canStartTerminal }
+
   /// The terminal being waited for, and what wakes the wait. One, because `terminalStart` lets
   /// one start run at a time.
   @ObservationIgnored private var awaitedTerminal:

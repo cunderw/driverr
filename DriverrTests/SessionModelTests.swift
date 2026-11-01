@@ -101,11 +101,13 @@ private actor PushingControl: HerdrControl {
   private(set) var starts = 0
 
   nonisolated var changes: AsyncStream<Void>? { listener.listen() }
-  nonisolated var needsPolling: Bool { false }
+  /// `true` for a host with a TUI beside its core, which is polled as well as pushed.
+  nonisolated let needsPolling: Bool
   nonisolated var binaryPath: String { "hc" }
 
-  init(_ tree: SessionTree = .empty) {
+  init(_ tree: SessionTree = .empty, needsPolling: Bool = false) {
     read = .success(tree)
+    self.needsPolling = needsPolling
   }
 
   func moved(to read: Result<SessionTree, AppError>) {
@@ -419,14 +421,16 @@ struct SessionModelTests {
   private let oldest = "core:t3"
   private let started = "core:t7"
 
+  /// Long enough that the wait here ends on what the tree says and not on the machine, and under
+  /// the suite's 60 s, because `.timeLimit` does not cut `await start.value`. A lost wake then
+  /// fails on the expectation after it instead of parking the run.
+  private let patientArrival = Duration.seconds(30)
+
   /// A start under way on `control`, past the read it makes of its own.
-  ///
-  /// The limit is out of reach, because the wait here ends on what the tree says, and a deadline
-  /// is a fact about the machine.
   private func starting(
     on control: PushingControl
   ) async -> (SessionModel, PollRecorder, Task<String?, Never>) {
-    let (model, polls) = await listening(control, terminalArrivalLimit: .seconds(600))
+    let (model, polls) = await listening(control, terminalArrivalLimit: patientArrival)
     let told = polls.completed
     let start = Task { await model.startTerminal() }
     await polls.waitForPolls(told + 1)
@@ -467,14 +471,117 @@ struct SessionModelTests {
     control.signal()
     await polls.waitForPolls(polls.completed + 1)
     #expect(model.terminalStart == .starting)
-    // The spinner stays up: `.loading` over an empty tree would draw the session's own instead.
-    #expect(!model.isLoading)
 
     await control.moved(to: .success(oneTerminal(started)))
     control.signal()
 
     #expect(await start.value == started)
     #expect(model.terminalStart == nil)
+  }
+
+  /// Checked while the read is out, because `.loading` is gone again the moment it lands.
+  @Test("the start's own read keeps its spinner up, over an empty tree")
+  func startReadsWithoutLoading() async throws {
+    let control = PushingControl()
+    let (model, _) = await listening(control, terminalArrivalLimit: patientArrival)
+    defer { model.stopLiveUpdates() }
+    await control.holdReads()
+
+    let start = Task { await model.startTerminal() }
+    try await until { await control.isHoldingARead }
+    #expect(!model.isLoading)
+    #expect(model.terminalStart == .starting)
+
+    await control.moved(to: .success(oneTerminal(started)))
+    await control.release()
+    #expect(await start.value == started)
+  }
+
+  /// A host with a TUI beside its core is polled, and `.loading` over an empty tree draws the
+  /// session's loading row in place of the empty state, New Terminal and all.
+  @Test("a poll over an empty tree leaves the empty state on screen")
+  func pollKeepsTheEmptyState() async throws {
+    let control = PushingControl(needsPolling: true)
+    let (model, polls) = live(control, pollInterval: interval)
+    model.startLiveUpdates()
+    defer { model.stopLiveUpdates() }
+    await polls.waitForPolls(2)
+    await control.holdReads()
+
+    try await until { await control.isHoldingARead }
+    #expect(!model.isLoading)
+    #expect(model.isEmptySession)
+
+    await control.release()
+  }
+
+  /// `.loading` is the only row a host never read can show, so its first tick keeps it.
+  @Test("a poll of a host never read still says it is reading")
+  func pollBeforeAnyTreeLoads() async throws {
+    let control = PushingControl(needsPolling: true)
+    await control.moved(to: .failure(.channelFailed(reason: "not yet")))
+    let (model, _) = live(control, pollInterval: interval)
+    model.startLiveUpdates()
+    defer { model.stopLiveUpdates() }
+    try await until { model.failure != nil }
+    await control.holdReads()
+
+    try await until { await control.isHoldingARead }
+    #expect(model.isLoading)
+
+    await control.release()
+  }
+
+  @Test("New Terminal is offered on a read, empty session, and not before or after")
+  func offered() async {
+    let control = PushingControl()
+    let model = SessionModel(control: control)
+    #expect(!model.offersTerminalStart)
+
+    await model.refresh()
+    #expect(model.offersTerminalStart)
+
+    await control.moved(to: .success(oneTerminal(started)))
+    await model.refresh()
+    #expect(!model.offersTerminalStart)
+  }
+
+  @Test("a host that cannot start a terminal is offered none")
+  func notOfferedWithoutAStart() async {
+    let model = SessionModel(control: FakeControl(tree: .empty))
+    await model.refresh()
+
+    #expect(model.isEmptySession)
+    #expect(!model.offersTerminalStart)
+  }
+
+  @Test("a failed read offers nothing, and the next good one does again")
+  func notOfferedOnAFailedRead() async {
+    let control = PushingControl()
+    let model = SessionModel(control: control)
+    await model.refresh()
+
+    await control.moved(to: .failure(.channelFailed(reason: "the link went")))
+    await model.refresh()
+    #expect(!model.offersTerminalStart)
+
+    await control.moved(to: .success(.empty))
+    await model.refresh()
+    #expect(model.offersTerminalStart)
+  }
+
+  @Test("a lost connection offers nothing until the updates run again")
+  func notOfferedWhilePaused() async {
+    let control = PushingControl()
+    let (model, _) = await listening(control)
+    defer { model.stopLiveUpdates() }
+    #expect(model.offersTerminalStart)
+
+    model.pausePolling()
+    #expect(!model.offersTerminalStart)
+
+    model.startLiveUpdates()
+    #expect(model.offersTerminalStart)
   }
 
   @Test("a terminal that never reaches the tree ends the wait, and opens nothing")
@@ -548,6 +655,7 @@ struct SessionModelTests {
       control: FakeControl(tree: machines, canStartTerminal: true), coveringCoreIDs: { ["b"] })
     await model.refresh()
     #expect(model.tree.isEmpty)
+    #expect(model.offersTerminalStart)
 
     let id = await model.startTerminal()
 
