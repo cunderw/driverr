@@ -387,15 +387,20 @@ struct SessionTreeView: View {
     // On the label, not the group. On the group it would cover every pane inside, and a
     // long press on a pane would offer to rename the workspace.
     .contextMenu {
-      renameButton(
-        .workspace(id: workspace.id),
-        currentLabel: workspace.label,
-        title: workspace.tabHeaderStyle == .inline
-          ? "Rename Workspace\u{2026}" : "Rename\u{2026}",
-        identifier: "session.workspace.renameMenu"
-      )
+      // Empty leaves no menu at all, so a core's row does not lift on a long press.
+      if model.canRename(.workspace(id: workspace.id)) {
+        renameButton(
+          .workspace(id: workspace.id),
+          currentLabel: workspace.label,
+          title: workspace.tabHeaderStyle == .inline
+            ? "Rename Workspace\u{2026}" : "Rename\u{2026}",
+          identifier: "session.workspace.renameMenu"
+        )
+      }
       // The only route to an `.inline` tab's rename, since the tab has no row of its own.
-      if workspace.tabHeaderStyle == .inline, let tab = workspace.tabs.first {
+      if workspace.tabHeaderStyle == .inline, let tab = workspace.tabs.first,
+        model.canRename(.tab(id: tab.id))
+      {
         renameButton(
           .tab(id: tab.id),
           currentLabel: tab.label,
@@ -422,14 +427,18 @@ struct SessionTreeView: View {
     .accessibilityIdentifier("session.tab")
     // An ordinary row, so both triggers attach here.
     .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-      renameSwipeButton(
-        .tab(id: tab.id),
-        currentLabel: tab.label,
-        identifier: "session.tab.rename"
-      )
+      if model.canRename(.tab(id: tab.id)) {
+        renameSwipeButton(
+          .tab(id: tab.id),
+          currentLabel: tab.label,
+          identifier: "session.tab.rename"
+        )
+      }
     }
     .contextMenu {
-      renameButton(.tab(id: tab.id), currentLabel: tab.label, identifier: "session.tab.renameMenu")
+      if model.canRename(.tab(id: tab.id)) {
+        renameButton(.tab(id: tab.id), currentLabel: tab.label, identifier: "session.tab.renameMenu")
+      }
     }
   }
 

@@ -64,11 +64,31 @@ extension CoreControl {
     return line?.hasPrefix("/") == true ? line : nil
   }
 
+  /// Whether a program called `hc` said what herdr-core's does: `hc 0.1.15`.
+  ///
+  /// The last line, for `discoveredHome(in:)`'s reason. A number, because a stranger's own
+  /// `--version` can start with its own name too.
+  static func isCoreVersion(_ output: String) -> Bool {
+    let words = output.split(separator: "\n").last?.split(separator: " ") ?? []
+    return words.count == 2 && words[0] == "hc" && words[1].first?.isNumber == true
+  }
+
+  /// Whether connecting to `path` runs what it says it runs.
+  ///
+  /// **`hc connect` is a command to whatever `hc` is**, so a stranger is asked what it is first.
+  /// `herdr-core` is unambiguous, and `--version` starts no core.
+  private static func isWorthConnecting(to path: String, run: CommandRunner) async -> Bool {
+    guard path.split(separator: "/").last == "hc" else { return true }
+    guard let result = try? await run("\(shellQuoted(path)) --version") else { return false }
+    return result.exitStatus == 0 && isCoreVersion(result.standardOutput)
+  }
+
   /// Finds a core on the host and returns a control already connected to it.
   ///
-  /// Connecting is the only test of what the program is, so a stranger called `hc` is
-  /// `nil` here, as is a host with neither name. A core this build refuses is returned,
-  /// because its `availability()` has something to tell the user.
+  /// A stranger called `hc` is `nil` here, as is a host with neither name. A hello is still the
+  /// last test of what the program is, for one that passes `isWorthConnecting(to:run:)`. A core
+  /// this build refuses is returned, because its `availability()` has something to tell the
+  /// user.
   ///
   /// `nil` too when `deadline` passes. Abandoned rather than awaited, as in
   /// `ConnectionModel.bounded`: nothing under the exec channel checks cancellation.
@@ -81,6 +101,7 @@ extension CoreControl {
     let search = Task { () -> CoreControl? in
       guard let result = try? await run(discoveryCommand),
         let path = discoveredPath(in: result.standardOutput),
+        await isWorthConnecting(to: path, run: run),
         !Task.isCancelled
       else { return nil }
 

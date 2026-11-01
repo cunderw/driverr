@@ -102,16 +102,18 @@ private struct PaneActionItems: View {
     // Disabled on the pane actions, not the whole menu, so Settings stays reachable on a
     // busy pane. `PaneActionsModel.perform` also drops a second request in flight.
     Group {
-      Button {
-        model.startRenaming()
-      } label: {
-        Label("Rename…", systemImage: "pencil")
-      }
-      .accessibilityIdentifier("pane.rename")
+      if model.canRename {
+        Button {
+          model.startRenaming()
+        } label: {
+          Label("Rename…", systemImage: "pencil")
+        }
+        .accessibilityIdentifier("pane.rename")
 
-      // `Divider()`, not `Section`: a `Button` inside a `Section` in this `Menu` loses its
-      // `accessibilityIdentifier`, while one declared directly in the `Menu` keeps it.
-      Divider()
+        // `Divider()`, not `Section`: a `Button` inside a `Section` in this `Menu` loses its
+        // `accessibilityIdentifier`, while one declared directly in the `Menu` keeps it.
+        Divider()
+      }
 
       Button(role: .destructive) {
         Task { await model.request(.close) }

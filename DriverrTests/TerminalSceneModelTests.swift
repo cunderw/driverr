@@ -2467,6 +2467,16 @@ struct TerminalSceneModelTests {
     let herdr = try #require(scene.model.herdr as? FakeControl)
     #expect(await herdr.performed.isEmpty)
     #expect(scene.current == .shell)
+    #expect(!scene.canStartNewPane)
+  }
+
+  @Test("a pane can start a new pane")
+  func newPaneFromAPane() async {
+    let (scene, _) = await makeScene(responder: Self.everythingPaints)
+    scene.start()
+    await scene.settle()
+
+    #expect(scene.canStartNewPane)
   }
 
   // MARK: - What a thumbnail reads

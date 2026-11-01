@@ -498,16 +498,164 @@ struct CoreControlTests {
     }
   }
 
-  @Test("what is not built yet refuses instead of reporting success")
-  func notBuiltYet() async {
-    let control = control(CoreHost())
-    let pane = Pane(id: "core:t1", tabID: "x", workspaceID: "y", title: "z", terminalID: "t1")
-    let refused = AppError.herdrCommandFailed(
-      reason: "Driverr can't do this on a herdr-core terminal yet.")
+  // MARK: - Acting on a terminal
 
-    await #expect(throws: refused) { try await control.perform(.close, on: pane.id) }
-    await #expect(throws: refused) {
-      try await control.rename(.tab(id: "core:tab"), to: "x")
+  /// A stream that answers `terminal.get` with `source` and starts `t9`.
+  private func acting(source: String = #"{"address":"t7"}"#) -> FakeCoreStream {
+    let stream = FakeCoreStream()
+    stream.replies["terminal.get"] = .result(source)
+    stream.replies["terminal.run"] = .result(#"{"address":"t9"}"#)
+    stream.replies["terminal.kill"] = .result(
+      #"{"address":"t7","state":"finished","reason":"killed"}"#)
+    return stream
+  }
+
+  /// What `terminal.run` was given, as the one call it should have been.
+  private func started(on stream: FakeCoreStream) throws -> [String: Any] {
+    let calls = try stream.params(of: "terminal.run")
+    #expect(calls.count == 1)
+    return try #require(calls.first)
+  }
+
+  @Test("every action is mapped or hidden, and only what is hidden refuses")
+  func everyActionIsAnswered() async throws {
+    let actions: [PaneActionKind: PaneAction] = [
+      .split: .split(.right), .rename: .rename("x"), .close: .close,
+    ]
+    #expect(Set(actions.keys) == Set(PaneActionKind.allCases))
+
+    for kind in PaneActionKind.allCases {
+      let stream = acting()
+      let control = control(CoreHost(stream))
+      let action = try #require(actions[kind])
+      #expect(action.kind == kind)
+
+      if control.canPerform(kind, on: "core:t7") {
+        try await control.perform(action, on: "core:t7")
+        #expect(!stream.methods.isEmpty, "\(kind) said it could and asked for nothing")
+      } else {
+        await #expect(throws: AppError.self) { try await control.perform(action, on: "core:t7") }
+      }
+    }
+  }
+
+  @Test("a core has no rename, for a terminal, a space or a tab, and asks for nothing")
+  func renameIsHidden() async {
+    let stream = acting()
+    let control = control(CoreHost(stream))
+
+    #expect(!control.canPerform(.rename, on: "core:t7"))
+    #expect(!control.canPerform(.rename, on: "core:box/t7"))
+    #expect(!control.canRename(.workspace(id: "core:workspace")))
+    #expect(!control.canRename(.workspace(id: "core:box/space")))
+    #expect(!control.canRename(.tab(id: "core:tab")))
+
+    let refused = AppError.herdrCommandFailed(reason: "herdr-core has no rename.")
+    await #expect(throws: refused) { try await control.perform(.rename("x"), on: "core:t7") }
+    await #expect(throws: refused) { try await control.rename(.tab(id: "core:tab"), to: "x") }
+    #expect(stream.calls(of: "terminal.label") == 0)
+  }
+
+  @Test("close and a new terminal are offered")
+  func offered() {
+    let control = control(CoreHost())
+    #expect(control.canPerform(.close, on: "core:t7"))
+    #expect(control.canPerform(.split, on: "core:t7"))
+  }
+
+  @Test("close is one terminal.kill of the address, and no terminal.rm")
+  func close() async throws {
+    let stream = acting()
+    try await control(CoreHost(stream)).perform(.close, on: "core:box/t7")
+
+    #expect(try stream.params(of: "terminal.kill").map { $0["terminal"] as? String } == ["box/t7"])
+    #expect(stream.calls(of: "terminal.rm") == 0)
+  }
+
+  @Test("a close the core refuses reaches the screen in the core's words")
+  func closeRefused() async {
+    let stream = acting()
+    stream.replies["terminal.kill"] = .error("no terminal t7")
+    await #expect(throws: AppError.herdrCommandFailed(reason: "no terminal t7")) {
+      try await control(CoreHost(stream)).perform(.close, on: "core:t7")
+    }
+  }
+
+  @Test("a new terminal from an unlabelled one is that machine's shell, where the source is now")
+  func newTerminalUnlabelled() async throws {
+    let stream = acting(
+      source: #"""
+        {"address":"t7","cwd":"/srv","foreground":{"cwd":"/srv/app"},"keep":true,"labels":{"x":"y"}}
+        """#)
+    try await control(CoreHost(stream)).perform(.split(.right), on: "core:t7")
+
+    #expect(try stream.params(of: "terminal.get").map { $0["terminal"] as? String } == ["t7"])
+    let params = try started(on: stream)
+    #expect(params["argv"] as? [String] == [])
+    #expect(params["cwd"] as? String == "/srv/app")
+    // Not labels, `keep`, `on` or `env`: an unlabelled terminal stays out of the desktop app,
+    // and a shell has the core's own TERM.
+    #expect(Set(params.keys) == ["argv", "cwd"])
+  }
+
+  @Test("with nothing in the foreground, a new terminal starts where the source started")
+  func newTerminalFromTheSourcesCwd() async throws {
+    let stream = acting(source: #"{"address":"t7","cwd":"/srv","foreground":null}"#)
+    try await control(CoreHost(stream)).perform(.split(.down), on: "core:t7")
+    #expect(try started(on: stream)["cwd"] as? String == "/srv")
+  }
+
+  @Test("a new terminal from the desktop app's joins its space and tab, as the app's own do")
+  func newTerminalLabelled() async throws {
+    let stream = acting(
+      source: #"""
+        {"address":"t7","cwd":"/srv","labels":{
+        "herdr.space":"s1","herdr.tab":"t1","herdr.seen":"3","where":"dev / 1","mine":"x"}}
+        """#)
+    try await control(CoreHost(stream)).perform(.split(.right), on: "core:t7")
+
+    let params = try started(on: stream)
+    #expect(
+      params["labels"] as? [String: String]
+        == ["herdr.space": "s1", "herdr.tab": "t1", "herdr.seen": "0"])
+    #expect(params["keep"] as? Bool == true)
+  }
+
+  @Test("a space with no tab label gets no tab label")
+  func newTerminalInASpaceAlone() async throws {
+    let stream = acting(source: #"{"address":"t7","labels":{"herdr.space":"s1"}}"#)
+    try await control(CoreHost(stream)).perform(.split(.right), on: "core:t7")
+    #expect(
+      try started(on: stream)["labels"] as? [String: String]
+        == ["herdr.space": "s1", "herdr.seen": "0"])
+  }
+
+  @Test("a new terminal from a machine's starts on that machine")
+  func newTerminalOnAMachine() async throws {
+    let stream = acting(source: #"{"address":"box/t7","cwd":"/home/me"}"#)
+    try await control(CoreHost(stream)).perform(.split(.right), on: "core:box/t7")
+
+    #expect(try stream.params(of: "terminal.get").map { $0["terminal"] as? String } == ["box/t7"])
+    let params = try started(on: stream)
+    #expect(params["on"] as? String == "box")
+    #expect(params["cwd"] as? String == "/home/me")
+  }
+
+  @Test("a source the core cannot find starts nothing")
+  func newTerminalWithNoSource() async throws {
+    let stream = acting()
+    stream.replies["terminal.get"] = .error("no terminal t7")
+    await #expect(throws: AppError.herdrCommandFailed(reason: "no terminal t7")) {
+      try await control(CoreHost(stream)).perform(.split(.right), on: "core:t7")
+    }
+    #expect(stream.calls(of: "terminal.run") == 0)
+  }
+
+  @Test("an action with no core says so")
+  func actionWithNoCore() async {
+    let control = control(CoreHost())
+    await #expect(throws: AppError.herdrCommandFailed(reason: "herdr-core is not answering.")) {
+      try await control.perform(.close, on: "core:t7")
     }
   }
 

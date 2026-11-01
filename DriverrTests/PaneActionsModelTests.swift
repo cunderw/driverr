@@ -28,6 +28,12 @@ struct PaneActionsModelTests {
     PaneActionsModel(pane: pane, control: control, onChanged: onChanged, onClosed: onClosed)
   }
 
+  @Test("rename is offered only where the control can do it")
+  func canRenameIsTheControlsAnswer() {
+    #expect(model().canRename)
+    #expect(!model(FakeControl(unsupported: [.rename])).canRename)
+  }
+
   @Test("a harmless action runs straight away")
   func runsNonDestructive() async {
     let control = FakeControl()

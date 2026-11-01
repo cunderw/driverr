@@ -97,11 +97,20 @@ public protocol HerdrControl: Sendable {
   /// whole `Pane`, because `viewport_rows` bounds the request. See `readScreenCommand`.
   func readScreen(of pane: Pane, lines: Int) async throws -> PaneScreen
 
+  /// Whether this pane can take this kind of action at all.
+  ///
+  /// The UI asks this and hides what the answer rules out, so an action a backend has no
+  /// equivalent for is absent rather than failing. Defaulted to `true`: only a core lacks one.
+  func canPerform(_ kind: PaneActionKind, on paneID: String) -> Bool
+
   /// Does something to a pane other than typing into it: split, rename or close.
   ///
-  /// Each action is a pane id, a herdr subcommand and no answer worth reading. The next
-  /// snapshot shows whether it worked.
+  /// Each action is a pane id, a request and no answer worth reading. The next snapshot shows
+  /// whether it worked.
   func perform(_ action: PaneAction, on paneID: String) async throws
+
+  /// Whether this workspace or tab can be renamed at all. See `canPerform(_:on:)`.
+  func canRename(_ target: RenameTarget) -> Bool
 
   /// Renames a workspace or a tab.
   ///
@@ -117,6 +126,8 @@ extension HerdrControl {
   public func changedSnapshot() async throws -> SessionTree { try await snapshot() }
   public func bound(toSocketPath path: String?) -> any HerdrControl { self }
   public func paneAttacher(for paneID: String) -> (any PaneAttacher)? { nil }
+  public func canPerform(_ kind: PaneActionKind, on paneID: String) -> Bool { true }
+  public func canRename(_ target: RenameTarget) -> Bool { true }
 }
 
 /// Drives herdr through its command-line interface.

@@ -10,8 +10,12 @@ import Foundation
 /// **Reading a screen opens nothing.** `terminal.read` is a plain call on the connection, so it
 /// is no viewer and cannot take the size. See `readScreen(of:lines:)`.
 ///
-/// Acting on a pane is not here yet and throws. `readPanes` reads nothing, because its contract
-/// already maps an unreadable pane to an empty one.
+/// **A core has no rename.** `name` is `terminal.run`'s alone, a label means nothing to the core,
+/// and the desktop app keeps a space's or tab's name in its own document, which Driverr never
+/// writes. So `canPerform` and `canRename` hide it, and the rest of an action is plain calls.
+///
+/// `readPanes` reads nothing, because its contract already maps an unreadable pane to an empty
+/// one.
 public struct CoreControl: HerdrControl {
   /// How long one call may take, the opening included.
   public static let defaultCallDeadline: Duration = .seconds(5)
@@ -152,16 +156,42 @@ public struct CoreControl: HerdrControl {
     return PaneScreen.sanitised(read.text, lines: lines)
   }
 
+  /// An exhaustive switch, so a new action does not compile until it is answered here.
+  public func canPerform(_ kind: PaneActionKind, on paneID: String) -> Bool {
+    switch kind {
+    case .split, .close: true
+    case .rename: false
+    }
+  }
+
+  public func canRename(_ target: RenameTarget) -> Bool { false }
+
+  /// Plain calls, not a viewer, so the desk keeps its size.
   public func perform(_ action: PaneAction, on paneID: String) async throws {
-    throw Self.notYet
+    let (connection, handshake) = await link.established()
+    guard let connection else { throw Self.failure(for: handshake) }
+    let terminal = CoreTerminalParams(terminal: CorePaneID.address(of: paneID))
+
+    switch action {
+    case .close:
+      // Hangup, then terminate, then kill, inside a call's deadline: the worst measured on core
+      // 0.1.15 was 2.1 s, for a program that ignores all of it with a child holding the PTY. No
+      // `terminal.rm`, because a finished terminal has already left the tree.
+      _ = try await connection.call("terminal.kill", params: terminal, as: CoreTerminal.self)
+    case .split:
+      let source = try await connection.call("terminal.get", params: terminal, as: CoreTerminal.self)
+      _ = try await connection.call(
+        "terminal.run", params: CoreRunParams(shellBeside: source), as: CoreTerminal.self)
+    case .rename:
+      throw Self.noRename
+    }
   }
 
   public func rename(_ target: RenameTarget, to label: String) async throws {
-    throw Self.notYet
+    throw Self.noRename
   }
 
-  private static let notYet = AppError.herdrCommandFailed(
-    reason: "Driverr can't do this on a herdr-core terminal yet.")
+  private static let noRename = AppError.herdrCommandFailed(reason: "herdr-core has no rename.")
 
   private static func availability(for handshake: CoreHandshake) -> HerdrAvailability {
     switch handshake {

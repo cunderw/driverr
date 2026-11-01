@@ -62,6 +62,9 @@ final class PaneActionsModel {
 
   var isBusy: Bool { inFlight != nil }
 
+  /// Whether this pane has a name Driverr can change. A core terminal has none.
+  var canRename: Bool { control.canPerform(.rename, on: pane.id) }
+
   /// Runs it, or asks first if it can lose work. `PaneAction.isDestructive` decides, so a
   /// new destructive action gets the prompt without anyone remembering.
   func request(_ action: PaneAction) async {

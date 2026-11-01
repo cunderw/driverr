@@ -560,7 +560,15 @@ final class TerminalSceneModel {
     enqueue(on: target) { [weak self] in await self?.openController(for: target, takeover: true) }
   }
 
-  /// Splits the current pane and goes to whatever the split made.
+  /// Whether the switcher's New pane cell does anything here: a pane, on a control that can
+  /// start one beside it. With no control, `newPane()` drops the tap, as it always has.
+  var canStartNewPane: Bool {
+    guard let pane = currentPane else { return false }
+    return model.herdr?.canPerform(.split, on: pane.id) ?? true
+  }
+
+  /// Splits the current pane, or on a core starts a terminal beside it, and goes to whatever
+  /// that made.
   ///
   /// **The next snapshot identifies the new pane, not the command.** `pane split` returns no
   /// id, so the ids present at the tap are banked and the first new one to appear is
