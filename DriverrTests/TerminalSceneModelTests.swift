@@ -817,6 +817,36 @@ struct TerminalSceneModelTests {
     #expect(scene.currentRole == .controller)
   }
 
+  /// `status` clears ahead of `finished`, measured at 50 to 600 ms, so the attach that follows
+  /// can reach a terminal that has gone. The close on the old channel is the true word, and it
+  /// can land on either side of the refusal.
+  @Test("a promotion the terminal's end refuses says the pane closed, in either order")
+  func aPromotionRefusedByTheEnd() async throws {
+    let attacher = FakeCoreAttacher()
+    var (scene, control, observer) = try await watchedAgentScene(attacher)
+    observer.gatePromotion()
+    observer.refusePromotion()
+    await control.update(to: tree(withCorePane: "core:t7"))
+    await scene.model.session?.refresh()
+    scene.treeChanged()
+    await waitUntilSignalled("the promotion") { observer.promotionCount == 1 }
+
+    observer.end()
+    await waitUntilSignalled("the close") { scene.notice == .closed }
+    observer.openPromotionGate()
+    await scene.settle()
+    #expect(scene.notice == .closed)
+
+    let attacherAfter = FakeCoreAttacher()
+    (scene, control, observer) = try await watchedAgentScene(attacherAfter)
+    observer.refusePromotion()
+    await agentQuits(scene, control)
+    #expect(scene.notice == .failed(.channelFailed(reason: "The pane could not be opened.")))
+
+    observer.end()
+    await waitUntilSignalled("the close") { scene.notice == .closed }
+  }
+
   /// The chat is what is on screen again, so a controller behind it would hold the size for
   /// nothing.
   @Test("a promoted pane whose agent comes back is watched again")

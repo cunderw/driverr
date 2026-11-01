@@ -1690,6 +1690,9 @@ final class TerminalSceneModel {
         entry(for: target)?.role == .observer, surface(for: target) == .terminal
       else { return }
       guard let bridge = try? await promotable.promote() else {
+        // A status clears ahead of `finished`, so this attach can reach a terminal that has
+        // just gone. Its end has then told this entry already, and with the true word.
+        guard entry(for: target)?.role == .observer else { return }
         notices[target] = .failed(.channelFailed(reason: "The pane could not be opened."))
         return
       }
