@@ -10,7 +10,8 @@ import Testing
 /// exec channels.
 ///
 /// What a fake cannot say: that `terminal.kill` answers inside a call's deadline for a program
-/// that ignores it, that a bare `terminal.run` gives a shell, and that `on` reaches a machine.
+/// that ignores it, that a bare `terminal.run` gives a shell, that `on` reaches a machine, and
+/// that a start with nothing open lands in the home it names.
 ///
 /// Off unless `DRIVERR_LIVE_CORE=1`, like `CoreMachineIdentityTests`, and for the same reason:
 /// this kills and starts terminals, so every `hc` here runs under `env -i` with `HC_SESSION`. Run
@@ -129,14 +130,15 @@ struct CoreActionsOverSSHTests {
 
   private func control(
     on session: String,
-    over transport: NIOSSHTransport
+    over transport: NIOSSHTransport,
+    home: String? = nil
   ) throws -> CoreControl {
     let binary = try #require(CoreProbe.binary)
     let environment = Self.environment(session: session)
       .map { "\($0.key)=\(shellQuoted($0.value))" }
       .sorted()
       .joined(separator: " ")
-    return CoreControl(binaryPath: binary) { command in
+    return CoreControl(binaryPath: binary, home: home) { command in
       Stream(stream: try await transport.execStream(command: "env -i \(environment) \(command)"))
     }
   }
@@ -184,6 +186,7 @@ struct CoreActionsOverSSHTests {
     var failure: (any Error)?
     do {
       let control = try control(on: Self.adding, over: transport)
+      try await startFromNothing(over: transport)
       try await close(on: control)
       try await startUnlabelled(on: control)
       try await startLabelled(on: control)
@@ -193,6 +196,27 @@ struct CoreActionsOverSSHTests {
     }
     try await cleanUp()
     if let failure { throw failure }
+  }
+
+  /// Before anything else runs, so the core really has no terminal, and on its own control, so
+  /// it names a home. The address in the reply is the one the tree goes on to list.
+  private func startFromNothing(over transport: NIOSSHTransport) async throws {
+    let directory = FileManager.default.temporaryDirectory.path
+    let control = try control(on: Self.adding, over: transport, home: directory)
+    #expect(try await control.snapshot().isEmpty)
+
+    let id = try await control.startTerminal()
+    let pane = try await pane(in: control) { $0.id == id }
+
+    let new = try await record(Self.adding, try #require(pane.terminalID))
+    #expect(new.argv.first?.hasSuffix("sh") == true, "the machine's shell: \(new.argv)")
+    #expect(new.cwd.hasSuffix(URL(fileURLWithPath: directory).lastPathComponent))
+    #expect(new.labels.isEmpty)
+    #expect(!new.keep)
+    #expect(new.state == "live")
+
+    try await control.perform(.close, on: id)
+    #expect(try await record(Self.adding, new.address).state == "finished")
   }
 
   private func close(on control: CoreControl) async throws {

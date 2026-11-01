@@ -312,12 +312,14 @@ struct SessionTreeView: View {
       }
       .accessibilityIdentifier("session.newTerminal")
       if case .failed(let error) = model.terminalStart {
-        Label(
-          error.errorDescription ?? "The terminal could not be started.",
-          systemImage: "xmark.octagon"
-        )
+        // The glyph takes the orange. In footnote text it reads at about 2:1 on a light row.
+        Label {
+          Text(verbatim: error.errorDescription ?? "The terminal could not be started.")
+        } icon: {
+          Image(systemName: "xmark.octagon")
+            .foregroundStyle(.orange)
+        }
         .font(.footnote)
-        .foregroundStyle(.orange)
         .accessibilityIdentifier("session.newTerminal.error")
       }
     }
