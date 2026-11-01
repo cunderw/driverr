@@ -18,7 +18,7 @@ struct CoreAttachmentTests {
   ) async throws -> (CoreAttachment, CoreConnection) {
     stream.replies["terminal.attach"] = .result(FakeCoreStream.attached(channel: 4))
     let connection = CoreConnection(stream: stream, callDeadline: deadline ?? patient)
-    #expect(await connection.handshake() == .ready(version: "0.1.14"))
+    #expect(await connection.handshake() == .ready(version: "0.1.14", coreID: "f47b"))
     let attachment = try await CoreAttachment.open(
       on: connection,
       params: CoreAttachParams(

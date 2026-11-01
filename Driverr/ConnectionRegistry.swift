@@ -77,11 +77,50 @@ final class ConnectionRegistry {
     let model = ConnectionModel(host: host, environment: environment)
     // One answer for every host. See `isAppActive`.
     model.isAppActive = { [weak self] in self?.isAppActive ?? true }
+    model.coveringCoreIDs = { [weak self, id = host.id] in
+      self?.coreIDs(coveringHost: id) ?? []
+    }
     // One card covers every host, so any change on this host triggers a pass over all of them.
-    model.onLiveActivityInputChanged = { [weak self] in self?.pushLiveActivityObservations() }
+    model.onLiveActivityInputChanged = { [weak self] in self?.hostChanged() }
     models[host.id] = model
     pushLiveActivityObservations()
     return model
+  }
+
+  // MARK: - Which host shows a machine
+
+  /// The cores of the hosts other than `hostID` that Driverr holds a link to.
+  ///
+  /// A core lists the machines it added, so a machine that is also a host would show twice.
+  /// This is what each host's `SessionModel.tree` leaves out. Only a connected host covers
+  /// anything, so a lost link hands its terminals back to the core that added the machine,
+  /// and a host with no core tree yet has nothing to cover with.
+  func coreIDs(coveringHost hostID: DriverrCore.Host.ID) -> Set<String> {
+    Set(
+      models.values.compactMap { model in
+        guard model.host.id != hostID, model.phase == .connected else { return nil }
+        return model.session?.reportedTree.coreID
+      }
+    )
+  }
+
+  /// Every connected core, as `hostChanged()` last found them.
+  @ObservationIgnored private var connectedCoreIDs: Set<String> = []
+
+  /// A host's phase or tree moved.
+  ///
+  /// When that moved what covers a machine, the other hosts' notifiers hear it now. Their trees
+  /// already say so, and the pass below gathers from them, but a core pushes only on change,
+  /// so a read of their own might not come.
+  private func hostChanged() {
+    let cores = Set(
+      models.values.compactMap { $0.phase == .connected ? $0.session?.reportedTree.coreID : nil }
+    )
+    if cores != connectedCoreIDs {
+      connectedCoreIDs = cores
+      for model in models.values { model.notifyOfBlockedPanes() }
+    }
+    pushLiveActivityObservations()
   }
 
   // MARK: - The Live Activity's input
@@ -106,7 +145,8 @@ final class ConnectionRegistry {
         isConnected: model.phase == .connected,
         blockedPanes: tree.blockedPanes,
         counts: tree.agentStatusCounts,
-        observedAt: now
+        observedAt: now,
+        coreID: tree.coreID
       )
     }
   }

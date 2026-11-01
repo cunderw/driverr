@@ -119,15 +119,35 @@ struct CoreRPCError: Decodable, Sendable {
 /// Only `generation` is required, so a core of a later generation still decodes far enough
 /// to be refused by name rather than dismissed as not a core.
 struct CoreHelloResult: Decodable, Equatable, Sendable {
+  /// Who answered. `id` is permanent, reset only when the core's state is wiped.
+  struct Core: Decodable, Equatable, Sendable {
+    let id: String?
+  }
+
   let generation: Int
   let version: String?
   let framed: Bool?
   let methods: [String]?
+  let core: Core?
 }
 
-/// The terminals a tree is built from. See `CoreSnapshotMapper`.
+/// A machine this core added. `id` is that core's own `hello.core.id`, and it outlives a rename,
+/// where `name`, the `box` in `box/t7`, is only this core's word for it.
+struct CoreMachine: Decodable, Equatable, Sendable {
+  let name: String
+  let id: String
+}
+
+/// `machine.list`. A subscription says nothing about machines, in its reply or in an event.
+struct CoreMachineListResult: Decodable, Sendable {
+  let machines: [CoreMachine]
+}
+
+/// The terminals a tree is built from, and the machines they may be on. See
+/// `CoreSnapshotMapper`.
 struct CoreListResult: Decodable, Sendable {
   let terminals: [CoreTerminal]
+  var machines: [CoreMachine]?
 }
 
 /// What `events.subscribe` answers, and what a `missed` line carries. **Finished terminals are
@@ -279,4 +299,10 @@ struct CoreTerminal: Decodable, Sendable {
   var status: Status?
 
   var isLive: Bool { (state ?? "live") == "live" }
+
+  /// The machine in `machine/t7`, or `nil` for a terminal on this core.
+  var machine: String? {
+    guard let slash = address.firstIndex(of: "/") else { return nil }
+    return String(address[..<slash])
+  }
 }

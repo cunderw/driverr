@@ -91,6 +91,25 @@ struct CoreSnapshotMapperTests {
     #expect(tree.workspaces.allSatisfy { $0.tabHeaderStyle == .none })
   }
 
+  @Test("a machine's groups carry its core id, and this core's own groups carry none")
+  func machineIdentity() throws {
+    let tree = CoreSnapshotMapper.tree(from: try decoded(Self.captured), coreID: "f47b")
+    #expect(tree.coreID == "f47b")
+    let machines = tree.workspaces.filter { $0.id.hasPrefix("core:box/") }
+    #expect(!machines.isEmpty)
+    #expect(machines.allSatisfy { $0.machineCoreID == "5b37" })
+    #expect(tree.workspaces.filter { $0.machineCoreID == nil }.count == tree.workspaces.count - 1)
+  }
+
+  @Test("a machine whose id has not been read yet is still drawn, and carries none")
+  func machineNotReadYet() throws {
+    var list = try decoded(Self.captured)
+    list.machines = nil
+    let tree = CoreSnapshotMapper.tree(from: list)
+    #expect(tree.pane(id: "core:box/t1") != nil)
+    #expect(tree.workspaces.allSatisfy { $0.machineCoreID == nil })
+  }
+
   @Test("every id routes to the core side of a combined host, and says which machine")
   func idsAreCoreIDs() throws {
     let tree = try mapped()

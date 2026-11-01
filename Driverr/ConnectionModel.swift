@@ -28,6 +28,10 @@ final class ConnectionModel {
   /// Set by `ConnectionRegistry`, which sees every host and builds the pass. A closure, like
   /// `onLoss`, because what follows is work, and an observed property is for a view to read.
   @ObservationIgnored var onLiveActivityInputChanged: (@MainActor () -> Void)?
+
+  /// The cores of the other hosts Driverr holds a link to. Set by `ConnectionRegistry`, like
+  /// `isAppActive`. A connection the registry does not hold covers nothing with anything.
+  @ObservationIgnored var coveringCoreIDs: @MainActor () -> Set<String> = { [] }
   private(set) var output: String = ""
   /// The error behind a `.failed` phase, as something to show a person.
   var failure: AppError? {
@@ -220,7 +224,7 @@ final class ConnectionModel {
   }
 
   private func lastPaneNote(for paneID: String) -> LastPaneNote {
-    guard let tree = session?.tree, !tree.isEmpty else { return .leaveAlone }
+    guard let tree = session?.reportedTree, !tree.isEmpty else { return .leaveAlone }
     guard let witness = tree.pane(id: paneID)?.sessionWitness else { return .forget }
     return .remember(LastPaneRecord(paneID: paneID, witness: witness))
   }
@@ -279,13 +283,19 @@ final class ConnectionModel {
   /// tree: a pane herdr stops reporting is not in `Changes.moved`, and its card must still be
   /// withdrawn.
   private func announceBlockedPanes() {
-    guard let tree = session?.tree else { return }
-    let isActive = isAppActive()
-    Task { await notifier.sessionChanged(to: tree, isAppActive: isActive) }
+    notifyOfBlockedPanes()
 
     // The Live Activity is one card for the whole app, so the registry gathers every host
     // and builds the pass.
     onLiveActivityInputChanged?()
+  }
+
+  /// The notification half of a poll, on its own for when another host started or stopped
+  /// covering a machine. A core pushes only on change, so no read of this host would come.
+  func notifyOfBlockedPanes() {
+    guard let tree = session?.tree else { return }
+    let isActive = isAppActive()
+    Task { await notifier.sessionChanged(to: tree, isAppActive: isActive) }
   }
 
   /// Told when this connection goes away, so the terminal scene for this host can release
@@ -608,7 +618,10 @@ final class ConnectionModel {
         // The new session takes over the old one's live-update holders. See
         // `SessionModel.handOverConsumers()`.
         let carried = session?.handOverConsumers() ?? 0
-        let session = SessionModel(control: control)
+        let session = SessionModel(
+          control: control,
+          coveringCoreIDs: { [weak self] in self?.coveringCoreIDs() ?? [] }
+        )
         // The session's updates drive conversation freshness, so there is no second poller. A
         // snapshot is a few KB; a first transcript page is up to 100 KB. See
         // `SessionModel.Changes`.

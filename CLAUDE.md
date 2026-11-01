@@ -34,6 +34,14 @@ This file holds the rules and traps on top of that.
   `HerdrStream`. A host with both the TUI and a core is one `CombinedControl`, which holds
   two `any HerdrControl` and routes each call by the `CorePaneID` prefix, because two
   sessions applying snapshots would wipe each other's caches.
+- **`SessionModel.tree` leaves out a machine another connected host shows;
+  `reportedTree` is what the host said.** A core lists the machines it added, and one that is
+  also a Driverr host would show twice. They match on identity, `hello.core.id` against
+  `machine.list[].id`, because a machine's name is local to the core that added it. Read
+  `tree` for anything that lists or counts panes. Read `reportedTree` for anything that holds
+  a pane open or keeps state per pane, or the machine's own host connecting closes a scene
+  and forgets a chat. A background pass has no registry, so it takes the other hosts' cores
+  from the standing card (`HostSummary.coreID`).
 - **Core detection is `#if DEBUG` in `AppEnvironment.live` until #21.** Every push to `main`
   uploads to TestFlight, and a tap guard would not cover every way into `openBridge`.
 - **`DriverrTerm` must not import `DriverrSSH`.** It renders a `TerminalFeed`, a struct of

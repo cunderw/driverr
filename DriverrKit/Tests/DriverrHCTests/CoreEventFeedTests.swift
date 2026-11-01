@@ -92,13 +92,108 @@ struct CoreEventFeedTests {
     #expect(!stream.methods.contains("terminal.list"))
     #expect(stream.calls(of: "events.subscribe") == 1)
     #expect(stream.calls(of: "doc.get") == 1)
+    #expect(stream.calls(of: "machine.list") == 1)
   }
 
-  @Test("subscribing reads the document only after the subscribe")
+  @Test("subscribing reads the document and the machines only after the subscribe")
   func subscribeBeforeReading() async throws {
     let stream = subscribing(shell)
     _ = try await control(stream).snapshot()
-    #expect(stream.methods == ["events.subscribe", "doc.get"])
+    #expect(stream.methods.first == "events.subscribe")
+    #expect(Set(stream.methods) == ["events.subscribe", "doc.get", "machine.list"])
+    #expect(stream.methods.count == 3)
+  }
+
+  // MARK: - Which core a machine is
+
+  private let onMachine = #"{"address":"box/t1","state":"live"}"#
+
+  @Test("the first tree already says which core it came through and which core a machine is")
+  func firstTreeKnowsItsMachines() async throws {
+    let stream = subscribing(shell, onMachine)
+    stream.replies["machine.list"] = .result(FakeCoreStream.machines("box", id: "5b37"))
+    let tree = try await control(stream).snapshot()
+    #expect(tree.coreID == "f47b")
+    #expect(tree.workspaces.first { $0.id == "core:box/workspace" }?.machineCoreID == "5b37")
+  }
+
+  @Test("a machine that turns up later reads the machines again and lands in the tree")
+  func machineArrivesLater() async throws {
+    let stream = subscribing(shell)
+    let control = control(stream)
+    _ = try await control.snapshot()
+
+    stream.replies["machine.list"] = .result(FakeCoreStream.machines("box", id: "5b37"))
+    stream.event("created", on: "box/t1", onMachine)
+    try await tree(of: control) {
+      $0.workspaces.first { $0.id == "core:box/workspace" }?.machineCoreID == "5b37"
+    }
+    #expect(stream.calls(of: "machine.list") == 2)
+  }
+
+  @Test("a rename keeps the id, and the old name's group goes")
+  func machineRenamed() async throws {
+    let stream = subscribing(shell, onMachine)
+    stream.replies["machine.list"] = .result(FakeCoreStream.machines("box", id: "5b37"))
+    let control = control(stream)
+    _ = try await control.snapshot()
+
+    stream.replies["machine.list"] = .result(FakeCoreStream.machines("cee", id: "5b37"))
+    stream.event("removed", on: "box/t1")
+    stream.event("created", on: "cee/t1", #"{"address":"cee/t1","state":"live"}"#)
+    try await tree(of: control) {
+      $0.workspaces.filter { $0.machineCoreID == "5b37" }.map(\.id) == ["core:cee/workspace"]
+    }
+  }
+
+  @Test("missed reads the machines again")
+  func missedReadsMachines() async throws {
+    let stream = subscribing(shell)
+    _ = try await control(stream).snapshot()
+    stream.emit(#"{"jsonrpc":"2.0","method":"missed","params":{"seq":57,"terminals":[]}}"#)
+    try await waitUntil("the machines") { stream.calls(of: "machine.list") == 2 }
+  }
+
+  @Test("the machines read again on a new connection, and last until they answer")
+  func machinesAcrossReconnect() async throws {
+    let dying = subscribing(shell, onMachine)
+    dying.replies["machine.list"] = .result(FakeCoreStream.machines("box", id: "5b37"))
+    let replacement = subscribing(shell, onMachine)
+    replacement.replies["machine.list"] = .error("unavailable")
+    let control = control(Streams(dying, replacement))
+    _ = try await control.snapshot()
+
+    dying.finish()
+    try await waitUntil("the reader sees the end") { dying.closes == 1 }
+    try await waitUntil("the new subscription") {
+      (try? await control.snapshot()) != nil && replacement.calls(of: "machine.list") == 1
+    }
+    let tree = try await control.snapshot()
+    #expect(tree.workspaces.first { $0.id == "core:box/workspace" }?.machineCoreID == "5b37")
+  }
+
+  @Test("a machine list with no answer is asked again by the next tick")
+  func machinesRetried() async throws {
+    let stream = subscribing(shell, onMachine)
+    stream.replies["machine.list"] = .error("unavailable")
+    let control = control(Streams(stream), heartbeatTick: .milliseconds(20))
+    _ = try await control.snapshot()
+
+    stream.replies["machine.list"] = .result(FakeCoreStream.machines("box", id: "5b37"))
+    try await tree(of: control) {
+      $0.workspaces.first { $0.id == "core:box/workspace" }?.machineCoreID == "5b37"
+    }
+  }
+
+  @Test("a machine list this build cannot read is not asked again")
+  func unreadableMachinesNotRetried() async throws {
+    let stream = subscribing(shell)
+    stream.replies["machine.list"] = .result(#"{"machines":5}"#)
+    let control = control(Streams(stream), heartbeatTick: .milliseconds(20))
+    _ = try await control.snapshot()
+
+    try await quiet()
+    #expect(stream.calls(of: "machine.list") == 1)
   }
 
   @Test("a change is signalled, and a burst of them lands as one read of the latest")
@@ -352,7 +447,8 @@ struct CoreEventFeedTests {
     // The new process counts from its own start, far below where the old one had got.
     replacement.event("status", on: "t2", blocked, seq: 4)
     try await tree(of: control) { $0.pane(id: "core:t2")?.agent?.status == .blocked }
-    #expect(replacement.methods.prefix(2) == ["events.subscribe", "doc.get"])
+    #expect(replacement.methods.first == "events.subscribe")
+    #expect(replacement.calls(of: "doc.get") == 1)
   }
 
   @Test("the document and the sessions survive a reconnect until they are read again")

@@ -66,7 +66,7 @@ struct CoreControlTests {
     let tree = try await control(host).snapshot()
     #expect(tree.allPanes.map(\.id) == ["core:t1"])
     #expect(host.opened == ["'/home/my user/.local/bin/herdr-core' connect"])
-    #expect(Set(stream.methods) == ["events.subscribe", "doc.get"])
+    #expect(Set(stream.methods) == ["events.subscribe", "doc.get", "machine.list"])
   }
 
   /// Waits for the `count`th read of the document to have been asked for. Reads go one at a
@@ -104,7 +104,7 @@ struct CoreControlTests {
     _ = try await control.snapshot()
     stream.event("doc", #"{"name":"herdr-app","version":8}"#)
     try await documentRead(2, by: stream)
-    #expect(Set(stream.methods) == ["events.subscribe", "doc.get"])
+    #expect(Set(stream.methods) == ["events.subscribe", "doc.get", "machine.list"])
   }
 
   @Test("no document leaves the terminals as listed")

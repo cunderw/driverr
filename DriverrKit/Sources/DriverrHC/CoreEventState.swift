@@ -16,6 +16,8 @@ struct CoreEventState {
     var sessionReads: Set<String> = []
     /// Terminals carry nothing about the document, so it has to be read again.
     var readsDocument = false
+    /// Which core a machine's name means may have changed.
+    var readsMachines = false
   }
 
   private(set) var seq: UInt64
@@ -33,7 +35,11 @@ struct CoreEventState {
     case .missed(let snapshot):
       self = CoreEventState(snapshot)
       return Effect(
-        signal: .prompt, sessionReads: Set(terminals.map(\.address)), readsDocument: true)
+        signal: .prompt,
+        sessionReads: Set(terminals.map(\.address)),
+        readsDocument: true,
+        readsMachines: true
+      )
     case .heartbeat, .unknown:
       return Effect()
     }
@@ -99,6 +105,9 @@ struct CoreEventState {
 
   /// A record arrives whole, for a new terminal or one that came back. A machine's line coming
   /// back says `created` of terminals already held, and of ones that finished meanwhile.
+  ///
+  /// On a machine it reads the machines, because nothing else says one changed: a rename is
+  /// `removed` and `created` under the new name, and a name can come back as another core.
   private mutating func place(_ record: CoreTerminal) -> Effect {
     let index = terminals.firstIndex { $0.address == record.address }
     switch (index, record.isLive) {
@@ -107,6 +116,10 @@ struct CoreEventState {
     case (let index?, false): terminals.remove(at: index)
     case (nil, false): return Effect()
     }
-    return Effect(signal: .prompt, sessionReads: [record.address])
+    return Effect(
+      signal: .prompt,
+      sessionReads: [record.address],
+      readsMachines: record.isLive && record.machine != nil
+    )
   }
 }

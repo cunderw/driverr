@@ -229,7 +229,7 @@ struct TerminalScreen: View {
       //
       // Every tree change gives the scene a chance to adopt a split's new pane; see
       // `TerminalSceneModel.newPane()`.
-      .onChange(of: model.session?.tree ?? .empty) { _, _ in
+      .onChange(of: model.session?.reportedTree ?? .empty) { _, _ in
         scene.treeChanged()
       }
       // Only `start()`, which needs no balancing half: a second call from a rebuilt view

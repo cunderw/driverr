@@ -23,9 +23,9 @@ enum CoreProbe {
 /// shares a line of code with.
 ///
 /// Off unless `DRIVERR_LIVE_CORE=1` and a core is installed here. It sends only `hello`,
-/// `events.subscribe`, `doc.get` and `file.read` of a Claude terminal's own record, which change
-/// nothing, but `hc connect` starts a core when none is running, which is why a default run
-/// leaves it out. Run it by hand:
+/// `events.subscribe`, `doc.get`, `machine.list` and `file.read` of a Claude terminal's own
+/// record, which change nothing, but `hc connect` starts a core when none is running, which is
+/// why a default run leaves it out. Run it by hand:
 ///
 /// ```sh
 /// DRIVERR_LIVE_CORE=1 swift test --package-path DriverrKit --filter CoreOverSSH

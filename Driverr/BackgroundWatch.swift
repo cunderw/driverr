@@ -424,9 +424,12 @@ final class BackgroundWatchRunner {
         return
       }
 
-      let tree = await session.snapshotForWatch()
+      let reported = await session.snapshotForWatch()
       checks += 1
-      if let tree {
+      if let reported {
+        // As in `BackgroundRefreshRunner`: the card knows what the other hosts already count.
+        let tree = reported.hidingMachines(
+          coveredBy: environment.blockedPaneActivities.coreIDs(coveringHost: host.id))
         // The same feed as the foreground poll. `.oneHost` because this pass saw one machine,
         // and `canRequest: false` because cards are requested from the foreground. The driver
         // already has the preferences, because this is the same process.
@@ -438,7 +441,8 @@ final class BackgroundWatchRunner {
               isConnected: true,
               blockedPanes: tree.blockedPanes,
               counts: tree.agentStatusCounts,
-              observedAt: Date()
+              observedAt: Date(),
+              coreID: tree.coreID
             )
           ],
           scope: .oneHost(host.id),

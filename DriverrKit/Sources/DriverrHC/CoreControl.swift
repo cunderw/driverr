@@ -153,7 +153,7 @@ public struct CoreControl: HerdrControl {
 
   private static func availability(for handshake: CoreHandshake) -> HerdrAvailability {
     switch handshake {
-    case .ready(let version):
+    case .ready(let version, _):
       .coreReady(version: version)
     case .refused(let version, let generation, let missingMethods):
       .coreIncompatible(

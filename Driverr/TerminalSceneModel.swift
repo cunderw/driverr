@@ -344,10 +344,15 @@ final class TerminalSceneModel {
   /// tested in `swift test`.
   var strip: PaneStripModel {
     PaneStripModel(
-      tree: model.session?.tree ?? .empty,
+      tree: model.session?.tree(keeping: currentPaneID) ?? .empty,
       current: current,
       openedAsShell: openedAsShell
     )
+  }
+
+  private var currentPaneID: String? {
+    if case .pane(let id) = current { return id }
+    return nil
   }
 
   /// The entries in drawing order, current last so it is on top.
@@ -569,7 +574,7 @@ final class TerminalSceneModel {
   func newPane() {
     guard case .pane(let paneID) = current, let herdr = model.herdr else { return }
     let target = current
-    pendingSplit = Set(model.session?.tree.allPanes.map(\.id) ?? [])
+    pendingSplit = Set(model.session?.reportedTree.allPanes.map(\.id) ?? [])
     pendingSplitSnapshots = Self.splitAdoptionSnapshots
     enqueue(on: target) { [weak self] in
       guard let self else { return }
@@ -593,7 +598,8 @@ final class TerminalSceneModel {
   /// dropped, so a split that did nothing cannot hijack the user's next desk pane.
   func adoptNewPane() {
     guard let known = pendingSplit else { return }
-    guard let new = model.session?.tree.allPanes.first(where: { !known.contains($0.id) })
+    guard
+      let new = model.session?.reportedTree.allPanes.first(where: { !known.contains($0.id) })
     else {
       pendingSplitSnapshots -= 1
       if pendingSplitSnapshots <= 0 { pendingSplit = nil }
@@ -1632,7 +1638,8 @@ final class TerminalSceneModel {
     entries.first { $0.target == target }
   }
 
-  private func pane(id: String) -> Pane? { model.session?.tree.pane(id: id) }
+  /// The whole tree, so a scene open on a machine survives that machine's own host connecting.
+  private func pane(id: String) -> Pane? { model.session?.reportedTree.pane(id: id) }
 
   private func terminalID(for paneID: String) -> String? { pane(id: paneID)?.terminalID }
 
@@ -1711,11 +1718,11 @@ final class TerminalSceneModel {
   /// `nil` when the current pane is alive, when there is no tree, or when no pane is left.
   var nearestLivePane: Pane? {
     guard case .pane(let id) = current else { return nil }
-    guard let tree = model.session?.tree else { return nil }
-    guard tree.pane(id: id) == nil else { return nil }
+    guard let session = model.session else { return nil }
+    guard session.reportedTree.pane(id: id) == nil else { return nil }
     // Urgency order, like `PaneStripModel`: a blocked pane is where the reader most wants to
     // land.
-    return tree.panesByUrgency.first
+    return session.tree.panesByUrgency.first
   }
 
   private func rebuildActions(for target: TerminalTarget) {

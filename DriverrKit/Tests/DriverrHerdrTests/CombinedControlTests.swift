@@ -211,6 +211,26 @@ struct CombinedControlTests {
     #expect(tree.focusedPaneID == "w1:p1")
   }
 
+  @Test("a combined tree says which core it holds, by a poll and through a change")
+  func keepsTheCoreID() async throws {
+    let identified = SessionTree(workspaces: coreTree.workspaces, coreID: "core-a")
+    let tui = CountingTUI(read: .success(tuiTree))
+    let core = PushingCore(read: .success(identified))
+    let combined = CombinedControl(tui: tui, core: core)
+    #expect(try await combined.snapshot().coreID == "core-a")
+    #expect(try await combined.changedSnapshot().coreID == "core-a")
+  }
+
+  /// Its terminals have gone with it, so it covers nothing.
+  @Test("a core that failed claims no core id")
+  func failedCoreClaimsNothing() async throws {
+    let combined = control(
+      tui: Side(binaryPath: "herdr", tree: tuiTree),
+      core: Side(binaryPath: "hc", snapshotFailure: coreFailure)
+    )
+    #expect(try await combined.snapshot().coreID == nil)
+  }
+
   @Test("the core failing returns the TUI's tree")
   func coreFails() async throws {
     let combined = control(

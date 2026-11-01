@@ -165,6 +165,40 @@ struct BackgroundRefreshTests {
 
   /// A cold background launch starts with an empty announced set unless it reads the one the
   /// last run wrote.
+  /// The hidden tree goes to the notifier too, or a pane its own host already announced would
+  /// be announced again under this host's id for it.
+  @Test("a machine another host on the card shows is not announced from here")
+  func aCoveredMachineIsNotAnnounced() async throws {
+    let center = FakeNotificationCenter(status: .authorized)
+    let scheduler = CountingScheduler()
+    let session = FakeSession()
+    session.snapshot = SessionTree(
+      workspaces: [
+        Workspace(
+          id: "bee", number: 1, label: "bee",
+          tabs: [
+            Tab(
+              id: "t1", workspaceID: "bee", number: 1, label: "a",
+              panes: [pane("core:bee/t1", status: .blocked)])
+          ],
+          machineCoreID: "core-b")
+      ],
+      coreID: "core-a"
+    )
+    let driver = RecordingActivityDriver()
+    driver.coveringCoreIDs[workbox.id] = ["core-b"]
+    var environment = environment(hosts: [workbox], center: center, scheduler: scheduler)
+    environment.blockedPaneActivities = driver
+    let runner = BackgroundRefreshRunner(
+      environment: environment,
+      storedSelection: { self.workbox.id.uuidString },
+      makeSession: { _, _ in session }
+    )
+
+    #expect(await runner.run() == .refreshed(blockedPanes: 0))
+    #expect(await center.posts.isEmpty)
+  }
+
   @Test("a pane announced by an earlier run is not announced again")
   func anEarlierRunsAnnouncementIsNotRepeated() async {
     let center = FakeNotificationCenter(status: .authorized)
