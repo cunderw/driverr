@@ -163,8 +163,6 @@ struct BackgroundRefreshTests {
     #expect(scheduler.scheduled == 1)
   }
 
-  /// A cold background launch starts with an empty announced set unless it reads the one the
-  /// last run wrote.
   /// The hidden tree goes to the notifier too, or a pane its own host already announced would
   /// be announced again under this host's id for it.
   @Test("a machine another host on the card shows is not announced from here")
@@ -199,6 +197,8 @@ struct BackgroundRefreshTests {
     #expect(await center.posts.isEmpty)
   }
 
+  /// A cold background launch starts with an empty announced set unless it reads the one the
+  /// last run wrote.
   @Test("a pane announced by an earlier run is not announced again")
   func anEarlierRunsAnnouncementIsNotRepeated() async {
     let center = FakeNotificationCenter(status: .authorized)

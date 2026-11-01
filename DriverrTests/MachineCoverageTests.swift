@@ -55,9 +55,12 @@ struct MachineCoverageTests {
     )
   }
 
-  private func environment(_ tree: SessionTree, center: FakeNotificationCenter? = nil)
-    -> AppEnvironment
-  {
+  private func environment(
+    _ tree: SessionTree,
+    center: FakeNotificationCenter? = nil,
+    announced: (any AnnouncedPaneStore)? = nil,
+    lastPanes: InMemoryLastPaneStore? = nil
+  ) -> AppEnvironment {
     var environment = AppEnvironment.ephemeral
     environment.knownHostsStore = InMemoryKnownHostsStore(
       seeded: [
@@ -69,6 +72,8 @@ struct MachineCoverageTests {
     let control = FakeControl(tree: tree)
     environment.makeHerdrControl = { _ in control }
     if let center { environment.notifications = center }
+    if let announced { environment.announcedPanes = announced }
+    if let lastPanes { environment.lastPanes = lastPanes }
     return environment
   }
 
@@ -77,12 +82,18 @@ struct MachineCoverageTests {
     _ host: DriverrCore.Host,
     tree: SessionTree,
     on registry: ConnectionRegistry,
-    center: FakeNotificationCenter? = nil
+    center: FakeNotificationCenter? = nil,
+    announced: (any AnnouncedPaneStore)? = nil,
+    lastPanes: InMemoryLastPaneStore? = nil,
+    reading: Bool = true
   ) async -> ConnectionModel {
-    let model = registry.model(for: host, environment: environment(tree, center: center))
+    let model = registry.model(
+      for: host,
+      environment: environment(tree, center: center, announced: announced, lastPanes: lastPanes)
+    )
     await model.connect(password: "hunter2", persistence: .promptEveryTime)
     #expect(model.phase == .connected)
-    await model.session?.refresh()
+    if reading { await model.session?.refresh() }
     return model
   }
 
@@ -187,21 +198,84 @@ struct MachineCoverageTests {
     let registry = ConnectionRegistry(notifications: NotificationCenter())
     registry.isAppActive = false
     _ = await connect(adder, tree: adderTree, on: registry, center: center)
-    try await waitFor { await center.posts.count == 1 }
+    try await waitFor("the adder to announce the machine's pane") {
+      await center.posts.count == 1
+    }
     #expect(await center.posts.first?.userInfo[NotificationTapRouter.paneIDKey] == "core:bee/t1")
 
     let own = await connect(bee, tree: beeTree(), on: registry, center: center)
-    try await waitFor { await center.withdrawn.count == 1 }
+    try await waitFor("the adder to withdraw it") { await center.withdrawn.count == 1 }
 
     await own.disconnect()
-    try await waitFor { await center.posts.count == 3 }
+    try await waitFor("the adder to announce it again") { await center.posts.count == 3 }
     let panes = await center.posts.compactMap { $0.userInfo[NotificationTapRouter.paneIDKey] }
     #expect(panes.filter { $0 == "core:bee/t1" }.count == 2)
   }
 
-  /// The centre is an actor nothing signals from. A sleep, so `.timeLimit` can end this.
-  private func waitFor(_ condition: () async -> Bool) async throws {
-    while !(await condition()) { try await Task.sleep(for: .milliseconds(1)) }
+  private struct WaitTimedOut: Error {}
+
+  /// The centre and the stores are actors nothing signals from. Well inside the suite's
+  /// `.timeLimit`, so a failure names what never came. It records and throws, because a wait
+  /// that returned at its deadline would leave what follows it to pass by chance.
+  private func waitFor(
+    _ what: String,
+    within limit: Duration = .seconds(30),
+    sourceLocation: SourceLocation = #_sourceLocation,
+    _ condition: () async -> Bool
+  ) async throws {
+    let clock = ContinuousClock()
+    let deadline = clock.now + limit
+    while !(await condition()) {
+      guard clock.now < deadline else {
+        Issue.record("timed out waiting for \(what)", sourceLocation: sourceLocation)
+        throw WaitTimedOut()
+      }
+      try await Task.sleep(for: .milliseconds(1))
+    }
+  }
+
+  /// `hostChanged()` reaches every model, and a session that has not read yet holds an empty
+  /// tree. Folded in, that says every announced pane has gone: their cards come down, the
+  /// record is overwritten, and the first real read announces them all again.
+  @Test("another host's cores moving says nothing to a session that has not read yet")
+  func aSessionWithNoReadKeepsItsAnnouncements() async throws {
+    let center = FakeNotificationCenter(status: .authorized)
+    let announced = InMemoryAnnouncedPaneStore()
+    await announced.setAnnouncedPanes(["core:t1"], forHost: adder.id)
+    let registry = ConnectionRegistry(notifications: NotificationCenter())
+    registry.isAppActive = false
+
+    _ = await connect(
+      adder, tree: adderTree, on: registry, center: center, announced: announced, reading: false)
+    _ = await connect(bee, tree: beeTree(), on: registry, center: center, announced: announced)
+    try await waitFor("the machine's own host to announce its pane") {
+      await center.posts.count == 1
+    }
+
+    // What this guards against is a write that must not come, so it waits out several.
+    for _ in 0..<25 {
+      try await Task.sleep(for: .milliseconds(20))
+      try #require(await announced.announcedPanes(forHost: adder.id) == ["core:t1"])
+    }
+    #expect(await center.withdrawn.isEmpty)
+  }
+
+  /// Keeping the record is what lets the scene come back to this pane, which is still here
+  /// whoever else shows it. Read from `tree`, it would look closed and the record would go.
+  @Test("the last pane stays remembered on a machine another host covers")
+  func lastPaneOnACoveredMachine() async throws {
+    let lastPanes = InMemoryLastPaneStore()
+    let registry = ConnectionRegistry(notifications: NotificationCenter())
+    let adding = await connect(adder, tree: adderTree, on: registry, lastPanes: lastPanes)
+    _ = await connect(bee, tree: beeTree(), on: registry)
+    #expect(adding.session?.tree.pane(id: "core:bee/t1") == nil)
+
+    adding.noteLastPane("core:bee/t1")
+
+    let expected = LastPaneRecord(paneID: "core:bee/t1", witness: "bee/t1")
+    try await waitFor("the last pane to be recorded") {
+      await lastPanes.lastPane(forHost: adder.id) == expected
+    }
   }
 
   /// `SessionModel.tree` has no idea this scene exists, so it has to read the whole tree.

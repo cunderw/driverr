@@ -108,7 +108,6 @@ struct BlockedPaneActivityPlanTests {
   }
 
   // MARK: - The trigger
-  // MARK: - The trigger
 
   @Test("a connected host with nothing blocked still gets a card")
   func connectIsTheTrigger() throws {

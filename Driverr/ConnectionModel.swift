@@ -292,8 +292,12 @@ final class ConnectionModel {
 
   /// The notification half of a poll, on its own for when another host started or stopped
   /// covering a machine. A core pushes only on change, so no read of this host would come.
+  ///
+  /// Nothing before the first read. The tree is empty then, and the rule would take that for
+  /// every announced pane having gone.
   func notifyOfBlockedPanes() {
-    guard let tree = session?.tree else { return }
+    guard let session, session.hasReadATree else { return }
+    let tree = session.tree
     let isActive = isAppActive()
     Task { await notifier.sessionChanged(to: tree, isAppActive: isActive) }
   }

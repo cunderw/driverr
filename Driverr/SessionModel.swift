@@ -28,6 +28,10 @@ final class SessionModel {
   /// record, and `Changes`, which would otherwise forget its chat, screen and draft.
   private(set) var reportedTree: SessionTree = .empty
 
+  /// Whether a read has landed, because an empty `reportedTree` can also be a session with
+  /// nothing in it. Nothing draws this.
+  @ObservationIgnored private(set) var hasReadATree = false
+
   /// What this host shows: `reportedTree` without the machines another host shows as its own.
   ///
   /// Derived, not stored, because a machine stops being covered when something happens on
@@ -155,6 +159,7 @@ final class SessionModel {
         expandedWorkspaceIDs = tree.defaultExpandedWorkspaceIDs
       }
       reportedTree = tree
+      hasReadATree = true
       state = .loaded(tree)
       lastFailure = nil
       onSessionChanged?(changes)
