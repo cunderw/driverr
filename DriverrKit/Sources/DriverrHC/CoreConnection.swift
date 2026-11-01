@@ -332,6 +332,14 @@ actor CoreConnection {
     .herdrCommandFailed(reason: "herdr-core did not answer \(method).")
   }
 
+  /// Whether a call failed with nothing back from the core, as against the core saying no.
+  static func gotNoAnswer(_ error: any Error, to method: String) -> Bool {
+    switch error as? AppError {
+    case .channelFailed?, nil: true
+    case let failure?: failure == timedOutFailure(method)
+    }
+  }
+
   private static func sendFailure(_ error: any Error) -> AppError {
     (error as? AppError) ?? endedFailure
   }

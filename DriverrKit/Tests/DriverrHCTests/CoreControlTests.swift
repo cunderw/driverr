@@ -708,6 +708,26 @@ struct CoreControlTests {
     #expect(panes == ["core:t1": ["a"], "core:gone": [], "core:t3": []])
   }
 
+  @Test("a stalled link is a failure to ask: every read timed out, and the pictures stay")
+  func readPanesAllTimeOut() async {
+    let stream = tiles(["t1": .silent, "t2": .silent])
+    let control = control(CoreHost(stream), deadline: .milliseconds(100))
+
+    await #expect(throws: AppError.herdrCommandFailed(reason: "herdr-core is not answering.")) {
+      _ = try await control.readPanes(ids: ["core:t1", "core:t2"], lines: 6)
+    }
+  }
+
+  @Test("one refusal among timeouts is an answer, so the core is there and nothing throws")
+  func readPanesRefusalAmongTimeouts() async throws {
+    let stream = tiles(["t1": .silent, "t2": .error("not_found")])
+    let control = control(CoreHost(stream), deadline: .milliseconds(100))
+
+    let panes = try await control.readPanes(ids: ["core:t1", "core:t2"], lines: 6)
+
+    #expect(panes == ["core:t1": [], "core:t2": []])
+  }
+
   @Test("no tiles ask for nothing, so a TUI's batch on a combined host opens no connection")
   func readPanesEmpty() async throws {
     let host = CoreHost()

@@ -140,25 +140,34 @@ public struct CoreControl: HerdrControl {
   /// deadline. There is no batch call. `PaneThumbnailModel` is the only caller, and it asks only
   /// for the tiles with no emulator, on its tick, while the sheet is up.
   ///
-  /// **A connection gone by the end throws**, because that is a failure to ask, and tiles
-  /// answered empty would replace the pictures the sheet keeps through one.
+  /// **No answer to any read throws, and so does a connection gone by the end.** Each is a
+  /// failure to ask, and tiles answered empty would replace the pictures the sheet keeps through
+  /// one. A stalled link stays open and only ever times out. A core that refuses a read has
+  /// answered, so that pane alone is empty.
   public func readPanes(ids: [String], lines: Int) async throws -> [String: [String]] {
     // A combined host's TUI batch comes through here with no core panes in it.
     guard !ids.isEmpty else { return [:] }
     let (connection, handshake) = await link.established()
     guard let connection else { throw Self.failure(for: handshake) }
 
-    let panes = await withTaskGroup(of: (String, [String]).self) { group in
+    typealias Read = (id: String, rows: [String], answered: Bool)
+    let reads = await withTaskGroup(of: Read.self) { group in
       for id in ids {
         group.addTask {
-          let screen = try? await Self.screen(ofPane: id, lines: lines, on: connection)
-          return (id, screen?.lines.map(\.text) ?? [])
+          do {
+            let screen = try await Self.screen(ofPane: id, lines: lines, on: connection)
+            return (id, screen.lines.map(\.text), true)
+          } catch {
+            return (id, [], !CoreConnection.gotNoAnswer(error, to: "terminal.read"))
+          }
         }
       }
-      return await group.reduce(into: [String: [String]]()) { $0[$1.0] = $1.1 }
+      return await group.reduce(into: []) { $0.append($1) }
     }
-    guard await connection.isOpen else { throw Self.failure(for: .notCore) }
-    return panes
+    guard reads.contains(where: \.answered), await connection.isOpen else {
+      throw Self.failure(for: .notCore)
+    }
+    return Dictionary(reads.map { ($0.id, $0.rows) }, uniquingKeysWith: { first, _ in first })
   }
 
   public func readScreen(of pane: Pane, lines: Int) async throws -> PaneScreen {
