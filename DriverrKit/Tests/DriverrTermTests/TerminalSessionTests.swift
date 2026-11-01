@@ -691,6 +691,16 @@ struct TerminalSessionTests {
     #expect(session.title == "workbox: ~")
   }
 
+  @Test("an empty title clears the recorded one so the caller falls back")
+  func emptyTitleClears() {
+    let session = TerminalSession(feed: TestFeed().feed)
+    session.setTitle("workbox: ~")
+    session.setTitle("")
+    #expect(session.title == nil)
+    session.setTitle("workbox: /tmp")
+    #expect(session.title == "workbox: /tmp")
+  }
+
   @Test("two sessions run independently — no shared emulator state")
   func sessionsAreIndependent() async {
     let leftFeed = TestFeed()
