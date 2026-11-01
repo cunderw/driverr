@@ -207,6 +207,15 @@ struct AppEnvironment {
         if let stall = stalledSetUp { try? await Task.sleep(for: stall) }
         // An ordinary SSH host with no herdr.
         if isHerdrMissing { return FakeControl(tree: .empty, availability: .notInstalled) }
+        // A core with no terminals. See `isEmptyCore`.
+        if isEmptyCore {
+          return FakeControl(
+            tree: .empty,
+            availability: .coreReady(version: "0.1.15"),
+            canStartTerminal: true,
+            startFailure: emptyCoreStartFailure
+          )
+        }
         if isFirstMessage { return firstMessageControl }
         // A new session herdr has named and Claude has not written yet.
         if isUnwrittenSession { return FakeControl(tree: FakeControl.treeWithUnwrittenSession) }
@@ -788,6 +797,22 @@ struct AppEnvironment {
   /// each kind of absence has its own message and a generic one would test nothing.
   static var isHerdrMissing: Bool {
     ProcessInfo.processInfo.arguments.contains("-uiTestingNoHerdr")
+  }
+
+  /// Whether this launch pretends the host is a core with no terminals (`-uiTestingEmptyCore`),
+  /// so the empty state offers New Terminal.
+  static var isEmptyCore: Bool {
+    ProcessInfo.processInfo.arguments.contains("-uiTestingEmptyCore")
+  }
+
+  /// What that core says to a start, under `-uiTestingEmptyCoreRefuses`, so a capture can show
+  /// the failure in the core's own words.
+  static var emptyCoreStartFailure: AppError? {
+    guard ProcessInfo.processInfo.arguments.contains("-uiTestingEmptyCoreRefuses") else {
+      return nil
+    }
+    return .herdrCommandFailed(
+      reason: #"cannot start "/bin/zsh": No such file or directory (os error 2)"#)
   }
 
   /// UI tests must not touch the real Keychain or the network. The Keychain persists across

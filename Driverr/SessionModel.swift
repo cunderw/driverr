@@ -170,6 +170,7 @@ final class SessionModel {
       hasReadATree = true
       state = .loaded(tree)
       lastFailure = nil
+      noteTerminalStart(in: tree)
       onSessionChanged?(changes)
     } catch let error as AppError {
       state = .failed(error)
@@ -280,8 +281,66 @@ final class SessionModel {
 
   var canStartTerminal: Bool { control.canStartTerminal }
 
+  /// The terminal being waited for, and what wakes the wait. One, because `terminalStart` lets
+  /// one start run at a time.
+  @ObservationIgnored private var awaitedTerminal:
+    (id: String, arrived: CheckedContinuation<Void, Never>)?
+
+  /// Starts a terminal and answers with its pane id once a scene can open it, or `nil` with
+  /// `terminalStart` saying why.
+  ///
+  /// **The wait is the point.** `TerminalSceneModel` opens only what `reportedTree` lists and
+  /// returns silently otherwise, and the reply can land before the feed has applied its own
+  /// `created` event. `terminalArrivalLimit` bounds it. A terminal later than that opens nothing:
+  /// the row it gets is the answer, and a scene that opened by itself would take over the screen.
   func startTerminal() async -> String? {
-    nil
+    guard terminalStart != .starting else { return nil }
+    terminalStart = .starting
+    do {
+      let id = try await control.startTerminal()
+      await arrival(of: id)
+      guard reportedTree.pane(id: id) != nil else {
+        terminalStart = .failed(
+          .herdrCommandFailed(reason: "The terminal started, but the session has not listed it."))
+        return nil
+      }
+      terminalStart = nil
+      return id
+    } catch let error as AppError {
+      terminalStart = .failed(error)
+    } catch {
+      terminalStart = .failed(.herdrCommandFailed(reason: "herdr could not be reached."))
+    }
+    return nil
+  }
+
+  /// Returns when `id` is in `reportedTree` or the limit has passed. `load` does the waking.
+  ///
+  /// One read first, for a control whose news is already in hand. Not `refresh()`: `.loading`
+  /// over an empty tree swaps the start's own spinner for the session's.
+  private func arrival(of id: String) async {
+    await changedOnHost()
+    guard reportedTree.pane(id: id) == nil else { return }
+
+    let deadline = Task { [self, terminalArrivalLimit] in
+      try? await Task.sleep(for: terminalArrivalLimit)
+      guard !Task.isCancelled else { return }
+      awaitedTerminalEnded()
+    }
+    defer { deadline.cancel() }
+    await withCheckedContinuation { awaitedTerminal = (id, $0) }
+  }
+
+  private func awaitedTerminalEnded() {
+    awaitedTerminal?.arrived.resume()
+    awaitedTerminal = nil
+  }
+
+  /// What a new tree means for a start: the wait is over if it lists the terminal, and a failure
+  /// is over once there is a tree to show, because the empty state it sits in has gone.
+  private func noteTerminalStart(in tree: SessionTree) {
+    if let awaited = awaitedTerminal, tree.pane(id: awaited.id) != nil { awaitedTerminalEnded() }
+    if case .failed = terminalStart, !self.tree.isEmpty { terminalStart = nil }
   }
 
   func isWorkspaceExpanded(_ workspace: Workspace) -> Bool {
