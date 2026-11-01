@@ -94,6 +94,11 @@ private actor PushingControl: HerdrControl {
   private var holdsReads = false
   private(set) var snapshots = 0
   private(set) var changedSnapshots = 0
+  /// What a start answers with, whatever the tree says by then.
+  private var start: Result<String, AppError> = .success("core:t7")
+  private var startGate: CheckedContinuation<Void, Never>?
+  private var holdsStarts = false
+  private(set) var starts = 0
 
   nonisolated var changes: AsyncStream<Void>? { listener.listen() }
   nonisolated var needsPolling: Bool { false }
@@ -127,6 +132,27 @@ private actor PushingControl: HerdrControl {
   private func waitIfHeld() async {
     guard holdsReads else { return }
     await withCheckedContinuation { gate = $0 }
+  }
+
+  /// The next start waits for `releaseStart()`.
+  func holdStarts() {
+    holdsStarts = true
+  }
+
+  var isHoldingAStart: Bool { startGate != nil }
+
+  func releaseStart() {
+    holdsStarts = false
+    startGate?.resume()
+    startGate = nil
+  }
+
+  nonisolated var canStartTerminal: Bool { true }
+
+  func startTerminal() async throws -> String {
+    starts += 1
+    if holdsStarts { await withCheckedContinuation { startGate = $0 } }
+    return try start.get()
   }
 
   func snapshot() async throws -> SessionTree {
@@ -378,6 +404,145 @@ struct SessionModelTests {
 
     #expect(model.tree.allPanes.map(\.id) == ["w1:p1", "core:t1"])
     #expect(polls.completed == told)
+  }
+
+  // MARK: - Starting a terminal
+
+  private let oldest = "core:t3"
+  private let started = "core:t7"
+
+  /// A start under way on `control`, with its tree read and its first look at the tree done.
+  private func starting(
+    on control: PushingControl
+  ) async throws -> (SessionModel, PollRecorder, Task<String?, Never>) {
+    let (model, polls) = await listening(control)
+    let reads = await control.changedSnapshots
+    let start = Task { await model.startTerminal() }
+    try await until { await control.starts == 1 }
+    try await until { await control.changedSnapshots > reads }
+    await polls.waitForPolls(polls.completed + 1)
+    return (model, polls, start)
+  }
+
+  @Test("whether a host can start one is the control's answer")
+  func canStart() {
+    #expect(SessionModel(control: PushingControl()).canStartTerminal)
+    #expect(!SessionModel(control: FakeControl(tree: .empty)).canStartTerminal)
+  }
+
+  @Test("a start the first read already shows answers with the terminal's id")
+  func started() async {
+    let control = FakeControl(tree: .empty, canStartTerminal: true)
+    let model = SessionModel(control: control)
+    await model.refresh()
+
+    let id = await model.startTerminal()
+
+    #expect(id == "core:t1")
+    #expect(model.reportedTree.pane(id: "core:t1") != nil)
+    #expect(model.terminalStart == nil)
+    #expect(await control.terminalStarts == 1)
+  }
+
+  /// `TerminalSceneModel.openController` returns silently on an id `reportedTree` does not list.
+  /// The `created` event beat the reply on 20 of 20 real runs, but the feed may not have applied
+  /// it. An older terminal listed first is not the one that opens.
+  @Test("a terminal the tree does not list yet is waited for, by its own id")
+  func waitsForTheTerminal() async throws {
+    let control = PushingControl()
+    let (model, polls, start) = try await starting(on: control)
+    defer { model.stopLiveUpdates() }
+
+    await control.moved(to: .success(oneTerminal(oldest)))
+    control.signal()
+    await polls.waitForPolls(polls.completed + 1)
+    #expect(model.terminalStart == .starting)
+    // The spinner stays up: `.loading` over an empty tree would draw the session's own instead.
+    #expect(!model.isLoading)
+
+    await control.moved(to: .success(oneTerminal(started)))
+    control.signal()
+
+    #expect(await start.value == started)
+    #expect(model.terminalStart == nil)
+  }
+
+  @Test("a terminal that never reaches the tree ends the wait, and opens nothing")
+  func arrivalIsBounded() async throws {
+    let control = PushingControl()
+    let model = SessionModel(control: control, terminalArrivalLimit: .milliseconds(20))
+    await model.refresh()
+
+    let id = await model.startTerminal()
+
+    #expect(id == nil)
+    guard case .failed = model.terminalStart else {
+      Issue.record("expected a failure on screen, got \(String(describing: model.terminalStart))")
+      return
+    }
+    #expect(await control.starts == 1)
+  }
+
+  @Test("a terminal that turns up after the wait ended clears its failure, and opens nothing")
+  func lateArrival() async throws {
+    let control = PushingControl()
+    let model = SessionModel(control: control, terminalArrivalLimit: .milliseconds(20))
+    await model.refresh()
+    #expect(await model.startTerminal() == nil)
+
+    await control.moved(to: .success(oneTerminal(started)))
+    await model.refresh()
+
+    #expect(model.terminalStart == nil)
+  }
+
+  @Test("a refused start says why, and the next tap can try again")
+  func refused() async {
+    let refusal = AppError.herdrCommandFailed(reason: "spawn_failed")
+    let control = FakeControl(tree: .empty, canStartTerminal: true, startFailure: refusal)
+    let model = SessionModel(control: control)
+    await model.refresh()
+
+    #expect(await model.startTerminal() == nil)
+    #expect(model.terminalStart == .failed(refusal))
+
+    #expect(await model.startTerminal() == nil)
+    #expect(await control.terminalStarts == 2)
+  }
+
+  @Test("a second tap during a start starts nothing")
+  func doubleTap() async throws {
+    let control = PushingControl()
+    let (model, _) = await listening(control)
+    defer { model.stopLiveUpdates() }
+    await control.holdStarts()
+    let first = Task { await model.startTerminal() }
+    try await until { await control.isHoldingAStart }
+
+    #expect(await model.startTerminal() == nil)
+    #expect(await control.starts == 1)
+    #expect(model.terminalStart == .starting)
+
+    await control.moved(to: .success(oneTerminal(started)))
+    await control.releaseStart()
+    #expect(await first.value == started)
+  }
+
+  /// `on` is nil, so a tree empty only because another host shows its machines starts here.
+  @Test("a tree another host has emptied still starts a terminal, and shows it")
+  func coveredTree() async {
+    let machines = SessionTree(
+      workspaces: [Workspace(id: "core:box/workspace", number: 1, label: "box", machineCoreID: "b")]
+    )
+    let model = SessionModel(
+      control: FakeControl(tree: machines, canStartTerminal: true), coveringCoreIDs: { ["b"] })
+    await model.refresh()
+    #expect(model.tree.isEmpty)
+
+    let id = await model.startTerminal()
+
+    #expect(id != nil)
+    #expect(model.tree.allPanes.map(\.id) == [id])
   }
 
   @Test("a control that cannot push is polled as before")

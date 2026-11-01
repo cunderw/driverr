@@ -83,6 +83,7 @@ final class SessionModel {
   /// How many consumers hold live updates open. See `startLiveUpdates`.
   @ObservationIgnored private var consumers = 0
   @ObservationIgnored private let pollInterval: Duration
+  @ObservationIgnored private let terminalArrivalLimit: Duration
   private(set) var pollingPaused = false
 
   /// Reads under way, so a change that lands during one waits for it. See `changedOnHost()`.
@@ -99,15 +100,22 @@ final class SessionModel {
   /// Three seconds is a judgement, not a measurement.
   static let defaultPollInterval = Duration.seconds(3)
 
+  /// How long a started terminal has to reach `reportedTree`. See `startTerminal()`.
+  ///
+  /// A call's deadline, because an arrival that takes longer has lost more than one event.
+  static let defaultTerminalArrivalLimit = Duration.seconds(5)
+
   /// - Parameter coveringCoreIDs: the cores of the other hosts Driverr holds a link to. See
   ///   `ConnectionRegistry.coreIDs(coveringHost:)`.
   init(
     control: any HerdrControl,
     pollInterval: Duration = SessionModel.defaultPollInterval,
+    terminalArrivalLimit: Duration = SessionModel.defaultTerminalArrivalLimit,
     coveringCoreIDs: @escaping @MainActor () -> Set<String> = { [] }
   ) {
     self.control = control
     self.pollInterval = pollInterval
+    self.terminalArrivalLimit = terminalArrivalLimit
     self.coveringCoreIDs = coveringCoreIDs
   }
 
@@ -258,6 +266,22 @@ final class SessionModel {
       renamePrompt = .failed(target, .herdrCommandFailed(reason: "herdr could not be reached."))
     }
     renameInFlight = nil
+  }
+
+  // MARK: - Starting a terminal
+
+  /// A start under way, or the one that failed. On the model for `RenamePrompt`'s reason.
+  enum TerminalStart: Equatable {
+    case starting
+    case failed(AppError)
+  }
+
+  private(set) var terminalStart: TerminalStart?
+
+  var canStartTerminal: Bool { control.canStartTerminal }
+
+  func startTerminal() async -> String? {
+    nil
   }
 
   func isWorkspaceExpanded(_ workspace: Workspace) -> Bool {

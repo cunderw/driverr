@@ -232,6 +232,14 @@ public struct CombinedControl: HerdrControl {
     try await side(for: target.id).rename(target, to: label)
   }
 
+  /// The core's, because a herdr pane is opened inside a tab, and only the core can start one
+  /// with nothing open.
+  public var canStartTerminal: Bool { core.canStartTerminal }
+
+  public func startTerminal() async throws -> String {
+    try await core.startTerminal()
+  }
+
   private func side(for id: String) -> any HerdrControl {
     CorePaneID.isCore(id) ? core : tui
   }
