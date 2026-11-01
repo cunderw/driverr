@@ -19,7 +19,8 @@ public final class TerminalSession {
   }
 
   public private(set) var state: State = .idle
-  /// The last title the remote side set via OSC, such as a shell's `\e]0;…\a`.
+  /// The last title the remote side set via OSC, such as a shell's `\e]0;…\a`. An empty
+  /// title clears it, so the caller falls back to another name.
   public private(set) var title: String?
 
   private let feed: TerminalFeed
@@ -334,9 +335,10 @@ public final class TerminalSession {
     outbox.finish()
   }
 
-  /// Records a title the emulator parsed out of the stream.
+  /// Records a title the emulator parsed out of the stream. An empty one (`\e]2;\a`) clears
+  /// it, because `??` in the caller skips only nil and would show a blank name.
   public func setTitle(_ title: String) {
-    self.title = title
+    self.title = title.isEmpty ? nil : title
   }
 
   private func deliver(_ chunk: Data) {
