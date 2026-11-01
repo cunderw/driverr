@@ -142,7 +142,6 @@ private actor PushingControl: HerdrControl {
   var isHoldingAStart: Bool { startGate != nil }
 
   func releaseStart() {
-    holdsStarts = false
     startGate?.resume()
     startGate = nil
   }
@@ -151,7 +150,10 @@ private actor PushingControl: HerdrControl {
 
   func startTerminal() async throws -> String {
     starts += 1
-    if holdsStarts { await withCheckedContinuation { startGate = $0 } }
+    if holdsStarts {
+      holdsStarts = false
+      await withCheckedContinuation { startGate = $0 }
+    }
     return try start.get()
   }
 
