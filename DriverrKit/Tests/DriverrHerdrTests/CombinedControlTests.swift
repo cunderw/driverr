@@ -13,6 +13,8 @@ private actor Side: HerdrControl {
   private let attacher: (any PaneAttacher)?
   /// Whether every action on this side is one it has no equivalent for.
   private nonisolated let refuses: Bool
+  /// The id a start answers with, when this side can start one.
+  private nonisolated let startedID: String?
   private(set) var calls: [String] = []
 
   init(
@@ -21,9 +23,11 @@ private actor Side: HerdrControl {
     snapshotFailure: AppError? = nil,
     answer: HerdrAvailability = .notInstalled,
     attacher: (any PaneAttacher)? = nil,
-    refuses: Bool = false
+    refuses: Bool = false,
+    startedID: String? = nil
   ) {
     self.refuses = refuses
+    self.startedID = startedID
     self.binaryPath = binaryPath
     self.tree = tree
     self.snapshotFailure = snapshotFailure
@@ -35,6 +39,13 @@ private actor Side: HerdrControl {
 
   nonisolated func canPerform(_ kind: PaneActionKind, on paneID: String) -> Bool { !refuses }
   nonisolated func canRename(_ target: RenameTarget) -> Bool { !refuses }
+  nonisolated var canStartTerminal: Bool { startedID != nil }
+
+  func startTerminal() async throws -> String {
+    calls.append("startTerminal")
+    guard let startedID else { throw AppError.herdrCommandFailed(reason: "no start") }
+    return startedID
+  }
 
   func snapshot() async throws -> SessionTree {
     if let snapshotFailure { throw snapshotFailure }
@@ -509,6 +520,37 @@ struct CombinedControlTests {
     #expect(combined.canRename(.tab(id: "w1:t1")))
     #expect(!combined.canRename(.workspace(id: "core:workspace")))
     #expect(!combined.canRename(.tab(id: "core:box/tab")))
+  }
+
+  @Test("a combined host starts a terminal on the core, whatever the TUI says")
+  func startsOnTheCore() async throws {
+    let tui = Side(binaryPath: "herdr", startedID: "w1:p9")
+    let core = Side(binaryPath: "hc", startedID: "core:t9")
+    let control = CombinedControl(tui: tui, core: core)
+
+    #expect(control.canStartTerminal)
+    #expect(try await control.startTerminal() == "core:t9")
+    #expect(await core.calls == ["startTerminal"])
+    #expect(await tui.calls.isEmpty)
+  }
+
+  @Test("a core that cannot start one leaves the combined host unable to")
+  func startFollowsTheCore() {
+    let control = CombinedControl(
+      tui: Side(binaryPath: "herdr", startedID: "w1:p9"), core: Side(binaryPath: "hc"))
+    #expect(!control.canStartTerminal)
+  }
+
+  /// The TUI's own default, so a host with no core offers nothing and asks for nothing.
+  @Test("a control with no way to start a terminal says so, and a start refuses")
+  func startIsOffByDefault() async {
+    let control = CLIControl(run: { _ in
+      Issue.record("a default start must run nothing")
+      return CommandResult(standardOutput: "", standardError: "", exitStatus: 0)
+    })
+
+    #expect(!control.canStartTerminal)
+    await #expect(throws: AppError.self) { try await control.startTerminal() }
   }
 
   @Test("the attach command is the owning side's")

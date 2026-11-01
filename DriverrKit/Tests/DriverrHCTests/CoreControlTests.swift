@@ -30,9 +30,14 @@ private final class CoreHost: @unchecked Sendable {
 
 @Suite("Core control", .timeLimit(.minutes(1)))
 struct CoreControlTests {
-  private func control(_ host: CoreHost, deadline: Duration = .seconds(30)) -> CoreControl {
+  private func control(
+    _ host: CoreHost,
+    home: String? = nil,
+    deadline: Duration = .seconds(30)
+  ) -> CoreControl {
     CoreControl(
       binaryPath: "/home/my user/.local/bin/herdr-core",
+      home: home,
       callDeadline: deadline,
       open: { try await host.open($0) }
     )
@@ -580,6 +585,59 @@ struct CoreControlTests {
     stream.replies["terminal.kill"] = .error("no terminal t7")
     await #expect(throws: AppError.herdrCommandFailed(reason: "no terminal t7")) {
       try await control(CoreHost(stream)).perform(.close, on: "core:t7")
+    }
+  }
+
+  @Test("a host with no terminals can start one")
+  func canStart() {
+    #expect(control(CoreHost()).canStartTerminal)
+  }
+
+  @Test("a start is one terminal.run of the machine's shell, in the host's home")
+  func startInHome() async throws {
+    let stream = acting()
+    let id = try await control(CoreHost(stream), home: "/home/me").startTerminal()
+
+    #expect(id == "core:t9")
+    let params = try started(on: stream)
+    #expect(params["argv"] as? [String] == [])
+    #expect(params["cwd"] as? String == "/home/me")
+    // Not `on`, so it lands on this machine. Not labels or `keep`, which would claim a place in
+    // the desktop app's document. Not `env`, for `CoreRunParams`' reason.
+    #expect(Set(params.keys) == ["argv", "cwd"])
+    #expect(stream.calls(of: "terminal.get") == 0)
+  }
+
+  /// `~` is `spawn_failed`, and the core's own directory is better than a guess.
+  @Test("with no home, a start names no directory")
+  func startWithNoHome() async throws {
+    let stream = acting()
+    _ = try await control(CoreHost(stream)).startTerminal()
+
+    #expect(Set(try started(on: stream).keys) == ["argv"])
+  }
+
+  @Test("the id comes from the reply, machine prefix included")
+  func startAnswersWithTheReply() async throws {
+    let stream = acting()
+    stream.replies["terminal.run"] = .result(#"{"address":"box/t3"}"#)
+
+    #expect(try await control(CoreHost(stream)).startTerminal() == "core:box/t3")
+  }
+
+  @Test("a start the core refuses reaches the screen in the core's words")
+  func startRefused() async {
+    let stream = acting()
+    stream.replies["terminal.run"] = .error("spawn_failed")
+    await #expect(throws: AppError.herdrCommandFailed(reason: "spawn_failed")) {
+      try await control(CoreHost(stream)).startTerminal()
+    }
+  }
+
+  @Test("a start with no core says so")
+  func startWithNoCore() async {
+    await #expect(throws: AppError.herdrCommandFailed(reason: "herdr-core is not answering.")) {
+      try await control(CoreHost()).startTerminal()
     }
   }
 
