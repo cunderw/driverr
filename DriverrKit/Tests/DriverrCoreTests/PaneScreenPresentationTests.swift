@@ -51,14 +51,14 @@ struct PaneScreenPresentationTests {
 
   @Test("the caption states the line count and that there is nothing behind the screen")
   func captionNamesTheLineCount() {
-    let caption = PaneScreenCaption(screen: screen(["a", "b", "c"]))
+    let caption = PaneScreenCaption(screen: screen(["a", "b", "c"]), earlierOutputIsKept: false)
 
     #expect(caption.lines == "The last 3 lines of the pane — earlier output is not kept.")
   }
 
   @Test("one line is one line, not '1 lines'")
   func captionIsSingularForOneLine() {
-    let caption = PaneScreenCaption(screen: screen(["only this"]))
+    let caption = PaneScreenCaption(screen: screen(["only this"]), earlierOutputIsKept: false)
 
     #expect(caption.lines == "The last line of the pane — earlier output is not kept.")
   }
@@ -75,7 +75,7 @@ struct PaneScreenPresentationTests {
   /// Agent panes report `total_rows == viewport_rows`, so there is no scrollback to point to.
   @Test("the caption offers no route to output that does not exist")
   func captionOffersNoRouteToWhatIsNotKept() {
-    let caption = PaneScreenCaption(screen: screen(["a", "b"]))
+    let caption = PaneScreenCaption(screen: screen(["a", "b"]), earlierOutputIsKept: false)
 
     #expect(!caption.lines.lowercased().contains("terminal"))
     #expect(!caption.lines.lowercased().contains("for the rest"))
@@ -83,7 +83,7 @@ struct PaneScreenPresentationTests {
 
   @Test("the caption reads as one sentence to a screen reader")
   func captionSpeaksAsOneThing() {
-    let caption = PaneScreenCaption(screen: screen(["a", "b"]))
+    let caption = PaneScreenCaption(screen: screen(["a", "b"]), earlierOutputIsKept: false)
 
     #expect(caption.accessibilityLabel == caption.lines)
   }
@@ -245,7 +245,9 @@ struct PaneScreenPresentationTests {
       PaneScreenCopy.reading,
       PaneScreenCopy.wrapTitle,
       PaneScreenCopy.wrapFooter,
-      PaneScreenCaption(screen: PaneScreen.sanitised("hello", lines: 4)).lines,
+      PaneScreenCaption(
+        screen: PaneScreen.sanitised("hello", lines: 4), earlierOutputIsKept: false
+      ).lines,
     ]
     for word in words {
       #expect(!word.lowercased().contains("sorry"))

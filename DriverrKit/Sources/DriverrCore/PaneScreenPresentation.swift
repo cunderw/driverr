@@ -193,7 +193,8 @@ public struct PaneScreenCaption: Equatable, Sendable {
   /// sentence stops at what is shown.
   public let lines: String
 
-  public init(screen: PaneScreen, earlierOutputIsKept: Bool = false) {
+  /// No default, so a call site cannot forget it and show the false sentence.
+  public init(screen: PaneScreen, earlierOutputIsKept: Bool) {
     let count = screen.lines.count
     let counted = count == 1 ? "The last line" : "The last \(count) lines"
     let shown = "\(counted) of the pane"
