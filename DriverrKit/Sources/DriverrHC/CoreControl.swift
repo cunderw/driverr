@@ -179,7 +179,8 @@ public struct CoreControl: HerdrControl {
       // `terminal.rm`, because a finished terminal has already left the tree.
       _ = try await connection.call("terminal.kill", params: terminal, as: CoreTerminal.self)
     case .split:
-      let source = try await connection.call("terminal.get", params: terminal, as: CoreTerminal.self)
+      let source = try await connection.call(
+        "terminal.get", params: terminal, as: CoreTerminal.self)
       _ = try await connection.call(
         "terminal.run", params: CoreRunParams(shellBeside: source), as: CoreTerminal.self)
     case .rename:
