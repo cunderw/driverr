@@ -679,14 +679,17 @@ func waitForPaneScene(
   return marker
 }
 
-/// The control that takes you out of the pane scene, on either route.
+/// The control that takes you out of the pane scene, on any of its three routes.
 ///
 /// On regular width it is `terminal.back` in the split view's detail column. On compact it is
-/// the system back button of the phone's stack, which carries no identifier.
+/// the system back button of the phone's stack, which carries no identifier. Where the stack's
+/// bar items are drawn in a column at the side, it is that same button in the toolbar, as
+/// `sideToolbarBackButton` says.
 ///
 /// So the phone's button is found by position: the first button of the navigation bar that
 /// holds `pane.actions`. Not `app.navigationBars.firstMatch`, because the host screen's bar
-/// can also be in the tree, and its first button pops to the host list.
+/// can also be in the tree, and its first button pops to the host list. The toolbar is the
+/// fallback, for when no navigation bar holds `pane.actions`.
 ///
 /// A test about which control is drawn, such as `PaneDetailColumnUITests`, asserts the
 /// identifiers by name instead.
@@ -723,7 +726,8 @@ func leavePaneScene(
   let leave = paneSceneLeaveControl(app)
   XCTAssertTrue(
     leave.waitForExistence(timeout: 10),
-    "\(message)\nNo 'terminal.back' and no back button on the pane scene's navigation bar. "
+    "\(message)\nNo 'terminal.back', no back button on the pane scene's navigation bar and no "
+      + "'BackButton' in a side toolbar. "
       + "Tree was:\n" + app.debugDescription,
     file: file,
     line: line

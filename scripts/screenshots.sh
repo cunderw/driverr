@@ -196,7 +196,8 @@ frame_one() {
   note "$kind: $listed store images, all ${want}, no alpha"
 }
 
-# Draws the header from both kinds' staged captures, and its two crops into $CROPS.
+# Draws the header from the phone's and the iPad's staged captures, and its two crops into
+# $CROPS.
 frame_header() {
   note "header: drawing it"
   local out="$STAGE/header"

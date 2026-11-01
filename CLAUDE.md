@@ -140,7 +140,8 @@ a duplicate by UDID, never with `delete unavailable`.
 display, which is compact, so the app is the phone stack. Its bars are a column at the right,
 so `app.navigationBars.buttons` is empty there and the back button is in `app.toolbars`. Only
 the Device Hub window opens the device; `simctl` and XCUITest have no fold control, and a
-reboot closes it again. The inner display is regular width, so the app is the split view.
+reboot closes it again. On the inner display in landscape the host screen drew the split
+view. No tour or UI test has run on the inner display.
 
 **Nothing here names an Xcode or an iOS version, deliberately. Do not add one.** Runs use
 whatever Xcode is active and whatever runtime the named device sits on. `README.md` states
