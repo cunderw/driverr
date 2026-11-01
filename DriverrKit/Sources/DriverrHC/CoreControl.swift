@@ -8,14 +8,11 @@ import Foundation
 /// about 3 s of quiet and refuse a blocked agent. See `typing(into:_:)`.
 ///
 /// **Reading a screen opens nothing.** `terminal.read` is a plain call on the connection, so it
-/// is no viewer and cannot take the size. See `readScreen(of:lines:)`.
+/// is no viewer and cannot take the size. See `readScreen(of:lines:)` and `readPanes(ids:lines:)`.
 ///
 /// **A core has no rename.** `name` is `terminal.run`'s alone, a label means nothing to the core,
 /// and the desktop app keeps a space's or tab's name in its own document, which Driverr never
 /// writes. So `canPerform` and `canRename` hide it, and the rest of an action is plain calls.
-///
-/// `readPanes` reads nothing, because its contract already maps an unreadable pane to an empty
-/// one.
 public struct CoreControl: HerdrControl {
   /// How long one call may take, the opening included.
   public static let defaultCallDeadline: Duration = .seconds(5)
@@ -139,18 +136,47 @@ public struct CoreControl: HerdrControl {
     await connection.closeChannel(viewer.channel)
   }
 
+  /// One `terminal.read` per pane, side by side on the one connection, each bounded by its own
+  /// deadline. There is no batch call. `PaneThumbnailModel` is the only caller, and it asks only
+  /// for the tiles with no emulator, on its tick, while the sheet is up.
+  ///
+  /// **A connection gone by the end throws**, because that is a failure to ask, and tiles
+  /// answered empty would replace the pictures the sheet keeps through one.
   public func readPanes(ids: [String], lines: Int) async throws -> [String: [String]] {
-    Dictionary(uniqueKeysWithValues: ids.map { ($0, []) })
+    // A combined host's TUI batch comes through here with no core panes in it.
+    guard !ids.isEmpty else { return [:] }
+    let (connection, handshake) = await link.established()
+    guard let connection else { throw Self.failure(for: handshake) }
+
+    let panes = await withTaskGroup(of: (String, [String]).self) { group in
+      for id in ids {
+        group.addTask {
+          let screen = try? await Self.screen(ofPane: id, lines: lines, on: connection)
+          return (id, screen?.lines.map(\.text) ?? [])
+        }
+      }
+      return await group.reduce(into: [String: [String]]()) { $0[$1.0] = $1.1 }
+    }
+    guard await connection.isOpen else { throw Self.failure(for: .notCore) }
+    return panes
+  }
+
+  public func readScreen(of pane: Pane, lines: Int) async throws -> PaneScreen {
+    let (connection, handshake) = await link.established()
+    guard let connection else { throw Self.failure(for: handshake) }
+    return try await Self.screen(ofPane: pane.id, lines: lines, on: connection)
   }
 
   /// The screen alone, whatever `lines` asks for: `lines` bounds what is handed on, and asking
   /// the core for history could have it scroll a full-screen app.
-  public func readScreen(of pane: Pane, lines: Int) async throws -> PaneScreen {
-    let (connection, handshake) = await link.established()
-    guard let connection else { throw Self.failure(for: handshake) }
+  private static func screen(
+    ofPane paneID: String,
+    lines: Int,
+    on connection: CoreConnection
+  ) async throws -> PaneScreen {
     let read = try await connection.call(
       "terminal.read",
-      params: CoreReadParams(terminal: CorePaneID.address(of: pane.id)),
+      params: CoreReadParams(terminal: CorePaneID.address(of: paneID)),
       as: CoreReadResult.self
     )
     return PaneScreen.sanitised(read.text, lines: lines)
@@ -174,11 +200,13 @@ public struct CoreControl: HerdrControl {
 
     switch action {
     case .close:
-      // Hangup, then terminate, then kill, inside a call's deadline: the worst measured on core
-      // 0.1.15 was 2.1 s, for a program that ignores all of it with a child holding the PTY. No
+      // Hangup, then terminate, then kill. Even a program that ignores all of it normally ends
+      // inside a call's deadline, and a call that expires reaches the failure prompt. No
       // `terminal.rm`, because a finished terminal has already left the tree.
       _ = try await connection.call("terminal.kill", params: terminal, as: CoreTerminal.self)
     case .split:
+      // The direction means nothing here: a core has no layout, so the new terminal is its own,
+      // and the desktop app decides where one with a space goes.
       let source = try await connection.call(
         "terminal.get", params: terminal, as: CoreTerminal.self)
       _ = try await connection.call(

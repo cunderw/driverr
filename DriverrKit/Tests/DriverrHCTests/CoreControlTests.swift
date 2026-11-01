@@ -16,6 +16,8 @@ private final class CoreHost: @unchecked Sendable {
   }
 
   var opened: [String] { lock.withLock { commands } }
+  /// The streams not yet handed out.
+  var waiting: [FakeCoreStream] { lock.withLock { streams } }
 
   func open(_ command: String) async throws -> any HerdrStream {
     try lock.withLock {
@@ -659,10 +661,81 @@ struct CoreControlTests {
     }
   }
 
-  @Test("a read maps every pane to empty, as a pane that could not be read")
-  func readPanes() async throws {
-    let panes = try await control(CoreHost()).readPanes(ids: ["core:t1", "core:t2"], lines: 5)
-    #expect(panes == ["core:t1": [], "core:t2": []])
+  // MARK: - The sheet's tiles
+
+  private func tiles(_ screens: [String: FakeCoreStream.Reply]) -> FakeCoreStream {
+    let stream = FakeCoreStream()
+    stream.screens = screens
+    return stream
+  }
+
+  @Test("each tile is one terminal.read of the screen alone, on the one connection")
+  func readPanesParams() async throws {
+    let host = CoreHost(
+      tiles([
+        "t1": .result(FakeCoreStream.screenRead("a")),
+        "box/t2": .result(FakeCoreStream.screenRead("b")),
+      ]))
+    let stream = try #require(host.waiting.first)
+    let panes = try await control(host).readPanes(ids: ["core:t1", "core:box/t2"], lines: 6)
+
+    #expect(panes == ["core:t1": ["a"], "core:box/t2": ["b"]])
+    let params = try stream.params(of: "terminal.read")
+    #expect(params.count == 2)
+    #expect(params.allSatisfy { Set($0.keys) == ["terminal", "lines"] && $0["lines"] as? Int == 0 })
+    #expect(Set(params.compactMap { $0["terminal"] as? String }) == ["t1", "box/t2"])
+    #expect(host.opened.count == 1)
+    #expect(stream.calls(of: "terminal.attach") == 0, "a tile is no viewer")
+  }
+
+  @Test("a tile is the screen's last rows, sanitised like any screen")
+  func readPanesRows() async throws {
+    let stream = tiles(["t1": .result(FakeCoreStream.screenRead(#"one\ntwo\n\u001b[2Jthree"#))])
+    let panes = try await control(CoreHost(stream)).readPanes(ids: ["core:t1"], lines: 2)
+    #expect(panes == ["core:t1": ["two", "three"]])
+  }
+
+  @Test("one pane that cannot be read is empty, and the others still come back")
+  func readPanesMix() async throws {
+    let stream = tiles([
+      "t1": .result(FakeCoreStream.screenRead("a")),
+      "t3": .silent,
+    ])
+    let control = control(CoreHost(stream), deadline: .milliseconds(100))
+
+    let panes = try await control.readPanes(ids: ["core:t1", "core:gone", "core:t3"], lines: 6)
+
+    #expect(panes == ["core:t1": ["a"], "core:gone": [], "core:t3": []])
+  }
+
+  @Test("no tiles ask for nothing, so a TUI's batch on a combined host opens no connection")
+  func readPanesEmpty() async throws {
+    let host = CoreHost()
+    #expect(try await control(host).readPanes(ids: [], lines: 6) == [:])
+    #expect(host.opened.isEmpty)
+  }
+
+  @Test("no core is a failure to ask, which keeps the pictures, and not every pane empty")
+  func readPanesWithNoCore() async {
+    let control = control(CoreHost())
+    await #expect(throws: AppError.herdrCommandFailed(reason: "herdr-core is not answering.")) {
+      _ = try await control.readPanes(ids: ["core:t1"], lines: 6)
+    }
+  }
+
+  @Test("a link that goes during a read is a failure to ask, not panes with nothing on them")
+  func readPanesLinkGoes() async throws {
+    let stream = tiles(["t1": .silent])
+    let control = control(CoreHost(stream))
+    _ = try await control.snapshot()
+
+    let read = Task { try await control.readPanes(ids: ["core:t1"], lines: 6) }
+    try await waitUntil("the read is on the wire") { stream.calls(of: "terminal.read") == 1 }
+    stream.finish()
+
+    await #expect(throws: AppError.herdrCommandFailed(reason: "herdr-core is not answering.")) {
+      _ = try await read.value
+    }
   }
 
   @Test("a socket path changes nothing: a core is not a herdr session")

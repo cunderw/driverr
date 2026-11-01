@@ -590,8 +590,9 @@ final class TerminalSceneModel {
         try await herdr.perform(.split(.right), on: paneID)
       } catch {
         // No split, no pane to adopt. A bank left set would jump to the next pane the user
-        // opens at their desk.
+        // opens at their desk. The sheet is already down, so the pane's prompt bar says why.
         pendingSplit = nil
+        actions?.report(error)
         return
       }
       await model.session?.refresh()

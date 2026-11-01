@@ -152,8 +152,6 @@ public struct CombinedControl: HerdrControl {
 
   /// | TUI | core | answer |
   /// |---|---|---|
-  /// | TUI | core | answer |
-  /// |---|---|---|
   /// | ready | ready | `.combined` |
   /// | ready | refused | `.readyWithCoreRefused`, because a core is there and is not shown |
   /// | ready | anything else | the TUI's |
