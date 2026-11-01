@@ -1,9 +1,9 @@
 import DriverrCore
-import DriverrHC
 import DriverrHerdr
 import Foundation
 import Testing
 
+@testable import DriverrHC
 @testable import DriverrSSH
 
 /// Close and New terminal against two real scratch cores, one added to the other, over real SSH
@@ -53,6 +53,15 @@ struct CoreActionsOverSSHTests {
     let labels: [String: String]
     let state: String
     let reason: String?
+  }
+
+  /// What `hc ls` prints.
+  private struct Listing: Decodable {
+    struct Terminal: Decodable {
+      let address: String
+    }
+
+    let terminals: [Terminal]
   }
 
   /// The environment `hc` gets, which is this and nothing else.
@@ -106,10 +115,16 @@ struct CoreActionsOverSSHTests {
     return script
   }
 
+  /// **A kept terminal outlives `server stop`**, as a shell at the next start, so a run that
+  /// stops the core with one alive hands it to the next run. Killing is final.
   private func cleanUp() async throws {
     try await hc(Self.adding, "machine", "rm", "bee")
-    try await hc(Self.added, "server", "stop")
-    try await hc(Self.adding, "server", "stop")
+    for session in [Self.added, Self.adding] {
+      let (_, output) = try await hc(session, "ls", "--json")
+      let list = try? JSONDecoder().decode(Listing.self, from: output)
+      for terminal in list?.terminals ?? [] { try await hc(session, "kill", terminal.address) }
+      try await hc(session, "server", "stop")
+    }
   }
 
   private func control(
@@ -136,6 +151,13 @@ struct CoreActionsOverSSHTests {
       try await Task.sleep(for: .milliseconds(50))
     }
     throw AppError.herdrCommandFailed(reason: "no such pane arrived")
+  }
+
+  @Test("the real program's --version is what the check on a stranger accepts")
+  func version() async throws {
+    let (status, output) = try await hc(Self.adding, "--version")
+    #expect(status == 0)
+    #expect(CoreControl.isCoreVersion(String(decoding: output, as: UTF8.self)))
   }
 
   @Test("close ends what ignores it, inside a call's deadline; New terminal starts a shell")
@@ -240,6 +262,10 @@ struct CoreActionsOverSSHTests {
     let tree = try await control.snapshot()
     let space = try #require(tree.workspaces.first { $0.id == "core:s1" })
     #expect(space.tabs.first?.panes.count == 2)
+
+    // Kept, and still final.
+    try await control.perform(.close, on: "core:\(new.address)")
+    #expect(try await record(Self.adding, new.address).state == "finished")
   }
 
   private func startOnAMachine(via: URL, on control: CoreControl) async throws {

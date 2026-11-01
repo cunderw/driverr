@@ -437,7 +437,8 @@ struct SessionTreeView: View {
     }
     .contextMenu {
       if model.canRename(.tab(id: tab.id)) {
-        renameButton(.tab(id: tab.id), currentLabel: tab.label, identifier: "session.tab.renameMenu")
+        renameButton(
+          .tab(id: tab.id), currentLabel: tab.label, identifier: "session.tab.renameMenu")
       }
     }
   }
