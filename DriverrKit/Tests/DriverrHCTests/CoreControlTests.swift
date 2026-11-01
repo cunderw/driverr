@@ -38,7 +38,7 @@ struct CoreControlTests {
 
   private func listing(_ terminals: String) -> FakeCoreStream {
     let stream = FakeCoreStream()
-    stream.replies["terminal.list"] = .result(#"{"terminals":[\#(terminals)]}"#)
+    stream.replies["events.subscribe"] = .result(FakeCoreStream.subscribed([terminals]))
     return stream
   }
 
@@ -59,14 +59,33 @@ struct CoreControlTests {
 
   private let terminal = #"{"address":"t1","cwd":"/srv","title":"a"}"#
 
-  @Test("a snapshot opens the connection by quoted path and lists terminals")
+  @Test("a snapshot opens the connection by quoted path and subscribes")
   func snapshot() async throws {
     let stream = listing(terminal)
     let host = CoreHost(stream)
     let tree = try await control(host).snapshot()
     #expect(tree.allPanes.map(\.id) == ["core:t1"])
     #expect(host.opened == ["'/home/my user/.local/bin/herdr-core' connect"])
-    #expect(Set(stream.methods) == ["terminal.list", "doc.get"])
+    #expect(Set(stream.methods) == ["events.subscribe", "doc.get"])
+  }
+
+  /// Waits for the `count`th read of the document to have been asked for. Reads go one at a
+  /// time, so every read before it has landed.
+  private func documentRead(_ count: Int, by stream: FakeCoreStream) async throws {
+    try await waitUntil("doc.get \(count)") { stream.calls(of: "doc.get") >= count }
+  }
+
+  /// Puts `reply` in place and sees it land, by reading once after it.
+  private func changeDocument(to reply: FakeCoreStream.Reply, on stream: FakeCoreStream)
+    async throws
+  {
+    let reads = stream.calls(of: "doc.get")
+    stream.replies["doc.get"] = reply
+    stream.event("doc", #"{"name":"herdr-app","version":8}"#)
+    try await documentRead(reads + 1, by: stream)
+    stream.replies["doc.get"] = .silent
+    stream.event("doc", #"{"name":"herdr-app","version":9}"#)
+    try await documentRead(reads + 2, by: stream)
   }
 
   @Test("the app's document orders and names the snapshot")
@@ -83,10 +102,9 @@ struct CoreControlTests {
     stream.replies["doc.get"] = .result(Self.document)
     let control = control(CoreHost(stream))
     _ = try await control.snapshot()
-    stream.replies["doc.get"] = .error("unavailable")
-    _ = try await control.snapshot()
-    #expect(Set(stream.methods) == ["terminal.list", "doc.get"])
-    #expect(stream.methods.filter { $0 == "doc.get" }.count == 2)
+    stream.event("doc", #"{"name":"herdr-app","version":8}"#)
+    try await documentRead(2, by: stream)
+    #expect(Set(stream.methods) == ["events.subscribe", "doc.get"])
   }
 
   @Test("no document leaves the terminals as listed")
@@ -95,7 +113,7 @@ struct CoreControlTests {
     #expect(tree.workspaces.map(\.id) == ["core:a", "core:b"])
   }
 
-  /// The app's format is private, and one poll's failure must not move rows under a thumb.
+  /// The app's format is private, and one failed read must not move rows under a thumb.
   @Test(
     "a read that fails keeps the last good order",
     arguments: [
@@ -109,7 +127,7 @@ struct CoreControlTests {
     let control = control(CoreHost(stream))
     #expect(try await control.snapshot().workspaces.map(\.id) == ["core:b", "core:a"])
 
-    stream.replies["doc.get"] = reply
+    try await changeDocument(to: reply, on: stream)
     #expect(try await control.snapshot().workspaces.map(\.id) == ["core:b", "core:a"])
   }
 
@@ -141,17 +159,19 @@ struct CoreControlTests {
     let control = control(CoreHost(stream))
     _ = try await control.snapshot()
 
-    stream.replies["doc.get"] = .result(FakeCoreStream.noDocument)
+    try await changeDocument(to: .result(FakeCoreStream.noDocument), on: stream)
     #expect(try await control.snapshot().workspaces.map(\.id) == ["core:a", "core:b"])
   }
 
-  @Test("snapshots share one connection")
+  @Test("snapshots share one connection and one subscription")
   func oneConnection() async throws {
-    let host = CoreHost(listing(terminal))
+    let stream = listing(terminal)
+    let host = CoreHost(stream)
     let control = control(host)
     _ = try await control.snapshot()
     _ = try await control.snapshot()
     #expect(host.opened.count == 1)
+    #expect(stream.calls(of: "events.subscribe") == 1)
   }
 
   @Test("concurrent first calls share one opening")
@@ -162,6 +182,33 @@ struct CoreControlTests {
     async let second = control.snapshot()
     _ = try await (first, second)
     #expect(host.opened.count == 1)
+  }
+
+  @Test("concurrent first calls share one subscribing")
+  func oneSubscribing() async throws {
+    let stream = listing(terminal)
+    let control = control(CoreHost(stream))
+    async let first = control.snapshot()
+    async let second = control.snapshot()
+    let (one, other) = try await (first, second)
+    #expect(one.allPanes.map(\.id) == other.allPanes.map(\.id))
+    #expect(stream.calls(of: "events.subscribe") == 1)
+  }
+
+  @Test("an exec that never returns costs the deadline, and is closed if it turns up")
+  func openHangs() async throws {
+    let late = FakeCoreStream()
+    let control = CoreControl(
+      binaryPath: "hc",
+      callDeadline: .milliseconds(50),
+      open: { _ in
+        try await Task.sleep(for: .milliseconds(150))
+        return late
+      }
+    )
+    #expect(await control.availability() == .notInstalled)
+    #expect(late.closes == 0)
+    try await waitUntil("the late stream closed") { late.closes == 1 }
   }
 
   @Test("after the stream dies, the next snapshot reopens")

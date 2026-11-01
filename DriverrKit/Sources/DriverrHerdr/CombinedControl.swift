@@ -31,8 +31,26 @@ public enum CorePaneID {
 ///
 /// Holds two `any HerdrControl`, because this module cannot see `CoreControl`.
 public struct CombinedControl: HerdrControl {
+  /// What the last poll made of the TUI, which a change on the core has no reason to ask again.
+  private enum TUISide: Sendable {
+    case tree(SessionTree)
+    /// No session is running, so the core's tree stands alone. The error is for when it can't.
+    case noSession(any Error)
+    case failed(any Error)
+  }
+
+  /// A struct cannot remember, and this control is copied into every model that reads it.
+  private actor Memory {
+    var tui: TUISide?
+
+    func remember(_ tui: TUISide) {
+      self.tui = tui
+    }
+  }
+
   private let tui: any HerdrControl
   private let core: any HerdrControl
+  private let memory = Memory()
 
   public init(tui: any HerdrControl, core: any HerdrControl) {
     self.tui = tui
@@ -59,6 +77,23 @@ public struct CombinedControl: HerdrControl {
     CombinedControl(tui: tui.bound(toSocketPath: path), core: core)
   }
 
+  public var changes: AsyncStream<Void>? { core.changes }
+
+  public var needsPolling: Bool { tui.needsPolling || core.needsPolling }
+
+  /// The core's news on the TUI's last tree, with no command on the host. The TUI's own poll
+  /// goes on regardless, so that tree is at most a tick old.
+  ///
+  /// **A core that failed goes back to a whole poll.** It usually means the link went, and the
+  /// TUI's last tree came over that link. Answered with it, the core's panes look gone, and
+  /// `ConnectionModel.apply` forgets each one's chat, screen and draft.
+  public func changedSnapshot() async throws -> SessionTree {
+    guard let tuiSide = await memory.tui else { return try await snapshot() }
+    let coreRead = await Result { try await core.changedSnapshot() }
+    guard case .success = coreRead else { return try await snapshot() }
+    return try merged(tuiSide, coreRead)
+  }
+
   /// The TUI's panes, then the core's.
   ///
   /// The core failing returns the TUI's tree, and both failing throws the TUI's error, which
@@ -71,19 +106,36 @@ public struct CombinedControl: HerdrControl {
   public func snapshot() async throws -> SessionTree {
     async let tuiTree = Result { try await tui.snapshot() }
     async let coreTree = Result { try await core.snapshot() }
+    let (tuiRead, coreRead) = await (tuiTree, coreTree)
 
-    switch await (tuiTree, coreTree) {
-    case (.success(let tui), .success(let core)):
+    let tuiSide: TUISide
+    switch (tuiRead, coreRead) {
+    case (.success(let tree), _):
+      tuiSide = .tree(tree)
+    case (.failure(let failure), .success):
+      tuiSide = await tuiHasNoSession() ? .noSession(failure) : .failed(failure)
+    case (.failure(let failure), .failure):
+      tuiSide = .failed(failure)
+    }
+    await memory.remember(tuiSide)
+    return try merged(tuiSide, coreRead)
+  }
+
+  private func merged(
+    _ tuiSide: TUISide,
+    _ coreRead: Result<SessionTree, any Error>
+  ) throws -> SessionTree {
+    switch (tuiSide, coreRead) {
+    case (.tree(let tui), .success(let core)):
       return SessionTree(
         workspaces: tui.workspaces + core.workspaces,
         focusedPaneID: tui.focusedPaneID
       )
-    case (.success(let tree), .failure):
+    case (.tree(let tree), .failure):
       return tree
-    case (.failure(let failure), .success(let tree)):
-      guard await tuiHasNoSession() else { throw failure }
+    case (.noSession, .success(let tree)):
       return tree
-    case (.failure(let failure), .failure):
+    case (.noSession(let failure), .failure), (.failed(let failure), _):
       throw failure
     }
   }

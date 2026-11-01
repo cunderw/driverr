@@ -60,6 +60,80 @@ private actor Side: HerdrControl {
   }
 }
 
+/// A TUI whose calls can be counted and whose answer can change.
+private actor CountingTUI: HerdrControl {
+  nonisolated let binaryPath = "herdr"
+  private var read: Result<SessionTree, AppError>
+  private let answer: HerdrAvailability
+  private(set) var snapshots = 0
+  private(set) var availabilityChecks = 0
+
+  init(read: Result<SessionTree, AppError>, answer: HerdrAvailability = .notInstalled) {
+    self.read = read
+    self.answer = answer
+  }
+
+  func moved(to read: Result<SessionTree, AppError>) {
+    self.read = read
+  }
+
+  func snapshot() async throws -> SessionTree {
+    snapshots += 1
+    return try read.get()
+  }
+
+  func availability() async -> HerdrAvailability {
+    availabilityChecks += 1
+    return answer
+  }
+
+  nonisolated func attachCommand(for pane: Pane) -> String { "" }
+  func sendText(paneID: String, text: String) async throws {}
+  func submitText(paneID: String, text: String) async throws {}
+  func sendKeys(paneID: String, keys: [PaneKey]) async throws {}
+  func readPanes(ids: [String], lines: Int) async throws -> [String: [String]] { [:] }
+  func readScreen(of pane: Pane, lines: Int) async throws -> PaneScreen {
+    PaneScreen.sanitised("", lines: lines)
+  }
+  func perform(_ action: PaneAction, on paneID: String) async throws {}
+  func rename(_ target: RenameTarget, to label: String) async throws {}
+}
+
+/// A core kept by events: nothing to poll, and whatever it was last told.
+private actor PushingCore: HerdrControl {
+  nonisolated let binaryPath = "hc"
+  nonisolated let needsPolling = false
+  nonisolated let changes: AsyncStream<Void>?
+  private var read: Result<SessionTree, AppError>
+  private(set) var snapshots = 0
+
+  init(read: Result<SessionTree, AppError>) {
+    self.read = read
+    changes = AsyncStream { $0.yield() }
+  }
+
+  func moved(to read: Result<SessionTree, AppError>) {
+    self.read = read
+  }
+
+  func snapshot() async throws -> SessionTree {
+    snapshots += 1
+    return try read.get()
+  }
+
+  func availability() async -> HerdrAvailability { .notInstalled }
+  nonisolated func attachCommand(for pane: Pane) -> String { "" }
+  func sendText(paneID: String, text: String) async throws {}
+  func submitText(paneID: String, text: String) async throws {}
+  func sendKeys(paneID: String, keys: [PaneKey]) async throws {}
+  func readPanes(ids: [String], lines: Int) async throws -> [String: [String]] { [:] }
+  func readScreen(of pane: Pane, lines: Int) async throws -> PaneScreen {
+    PaneScreen.sanitised("", lines: lines)
+  }
+  func perform(_ action: PaneAction, on paneID: String) async throws {}
+  func rename(_ target: RenameTarget, to label: String) async throws {}
+}
+
 /// Never opens anything. `attacherRouting` only asks whose it is.
 private struct Attacher: PaneAttacher {
   func open(terminalID: String, size: TerminalSize) async throws -> any PaneBridge {
@@ -186,6 +260,107 @@ struct CombinedControlTests {
       core: Side(binaryPath: "hc", snapshotFailure: coreFailure)
     )
     await #expect(throws: tuiFailure) { try await combined.snapshot() }
+  }
+
+  // MARK: - A pushed change
+
+  @Test("a change on the core merges the TUI's last tree, and runs nothing on the TUI")
+  func changeRunsNothing() async throws {
+    let tui = CountingTUI(read: .success(tuiTree))
+    let core = PushingCore(read: .success(coreTree))
+    let combined = CombinedControl(tui: tui, core: core)
+    _ = try await combined.snapshot()
+
+    await core.moved(to: .success(tree("core:workspace", panes: ["core:t1", "core:t2"])))
+    let tree = try await combined.changedSnapshot()
+
+    #expect(tree.allPanes.map(\.id) == ["w1:p1", "core:t1", "core:t2"])
+    #expect(tree.focusedPaneID == "w1:p1")
+    #expect(await tui.snapshots == 1)
+    #expect(await tui.availabilityChecks == 0)
+  }
+
+  @Test("a change before any poll has no TUI tree to reuse, so it reads one")
+  func changeBeforePoll() async throws {
+    let tui = CountingTUI(read: .success(tuiTree))
+    let combined = CombinedControl(tui: tui, core: PushingCore(read: .success(coreTree)))
+    let tree = try await combined.changedSnapshot()
+    #expect(tree.allPanes.map(\.id) == ["w1:p1", "core:t1"])
+    #expect(await tui.snapshots == 1)
+  }
+
+  /// `snapshot()`'s comment says why: a failure passed over as a tree forgets the TUI's panes.
+  @Test("a TUI that failed its poll stays failed through a change, with no command to ask")
+  func changeKeepsFailure() async throws {
+    let tui = CountingTUI(
+      read: .failure(tuiFailure), answer: .ready(version: "1", protocolVersion: 22))
+    let combined = CombinedControl(tui: tui, core: PushingCore(read: .success(coreTree)))
+    await #expect(throws: tuiFailure) { try await combined.snapshot() }
+
+    await #expect(throws: tuiFailure) { try await combined.changedSnapshot() }
+    #expect(await tui.snapshots == 1)
+    #expect(await tui.availabilityChecks == 1)
+  }
+
+  @Test("a TUI with no session stays out of a change, with no command to ask")
+  func changeWithNoSession() async throws {
+    let tui = CountingTUI(read: .failure(tuiFailure), answer: .serverNotRunning(version: "1"))
+    let core = PushingCore(read: .success(coreTree))
+    let combined = CombinedControl(tui: tui, core: core)
+    #expect(try await combined.snapshot().allPanes.map(\.id) == ["core:t1"])
+
+    await core.moved(to: .success(tree("core:workspace", panes: ["core:t2"])))
+    #expect(try await combined.changedSnapshot().allPanes.map(\.id) == ["core:t2"])
+    #expect(await tui.availabilityChecks == 1)
+
+    await core.moved(to: .failure(coreFailure))
+    await #expect(throws: tuiFailure) { try await combined.changedSnapshot() }
+  }
+
+  /// As a poll would answer: the TUI's tree only if the TUI still gives one.
+  @Test("a core that fails through a change asks the TUI, and a TUI that answers still stands")
+  func changeWithCoreFailing() async throws {
+    let tui = CountingTUI(read: .success(tuiTree))
+    let core = PushingCore(read: .success(coreTree))
+    let combined = CombinedControl(tui: tui, core: core)
+    _ = try await combined.snapshot()
+
+    await core.moved(to: .failure(coreFailure))
+    #expect(try await combined.changedSnapshot().allPanes.map(\.id) == ["w1:p1"])
+    #expect(await tui.snapshots == 2)
+  }
+
+  /// The feed signals as soon as a connection ends, and the TUI's last tree is from a link that
+  /// is just as dead. Passed over as a tree, that forgets every core pane's chat and draft.
+  @Test("a link that has gone fails a change, and does not answer with the TUI's last tree")
+  func changeWithTheLinkGone() async throws {
+    let tui = CountingTUI(read: .success(tuiTree))
+    let core = PushingCore(read: .success(coreTree))
+    let combined = CombinedControl(tui: tui, core: core)
+    _ = try await combined.snapshot()
+
+    await tui.moved(to: .failure(tuiFailure))
+    await core.moved(to: .failure(coreFailure))
+    await #expect(throws: tuiFailure) { try await combined.changedSnapshot() }
+  }
+
+  @Test("a combined host still polls, for the TUI, and hears the core's changes")
+  func pollsAndListens() async throws {
+    let tui = CountingTUI(read: .success(tuiTree))
+    let combined = CombinedControl(tui: tui, core: PushingCore(read: .success(coreTree)))
+    #expect(combined.needsPolling)
+    var changes = try #require(combined.changes).makeAsyncIterator()
+    #expect(await changes.next() != nil)
+
+    #expect(control().changes == nil)
+  }
+
+  @Test("a control that says nothing polls, and a change is a snapshot")
+  func defaults() async throws {
+    let side = Side(binaryPath: "herdr", tree: tuiTree)
+    #expect(side.needsPolling)
+    #expect(side.changes == nil)
+    #expect(try await side.changedSnapshot().allPanes.map(\.id) == ["w1:p1"])
   }
 
   // MARK: - Availability

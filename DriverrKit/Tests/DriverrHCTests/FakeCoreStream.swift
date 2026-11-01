@@ -37,7 +37,7 @@ final class FakeCoreStream: HerdrStream, @unchecked Sendable {
   /// When true, a call's answer waits for `flushHeld()`, so two answers can land in one chunk.
   var holdsReplies = false
   var replies: [String: Reply] = [
-    "terminal.list": .result(#"{"terminals":[]}"#),
+    "events.subscribe": .result(FakeCoreStream.subscribed()),
     "doc.get": .result(FakeCoreStream.noDocument),
   ]
 
@@ -58,6 +58,7 @@ final class FakeCoreStream: HerdrStream, @unchecked Sendable {
   private var received: [CoreFrame] = []
   private var requests: [Data] = []
   private var burst: Burst?
+  private var lastSeq = 0
 
   /// One stream's output, held to its credit the way the core's outbox holds it.
   private struct Burst {
@@ -189,6 +190,41 @@ final class FakeCoreStream: HerdrStream, @unchecked Sendable {
     write(CoreFrame(channel: channel, kind: .data, payload: Data(json.utf8)).encoded)
   }
 
+  /// One line on a subscription, as one DATA frame.
+  func emit(_ line: String, onChannel channel: UInt32 = FakeCoreStream.eventChannel) {
+    writeMessage(line + "\n", onChannel: channel)
+  }
+
+  /// One event, numbered after the last. `seq` puts it elsewhere.
+  func event(
+    _ type: String,
+    on terminal: String? = nil,
+    _ data: String = "{}",
+    machine: String? = nil,
+    seq: Int? = nil
+  ) {
+    let seq = lock.withLock {
+      lastSeq = seq ?? lastSeq + 1
+      return lastSeq
+    }
+    let address = terminal.map { #""terminal":"\#($0)","# } ?? ""
+    let machine = machine.map { #""machine":"\#($0)","# } ?? ""
+    emit(
+      #"{"jsonrpc":"2.0","method":"event","params":{\#(address)\#(machine)"#
+        + #""data":\#(data),"seq":\#(seq),"type":"\#(type)"}}"#)
+  }
+
+  /// How many bytes of credit have come back on `channel`.
+  func creditReturned(onChannel channel: UInt32 = FakeCoreStream.eventChannel) -> Int {
+    streamFrames.filter { $0.channel == channel && $0.kind == .credit }
+      .reduce(0) { $0 + $1.payload.reversed().reduce(0) { $0 << 8 | Int($1) } }
+  }
+
+  /// How many times `method` was called.
+  func calls(of method: String) -> Int {
+    methods.filter { $0 == method }.count
+  }
+
   /// The program exits.
   func finish() { continuation.finish() }
 
@@ -252,13 +288,22 @@ final class FakeCoreStream: HerdrStream, @unchecked Sendable {
       + #""paste_gap_ms":\#(gap)}}"#
   }
 
+  /// Where `subscribed` says events arrive.
+  static let eventChannel: UInt32 = 9
+
+  /// What `events.subscribe` answers.
+  static func subscribed(_ terminals: [String] = [], seq: Int = 0) -> String {
+    let list = terminals.joined(separator: ",")
+    return #"{"channel":\#(eventChannel),"seq":\#(seq),"terminals":[\#(list)]}"#
+  }
+
   /// What `doc.get` answers for a document nobody has written.
   static let noDocument = #"{"value":null,"version":0}"#
 
   /// `hello`'s reply as a real core 0.1.14 wrote it, `id` first, and with its options.
   static func helloReply(
     generation: Int = 1,
-    methods: [String] = ["hello", "terminal.list", "terminal.get"],
+    methods: [String] = ["hello", "events.subscribe", "terminal.list", "terminal.get"],
     framed: Bool = true,
     version: String = "0.1.14"
   ) -> String {
@@ -292,6 +337,21 @@ func waitUntil(
     guard clock.now < deadline else { throw WaitTimedOut(what: what) }
     try await Task.sleep(for: .milliseconds(1))
   }
+}
+
+/// Reads `control` until its tree is the one wanted, and fails if it never is.
+@discardableResult
+func tree(
+  of control: CoreControl,
+  where wanted: (SessionTree) -> Bool
+) async throws -> SessionTree {
+  var latest = SessionTree.empty
+  try await waitUntil("the tree") {
+    guard let tree = try? await control.snapshot() else { return false }
+    latest = tree
+    return wanted(tree)
+  }
+  return latest
 }
 
 /// `#require`, for a place the macro cannot reach: this runs off the test's own task.

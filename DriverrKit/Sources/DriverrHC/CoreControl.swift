@@ -12,6 +12,8 @@ import Foundation
 public struct CoreControl: HerdrControl {
   /// How long one call may take, the opening included.
   public static let defaultCallDeadline: Duration = .seconds(5)
+  /// How often a subscription's silence is checked. See `CoreEventFeed.silentTicksAllowed`.
+  public static let defaultHeartbeatTick: Duration = .seconds(5)
 
   /// Scrollback to paint at the head of a typing attach: what SwiftTerm keeps by default.
   static let attachHistoryLines = 500
@@ -27,40 +29,34 @@ public struct CoreControl: HerdrControl {
   /// session files, and a Claude terminal then falls to the reader's directory match.
   public let home: String?
   let link: CoreLink
-  private let sessionFiles: CoreSessionFiles
+  private let feed: CoreEventFeed
 
   public init(
     binaryPath: String = "hc",
     home: String? = nil,
     callDeadline: Duration = CoreControl.defaultCallDeadline,
+    heartbeatTick: Duration = CoreControl.defaultHeartbeatTick,
     open: @escaping StreamRunner
   ) {
     self.binaryPath = binaryPath
     self.home = home
-    sessionFiles = CoreSessionFiles(home: home)
     link = CoreLink(
       command: "\(shellQuoted(binaryPath)) connect",
       callDeadline: callDeadline,
       open: open
     )
+    feed = CoreEventFeed(
+      link: link, sessionFiles: CoreSessionFiles(home: home), heartbeatTick: heartbeatTick)
   }
 
+  /// What the events have said, subscribing first if nothing is subscribed. See `CoreEventFeed`.
   public func snapshot() async throws -> SessionTree {
-    let (connection, handshake) = await link.established()
-    guard let connection else { throw Self.failure(for: handshake) }
-    // Beside the list, on every poll, until #19's `doc` event says when it changed. Only this
-    // core's: a machine it added has its own document, and `on` would be a call per machine.
-    async let document = try? connection.call(
-      "doc.get",
-      params: CoreDocGetParams(name: CoreAppDocument.name),
-      as: CoreDocGetResult<CoreAppDocument>.self
-    )
-    let list = try await connection.call(
-      "terminal.list", params: CoreNoParams(), as: CoreListResult.self)
-    let sessions = await sessionFiles.identifiers(for: list.terminals, over: connection)
-    return CoreSnapshotMapper.tree(
-      from: list, document: await link.settled(document), sessions: sessions)
+    try await feed.tree()
   }
+
+  public var changes: AsyncStream<Void>? { feed.changes() }
+
+  public var needsPolling: Bool { false }
 
   /// Asks by connecting. `hc connect` starts a core if none is running, and nothing else
   /// answers without doing the same, so there is no `.serverNotRunning` here.
@@ -167,7 +163,7 @@ public struct CoreControl: HerdrControl {
     }
   }
 
-  private static func failure(for handshake: CoreHandshake) -> AppError {
+  static func failure(for handshake: CoreHandshake) -> AppError {
     .herdrCommandFailed(
       reason: handshake == .notCore
         ? "herdr-core is not answering."
@@ -244,7 +240,6 @@ actor CoreLink {
 
   private var current: Established?
   private var opening: Task<Established, Never>?
-  private var document: CoreAppDocument?
 
   init(command: String, callDeadline: Duration, open: @escaping StreamRunner) {
     self.command = command
@@ -267,7 +262,8 @@ actor CoreLink {
     }
 
     let task = Task { [command, callDeadline, open] () -> Established in
-      guard let stream = try? await open(command) else { return (nil, .notCore) }
+      let opened = await CoreStreamRace.open(command, within: callDeadline, by: open)
+      guard let stream = opened else { return (nil, .notCore) }
       let connection = CoreConnection(stream: stream, callDeadline: callDeadline)
       let handshake = await connection.handshake()
       guard case .ready = handshake else { return (nil, handshake) }
@@ -280,17 +276,55 @@ actor CoreLink {
     return established
   }
 
-  /// The document to order this poll by, given what the read came back with.
-  ///
-  /// `nil` is a failed read, which keeps the last good one, so one bad poll cannot reorder
-  /// the rows under a thumb. A read that found no document clears it.
-  func settled(_ read: CoreDocGetResult<CoreAppDocument>?) -> CoreAppDocument? {
-    if let read { document = read.value }
-    return document
-  }
-
   func close() async {
     await current?.connection?.close()
     current = nil
+  }
+}
+
+/// Stops waiting for an `hc connect` that does not come.
+///
+/// Nothing polls a core, so a read waiting here would be the last anyone made. Not a task
+/// group, because a group waits for every child, including the one that hung. A stream that
+/// turns up after the deadline is closed, because nobody holds it.
+private final class CoreStreamRace: @unchecked Sendable {
+  private let lock = NSLock()
+  private var waiting: CheckedContinuation<(any HerdrStream)?, Never>?
+  private var deadline: Task<Void, Never>?
+
+  private init(_ continuation: CheckedContinuation<(any HerdrStream)?, Never>) {
+    waiting = continuation
+  }
+
+  static func open(
+    _ command: String,
+    within limit: Duration,
+    by open: @escaping StreamRunner
+  ) async -> (any HerdrStream)? {
+    await withCheckedContinuation { continuation in
+      let race = CoreStreamRace(continuation)
+      let deadline = Task {
+        try? await Task.sleep(for: limit)
+        guard !Task.isCancelled else { return }
+        race.settle(nil)
+      }
+      race.lock.withLock { race.deadline = deadline }
+      Task {
+        let stream = try? await open(command)
+        if !race.settle(stream) { await stream?.close() }
+      }
+    }
+  }
+
+  /// Whether this was the answer.
+  @discardableResult
+  private func settle(_ stream: (any HerdrStream)?) -> Bool {
+    let settled = lock.withLock {
+      defer { waiting = nil }
+      deadline?.cancel()
+      return waiting
+    }
+    settled?.resume(returning: stream)
+    return settled != nil
   }
 }

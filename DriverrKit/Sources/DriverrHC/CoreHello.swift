@@ -18,7 +18,7 @@ enum CoreHello {
 
   /// What this build calls, as `hello.methods` must list it. Compatibility is the generation
   /// plus this list, not a protocol number.
-  static let requiredMethods = ["terminal.list"]
+  static let requiredMethods = ["events.subscribe"]
 
   /// The opening request. One line of plain JSON-RPC, because a connection starts in plain
   /// mode and the reply switches it.

@@ -13,7 +13,7 @@ struct CoreRequest<Params: Encodable & Sendable>: Encodable, Sendable {
   let params: Params
 }
 
-/// `terminal.list` with every option at its default: live terminals, unfiltered.
+/// A call with every option at its default. `events.subscribe` with none is unfiltered.
 struct CoreNoParams: Encodable, Sendable {}
 
 /// `doc.get` on this core. There is no `CoreDocSetParams`, deliberately: Driverr reads the
@@ -125,8 +125,117 @@ struct CoreHelloResult: Decodable, Equatable, Sendable {
   let methods: [String]?
 }
 
+/// The terminals a tree is built from. See `CoreSnapshotMapper`.
 struct CoreListResult: Decodable, Sendable {
   let terminals: [CoreTerminal]
+}
+
+/// What `events.subscribe` answers, and what a `missed` line carries. **Finished terminals are
+/// in both**, where `terminal.list` hides them.
+struct CoreEventSnapshot: Decodable, Sendable {
+  /// Events at or below this are already in `terminals`.
+  let seq: UInt64
+  let terminals: [CoreTerminal]
+}
+
+/// One line of an `events.subscribe` channel.
+enum CoreEventLine: Decodable, Sendable {
+  case event(CoreEvent)
+  case missed(CoreEventSnapshot)
+  case heartbeat
+  /// A method this build does not know.
+  case unknown
+
+  private enum CodingKeys: String, CodingKey {
+    case method, params
+  }
+
+  init(from decoder: any Decoder) throws {
+    let line = try decoder.container(keyedBy: CodingKeys.self)
+    switch try line.decode(String.self, forKey: .method) {
+    case "event": self = .event(try line.decode(CoreEvent.self, forKey: .params))
+    case "missed": self = .missed(try line.decode(CoreEventSnapshot.self, forKey: .params))
+    case "heartbeat": self = .heartbeat
+    default: self = .unknown
+    }
+  }
+}
+
+/// One fact change. The `apply` column of schema/README.md is `CoreEventState`.
+struct CoreEvent: Decodable, Sendable {
+  enum Change: Sendable {
+    case created(CoreTerminal)
+    case restarted(CoreTerminal)
+    case lost
+    case finished
+    case removed
+    case status(CoreTerminal.Status?)
+    case title(String?)
+    case labels([String: String]?)
+    case size(rows: Int?)
+    case foreground(CoreTerminal.Foreground?)
+    /// `machine` is `nil` for this core.
+    case document(name: String?, machine: String?)
+    /// `turn` and `keep`, which draw nothing, and any type this build does not know.
+    case ignored
+  }
+
+  private struct StatusData: Decodable {
+    let status: CoreTerminal.Status?
+  }
+
+  private struct TitleData: Decodable {
+    let title: String?
+  }
+
+  private struct LabelsData: Decodable {
+    let labels: [String: String]?
+  }
+
+  private struct SizeData: Decodable {
+    let rows: Int?
+  }
+
+  private struct DocumentData: Decodable {
+    let name: String?
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case seq, type, terminal, machine, data
+  }
+
+  let seq: UInt64
+  /// The address, for all but `doc`.
+  let terminal: String?
+  let change: Change
+
+  init(from decoder: any Decoder) throws {
+    let event = try decoder.container(keyedBy: CodingKeys.self)
+    seq = try event.decode(UInt64.self, forKey: .seq)
+    terminal = try event.decodeIfPresent(String.self, forKey: .terminal)
+
+    func data<Value: Decodable>(_ type: Value.Type) throws -> Value {
+      try event.decode(type, forKey: .data)
+    }
+    switch try event.decode(String.self, forKey: .type) {
+    case "created": change = .created(try data(CoreTerminal.self))
+    case "restarted": change = .restarted(try data(CoreTerminal.self))
+    case "lost": change = .lost
+    case "finished": change = .finished
+    case "removed": change = .removed
+    case "status": change = .status(try data(StatusData.self).status)
+    case "title": change = .title(try data(TitleData.self).title)
+    case "labels": change = .labels(try data(LabelsData.self).labels)
+    case "size": change = .size(rows: try data(SizeData.self).rows)
+    case "foreground":
+      change = .foreground(try event.decodeIfPresent(CoreTerminal.Foreground.self, forKey: .data))
+    case "doc":
+      change = .document(
+        name: try data(DocumentData.self).name,
+        machine: try event.decodeIfPresent(String.self, forKey: .machine))
+    default: change = .ignored
+    }
+  }
 }
 
 struct CoreTerminal: Decodable, Sendable {
@@ -155,15 +264,19 @@ struct CoreTerminal: Decodable, Sendable {
   /// `t7`, or `machine/t7` for a terminal on a machine this core added.
   let address: String
   let name: String?
+  /// `live` or `finished`. A lost terminal is `live`, with a new shell on the way.
+  let state: String?
   /// Often `""`, not absent.
-  let title: String?
+  var title: String?
   let argv: [String]?
   let cwd: String?
-  let rows: Int?
+  var rows: Int?
   /// What runs in it now. `null` once it has finished.
-  let foreground: Foreground?
+  var foreground: Foreground?
   /// `herdr.space`, `herdr.tab` and `where`, for a terminal the app opened.
-  let labels: [String: String]?
+  var labels: [String: String]?
   /// What its program last reported. `null` if it never did, which is what a plain shell is.
-  let status: Status?
+  var status: Status?
+
+  var isLive: Bool { (state ?? "live") == "live" }
 }

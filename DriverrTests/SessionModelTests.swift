@@ -70,6 +70,88 @@ private final class PollRecorder {
   }
 }
 
+/// A host that says when it changed, as a core does.
+private actor PushingControl: HerdrControl {
+  private final class Listener: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: AsyncStream<Void>.Continuation?
+
+    func listen() -> AsyncStream<Void> {
+      let (stream, continuation) = AsyncStream.makeStream(
+        of: Void.self, bufferingPolicy: .bufferingNewest(1))
+      lock.withLock { self.continuation = continuation }
+      return stream
+    }
+
+    func signal() {
+      lock.withLock { _ = continuation?.yield() }
+    }
+  }
+
+  private let listener = Listener()
+  private var read: Result<SessionTree, AppError>
+  private var gate: CheckedContinuation<Void, Never>?
+  private var holdsReads = false
+  private(set) var snapshots = 0
+  private(set) var changedSnapshots = 0
+
+  nonisolated var changes: AsyncStream<Void>? { listener.listen() }
+  nonisolated var needsPolling: Bool { false }
+  nonisolated var binaryPath: String { "hc" }
+
+  init(_ tree: SessionTree = .empty) {
+    read = .success(tree)
+  }
+
+  func moved(to read: Result<SessionTree, AppError>) {
+    self.read = read
+  }
+
+  nonisolated func signal() {
+    listener.signal()
+  }
+
+  /// The next read, of either kind, waits for `release()`.
+  func holdReads() {
+    holdsReads = true
+  }
+
+  var isHoldingARead: Bool { gate != nil }
+
+  func release() {
+    holdsReads = false
+    gate?.resume()
+    gate = nil
+  }
+
+  private func waitIfHeld() async {
+    guard holdsReads else { return }
+    await withCheckedContinuation { gate = $0 }
+  }
+
+  func snapshot() async throws -> SessionTree {
+    snapshots += 1
+    await waitIfHeld()
+    return try read.get()
+  }
+
+  func changedSnapshot() async throws -> SessionTree {
+    changedSnapshots += 1
+    await waitIfHeld()
+    return try read.get()
+  }
+
+  nonisolated func attachCommand(for pane: Pane) -> String { "" }
+  func availability() async -> HerdrAvailability { .coreReady(version: "0.1.15") }
+  func sendText(paneID: String, text: String) async throws {}
+  func submitText(paneID: String, text: String) async throws {}
+  func sendKeys(paneID: String, keys: [PaneKey]) async throws {}
+  func readPanes(ids: [String], lines: Int) async throws -> [String: [String]] { [:] }
+  func readScreen(of pane: Pane, lines: Int) async throws -> PaneScreen { .blank }
+  func perform(_ action: PaneAction, on paneID: String) async throws {}
+  func rename(_ target: RenameTarget, to label: String) async throws {}
+}
+
 /// The polling loop. herdr has no reachable subscription API (see `SessionModel.pollInterval`),
 /// so the loop has to start, repeat, stop, and never run twice over the same host.
 @MainActor
@@ -94,6 +176,183 @@ struct SessionModelTests {
   /// Several ticks long, used only where the claim is that something did not happen, which a
   /// slow machine makes hold.
   private let settle = Duration.milliseconds(200)
+
+  /// A wait on the fake's own state, which `Task.sleep` lets `.timeLimit` stop.
+  private func until(_ condition: () async -> Bool) async throws {
+    while !(await condition()) { try await Task.sleep(for: .milliseconds(1)) }
+  }
+
+  private func oneTerminal(_ id: String = "core:t1") -> SessionTree {
+    SessionTree(
+      workspaces: [
+        Workspace(
+          id: "core:workspace",
+          number: 1,
+          label: "herdr-core",
+          tabs: [
+            DriverrCore.Tab(
+              id: "core:tab",
+              workspaceID: "core:workspace",
+              number: 1,
+              label: "Terminals",
+              panes: [Pane(id: id, tabID: "core:tab", workspaceID: "core:workspace", title: id)]
+            )
+          ]
+        )
+      ]
+    )
+  }
+
+  /// Started and through its first reads, with `polls` counting from here.
+  private func listening(_ control: any HerdrControl) async -> (SessionModel, PollRecorder) {
+    let (model, polls) = live(control, pollInterval: .seconds(30))
+    model.startLiveUpdates()
+    await polls.waitForPolls(2)
+    return (model, polls)
+  }
+
+  @Test("a pushed change is read at once, with no tick to wait for")
+  func pushed() async {
+    let control = PushingControl(oneTerminal())
+    let (model, polls) = await listening(control)
+    defer { model.stopLiveUpdates() }
+
+    await control.moved(to: .success(oneTerminal("core:t2")))
+    control.signal()
+
+    await polls.waitForPolls(polls.completed + 1)
+    #expect(model.tree.allPanes.map(\.id) == ["core:t2"])
+  }
+
+  @Test("a pushed change does not put the sidebar back into loading")
+  func pushedKeepsItsState() async throws {
+    let control = PushingControl(oneTerminal())
+    let (model, polls) = await listening(control)
+    defer { model.stopLiveUpdates() }
+
+    await control.holdReads()
+    control.signal()
+    try await until { await control.isHoldingARead }
+
+    #expect(!model.isLoading)
+    #expect(model.state == .loaded(oneTerminal()))
+
+    let done = polls.completed
+    await control.release()
+    await polls.waitForPolls(done + 1)
+  }
+
+  @Test("a host that pushes is not polled while it answers")
+  func pushedIsNotPolled() async throws {
+    let control = PushingControl(oneTerminal())
+    let (model, polls) = live(control, pollInterval: interval)
+    model.startLiveUpdates()
+    defer { model.stopLiveUpdates() }
+    await polls.waitForPolls(2)
+
+    try await Task.sleep(for: settle)
+    #expect(await control.snapshots == 1)
+    #expect(await control.changedSnapshots == 1)
+  }
+
+  /// With nothing pushing there is nothing else to ask again, and once a read works there is
+  /// nothing to poll for.
+  @Test("a failed read starts the timer, and the first read that works stops it")
+  func failureIsPolled() async throws {
+    let control = PushingControl(oneTerminal())
+    let (model, polls) = live(control, pollInterval: interval)
+    model.startLiveUpdates()
+    defer { model.stopLiveUpdates() }
+    await polls.waitForPolls(2)
+
+    await control.moved(to: .failure(.channelFailed(reason: "the link went")))
+    control.signal()
+    try await until { model.failure != nil }
+    let snapshotsAtFailure = await control.snapshots
+    try await until { await control.snapshots >= snapshotsAtFailure + 2 }
+
+    await control.moved(to: .success(oneTerminal("core:t2")))
+    try await until { model.failure == nil }
+    #expect(model.tree.allPanes.map(\.id) == ["core:t2"])
+
+    try await Task.sleep(for: settle)
+    let settled = await control.snapshots
+    try await Task.sleep(for: settle)
+    #expect(await control.snapshots == settled)
+  }
+
+  /// `AsyncStream` ends with the task reading it, and a pause cancels that task.
+  @Test("a change is heard after a pause and a restart, and what happened between is read")
+  func pushedAfterARestart() async {
+    let control = PushingControl(oneTerminal())
+    let (model, polls) = await listening(control)
+    defer { model.stopLiveUpdates() }
+
+    model.pausePolling()
+    await control.moved(to: .success(oneTerminal("core:t2")))
+    model.startLiveUpdates()
+    await polls.waitForPolls(polls.completed + 1)
+    #expect(model.tree.allPanes.map(\.id) == ["core:t2"])
+
+    await control.moved(to: .success(oneTerminal("core:t3")))
+    control.signal()
+    await polls.waitForPolls(polls.completed + 1)
+    #expect(model.tree.allPanes.map(\.id) == ["core:t3"])
+  }
+
+  /// A poll on a combined host can be out for a second, and started before the change.
+  @Test("a change during a poll waits for it, and is read after it")
+  func changedDuringAPoll() async throws {
+    let control = PushingControl(oneTerminal())
+    let (model, polls) = await listening(control)
+    defer { model.stopLiveUpdates() }
+    let changedReads = await control.changedSnapshots
+
+    await control.holdReads()
+    let poll = Task { await model.refresh() }
+    try await until { await control.isHoldingARead }
+
+    await control.moved(to: .success(oneTerminal("core:t2")))
+    control.signal()
+    try await Task.sleep(for: settle)
+    #expect(await control.changedSnapshots == changedReads)
+
+    let done = polls.completed
+    await control.release()
+    await poll.value
+    await polls.waitForPolls(done + 2)
+    #expect(model.tree.allPanes.map(\.id) == ["core:t2"])
+    #expect(await control.changedSnapshots == changedReads + 1)
+  }
+
+  /// A tree that left a side's panes out would be diffed and sent on, and
+  /// `ConnectionModel.apply` then forgets each of those panes' chat, screen and draft.
+  @Test("a link that goes under a combined host keeps its tree, and tells nobody that panes left")
+  func linkLossForgetsNothing() async throws {
+    let tui = PushingControl(oneTerminal("w1:p1"))
+    let core = PushingControl(oneTerminal("core:t1"))
+    let (model, polls) = await listening(CombinedControl(tui: tui, core: core))
+    defer { model.stopLiveUpdates() }
+    let told = polls.completed
+
+    await tui.moved(to: .failure(.channelFailed(reason: "the link went")))
+    await core.moved(to: .failure(.channelFailed(reason: "the link went")))
+    core.signal()
+    try await until { model.failure != nil }
+
+    #expect(model.tree.allPanes.map(\.id) == ["w1:p1", "core:t1"])
+    #expect(polls.completed == told)
+  }
+
+  @Test("a control that cannot push is polled as before")
+  func notPushed() async {
+    let control = FakeControl()
+    let (model, polls) = live(control, pollInterval: interval)
+    model.startLiveUpdates()
+    defer { model.stopLiveUpdates() }
+    await polls.waitForPolls(3)
+    #expect(await control.snapshotCount >= 3)
+  }
 
   @Test("a first read happens immediately rather than after one interval")
   func loadsBeforeWaiting() async {

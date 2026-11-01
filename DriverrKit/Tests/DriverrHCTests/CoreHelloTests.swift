@@ -108,7 +108,7 @@ struct CoreHelloTests {
     #expect(
       scan(text)
         == .reply(
-          .refused(version: "0.1.14", generation: 1, missingMethods: ["terminal.list"]),
+          .refused(version: "0.1.14", generation: 1, missingMethods: ["events.subscribe"]),
           remainder: Data()
         )
     )

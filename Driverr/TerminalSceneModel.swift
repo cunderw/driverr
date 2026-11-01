@@ -155,8 +155,9 @@ final class TerminalSceneModel {
   /// How long a controller's session holds its first size. Injected, like `stepDeadline`,
   /// because a core attach waits on it.
   private let openSettlingWindow: Duration
-  /// How long a core attach may wait for a terminal view to report a size.
-  private let coreSizeDeadline: Duration
+  /// How long a core attach may wait for a terminal view to report a size. A `var`, so a test
+  /// can run out one attach's wait and not the next one's.
+  var coreSizeDeadline: Duration
 
   /// How often a lost terminal is tried, and how many times. About a minute more than the
   /// core's own backoff reaches, so a slow recovery is still caught.
@@ -1689,6 +1690,9 @@ final class TerminalSceneModel {
         entry(for: target)?.role == .observer, surface(for: target) == .terminal
       else { return }
       guard let bridge = try? await promotable.promote() else {
+        // A status clears ahead of `finished`, so this attach can reach a terminal that has
+        // just gone. Its end has then told this entry already, and with the true word.
+        guard entry(for: target)?.role == .observer else { return }
         notices[target] = .failed(.channelFailed(reason: "The pane could not be opened."))
         return
       }

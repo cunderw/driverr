@@ -609,7 +609,7 @@ final class ConnectionModel {
         // `SessionModel.handOverConsumers()`.
         let carried = session?.handOverConsumers() ?? 0
         let session = SessionModel(control: control)
-        // The three-second poll drives conversation freshness, so there is no second poller. A
+        // The session's updates drive conversation freshness, so there is no second poller. A
         // snapshot is a few KB; a first transcript page is up to 100 KB. See
         // `SessionModel.Changes`.
         session.onSessionChanged = { [weak self] changes in
