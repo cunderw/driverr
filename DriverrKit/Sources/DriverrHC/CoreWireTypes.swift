@@ -46,8 +46,9 @@ struct CoreReadParams: Encodable, Sendable {
 }
 
 /// What `terminal.read` answers: logical lines with soft wraps joined, trimmed, and plain,
-/// because core 0.1.15 keeps no styling in it. `complete` and `how` report on history, and
-/// none is asked for.
+/// because core 0.1.15 keeps no styling in it. `how` says how history was found, and none is
+/// asked for. `complete` is not read either: it is false after a core crash, and for a finished
+/// terminal with no snapshot, whose text is empty and draws as a blank screen.
 struct CoreReadResult: Decodable, Sendable {
   let text: String
 }

@@ -2,8 +2,8 @@
 ///
 /// `PaneScreen` is the data. This is the wording and the two layouts. The captured screen is
 /// the permanent view for most agent kinds, so nothing here apologises or claims more than
-/// the screen shows. Nothing offers a route to earlier output either: an agent pane's
-/// history is its visible screen, and the terminal has no more.
+/// the screen shows. Nothing offers a route to earlier output either: a herdr agent pane's
+/// history is its visible screen, and what a host keeps beyond the screen is not read here.
 
 // MARK: - How wide a screen is
 
@@ -189,13 +189,15 @@ public struct PaneScreenCaption: Equatable, Sendable {
   /// `The last 9 lines of the pane — earlier output is not kept.`
   ///
   /// It states what is not kept instead of offering a way to it, because there is no earlier
-  /// output to open: herdr returns only the visible screen.
+  /// output to open: herdr returns only the visible screen. Where the host does keep it, the
+  /// sentence stops at what is shown.
   public let lines: String
 
   public init(screen: PaneScreen, earlierOutputIsKept: Bool = false) {
     let count = screen.lines.count
     let counted = count == 1 ? "The last line" : "The last \(count) lines"
-    lines = "\(counted) of the pane — earlier output is not kept."
+    let shown = "\(counted) of the pane"
+    lines = earlierOutputIsKept ? "\(shown)." : "\(shown) — earlier output is not kept."
   }
 
   /// What VoiceOver is given: one statement about the screen below.
