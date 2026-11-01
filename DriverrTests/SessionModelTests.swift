@@ -91,7 +91,7 @@ private actor PushingControl: HerdrControl {
   private let listener = Listener()
   private var read: Result<SessionTree, AppError>
   private var gate: CheckedContinuation<Void, Never>?
-  private var holdsChangedReads = false
+  private var holdsReads = false
   private(set) var snapshots = 0
   private(set) var changedSnapshots = 0
 
@@ -111,29 +111,33 @@ private actor PushingControl: HerdrControl {
     listener.signal()
   }
 
-  /// The next changed read waits for `release()`.
-  func holdChangedReads() {
-    holdsChangedReads = true
+  /// The next read, of either kind, waits for `release()`.
+  func holdReads() {
+    holdsReads = true
   }
 
   var isHoldingARead: Bool { gate != nil }
 
   func release() {
-    holdsChangedReads = false
+    holdsReads = false
     gate?.resume()
     gate = nil
   }
 
+  private func waitIfHeld() async {
+    guard holdsReads else { return }
+    await withCheckedContinuation { gate = $0 }
+  }
+
   func snapshot() async throws -> SessionTree {
     snapshots += 1
+    await waitIfHeld()
     return try read.get()
   }
 
   func changedSnapshot() async throws -> SessionTree {
     changedSnapshots += 1
-    if holdsChangedReads {
-      await withCheckedContinuation { gate = $0 }
-    }
+    await waitIfHeld()
     return try read.get()
   }
 
@@ -226,7 +230,7 @@ struct SessionModelTests {
     let (model, polls) = await listening(control)
     defer { model.stopLiveUpdates() }
 
-    await control.holdChangedReads()
+    await control.holdReads()
     control.signal()
     try await until { await control.isHoldingARead }
 
@@ -296,28 +300,29 @@ struct SessionModelTests {
     #expect(model.tree.allPanes.map(\.id) == ["core:t3"])
   }
 
-  @Test("changes during a read wait for it, and go once")
-  func changedDuringARead() async throws {
+  /// A poll on a combined host can be out for a second, and started before the change.
+  @Test("a change during a poll waits for it, and is read after it")
+  func changedDuringAPoll() async throws {
     let control = PushingControl(oneTerminal())
     let (model, polls) = await listening(control)
     defer { model.stopLiveUpdates() }
+    let changedReads = await control.changedSnapshots
 
-    await control.holdChangedReads()
-    control.signal()
+    await control.holdReads()
+    let poll = Task { await model.refresh() }
     try await until { await control.isHoldingARead }
-    let readsAtHold = await control.changedSnapshots
 
     await control.moved(to: .success(oneTerminal("core:t2")))
     control.signal()
-    control.signal()
     try await Task.sleep(for: settle)
-    #expect(await control.changedSnapshots == readsAtHold)
+    #expect(await control.changedSnapshots == changedReads)
 
     let done = polls.completed
     await control.release()
+    await poll.value
     await polls.waitForPolls(done + 2)
     #expect(model.tree.allPanes.map(\.id) == ["core:t2"])
-    #expect(await control.changedSnapshots == readsAtHold + 1)
+    #expect(await control.changedSnapshots == changedReads + 1)
   }
 
   @Test("a control that cannot push is polled as before")
