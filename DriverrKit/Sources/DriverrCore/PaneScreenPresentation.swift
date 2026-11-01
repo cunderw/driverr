@@ -192,7 +192,7 @@ public struct PaneScreenCaption: Equatable, Sendable {
   /// output to open: herdr returns only the visible screen.
   public let lines: String
 
-  public init(screen: PaneScreen) {
+  public init(screen: PaneScreen, earlierOutputIsKept: Bool = false) {
     let count = screen.lines.count
     let counted = count == 1 ? "The last line" : "The last \(count) lines"
     lines = "\(counted) of the pane — earlier output is not kept."

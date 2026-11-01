@@ -63,6 +63,15 @@ struct PaneScreenPresentationTests {
     #expect(caption.lines == "The last line of the pane — earlier output is not kept.")
   }
 
+  @Test("a screen whose history is kept says only how much it shows")
+  func captionClaimsNothingAboutKeptHistory() {
+    let many = PaneScreenCaption(screen: screen(["a", "b"]), earlierOutputIsKept: true)
+    let one = PaneScreenCaption(screen: screen(["a"]), earlierOutputIsKept: true)
+
+    #expect(many.lines == "The last 2 lines of the pane.")
+    #expect(one.lines == "The last line of the pane.")
+  }
+
   /// Agent panes report `total_rows == viewport_rows`, so there is no scrollback to point to.
   @Test("the caption offers no route to output that does not exist")
   func captionOffersNoRouteToWhatIsNotKept() {
