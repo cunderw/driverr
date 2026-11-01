@@ -162,7 +162,7 @@ extension TranscriptResolution {
 /// or a refusal.
 ///
 /// One type because `Show the Screen` is the way out of every one of them, and it always
-/// works where Driverr can read the pane's screen. A failure with no way out is a dead end.
+/// works. A failure with no way out is a dead end.
 public struct TranscriptNotice: Equatable, Sendable {
   /// `nil` where the notice sits under turns that did parse, so it does not read as a
   /// heading over the conversation.
@@ -200,10 +200,9 @@ public struct TranscriptNotice: Equatable, Sendable {
   }
 
   /// Never over a sub-agent's chat, because the captured screen is the pane's, not the
-  /// sub-agent's. Never where Driverr cannot read the pane's screen, because the button would
-  /// only fail: it has not implemented that for a herdr-core terminal.
-  public func offersScreen(inSubagentChat: Bool, canReadScreen: Bool) -> Bool {
-    offersScreen && !inSubagentChat && canReadScreen
+  /// sub-agent's.
+  public func offersScreen(inSubagentChat: Bool) -> Bool {
+    offersScreen && !inSubagentChat
   }
 
   /// How much of a file can be a session's opening lines and nothing else.
@@ -268,12 +267,8 @@ public struct TranscriptNotice: Equatable, Sendable {
   /// finished agent has had its prompt, so a missing file is a fault. A blocked agent keeps
   /// the wait, because a new Claude on its trust prompt reports blocked before any prompt
   /// (`FakeControl.treeWithUnstartedAgent`). No default, so a call site cannot forget it.
-  ///
-  /// `canReadScreen` is `offersScreen(inSubagentChat:canReadScreen:)`'s, so no sentence names
-  /// a button that is not drawn.
-  public init(absence: TranscriptAbsence, agentStatus: AgentStatus?, canReadScreen: Bool = true) {
+  public init(absence: TranscriptAbsence, agentStatus: AgentStatus?) {
     let leftTheDirectory = "If this pane has left the directory the agent started in,"
-    let fileWillNotAppear = "the file will not appear here"
     switch absence {
     case .noSessionFiles(let directory) where Self.hasHadAPrompt(agentStatus),
       .reportedSessionMissing(_, let directory) where Self.hasHadAPrompt(agentStatus):
@@ -285,8 +280,7 @@ public struct TranscriptNotice: Equatable, Sendable {
         title: "The session file is missing",
         message:
           "The agent has started, but Driverr found no session file for \(directory). "
-          + "\(leftTheDirectory) "
-          + (canReadScreen ? "use \(Self.showScreenTitle)." : "\(fileWillNotAppear)."),
+          + "\(leftTheDirectory) use \(Self.showScreenTitle).",
         offersRetry: true,
         symbolName: "exclamationmark.triangle"
       )
@@ -342,20 +336,19 @@ public struct TranscriptNotice: Equatable, Sendable {
         title: "No session file yet",
         message:
           "The agent has not written its session file for \(directory) yet. Send a message "
-          + "below to start the conversation. \(leftTheDirectory) \(fileWillNotAppear)"
-          + (canReadScreen ? ", so use \(Self.showScreenTitle)." : "."),
+          + "below to start the conversation. \(leftTheDirectory) the file will not appear "
+          + "here, so use \(Self.showScreenTitle).",
         offersRetry: true,
         symbolName: "text.bubble"
       )
     case .agentOnAddedMachine(let agent, let machine):
-      // No `Show the Screen`: Driverr has not implemented reading a core terminal's screen,
-      // so the button would only fail. No retry either, because the answer cannot change.
+      // `Show the Screen` works here: a core reads a terminal on its added machine for us, where
+      // the session file is out of reach. No retry, because the answer cannot change.
       self.init(
         title: "\(agent) is running on \(machine)",
         message:
           "Driverr reads conversations on the computer it connected to, and this terminal is "
           + "on \(machine).",
-        offersScreen: false,
         symbolName: "desktopcomputer"
       )
     case .subagentFileNotFound:

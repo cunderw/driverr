@@ -36,6 +36,22 @@ struct CoreFileReadResult: Decodable, Sendable {
   let text: String
 }
 
+/// `terminal.read`, which opens no channel, so it is no viewer and takes no size.
+///
+/// `lines` is history above the screen, and stays 0: for history the core may scroll a
+/// full-screen app (`how: "stitched"`).
+struct CoreReadParams: Encodable, Sendable {
+  let terminal: String
+  var lines = 0
+}
+
+/// What `terminal.read` answers: logical lines with soft wraps joined, trimmed, and plain,
+/// because core 0.1.15 keeps no styling in it. `complete` and `how` report on history, and
+/// none is asked for.
+struct CoreReadResult: Decodable, Sendable {
+  let text: String
+}
+
 /// Just enough of a reply to find the stream it opened.
 struct CoreChannelResult: Decodable, Sendable {
   let channel: UInt32?

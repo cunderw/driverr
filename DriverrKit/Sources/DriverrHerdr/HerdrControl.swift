@@ -83,12 +83,15 @@ public protocol HerdrControl: Sendable {
 
   /// One pane's visible screen, styled and sanitised, for the reply surface.
   ///
-  /// It differs from `readPanes` in two ways:
+  /// It differs from `readPanes` in two ways, for a herdr pane:
   ///
   /// - It asks for `--format ansi`, because the SGR separates the agent's message from the
   ///   rest of the screen.
   /// - It reads the exit status and stderr. A refusal is an empty stdout with a message on
   ///   stderr, and must not render as a blank pane.
+  ///
+  /// A herdr-core terminal's read is plain text, so its rows carry no styling and no markers,
+  /// and `PaneQuestionScreen` cannot find the picker's active tab in them.
   ///
   /// Throws on a refusal, and returns an empty `PaneScreen` for a blank pane. Takes the
   /// whole `Pane`, because `viewport_rows` bounds the request. See `readScreenCommand`.
