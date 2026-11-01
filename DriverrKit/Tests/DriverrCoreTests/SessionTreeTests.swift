@@ -411,6 +411,65 @@ struct SessionTreeTests {
     #expect(Workspace(id: "w4", number: 4, label: "four").tabHeaderStyle == .none, "no tabs")
   }
 
+  /// A host's own group, and one machine the core added, with one pane each.
+  private func treeWithMachine(_ machineCoreID: String? = "core-b") -> SessionTree {
+    func group(_ id: String, _ pane: Pane, machine: String?) -> Workspace {
+      Workspace(
+        id: id, number: 1, label: id,
+        tabs: [Tab(id: pane.tabID, workspaceID: id, number: 1, label: "a", panes: [pane])],
+        machineCoreID: machine
+      )
+    }
+    return SessionTree(
+      workspaces: [
+        group("own", pane("core:t1", status: .idle, tab: "t1", workspace: "own"), machine: nil),
+        group(
+          "bee", pane("core:bee/t1", status: .blocked, tab: "t2", workspace: "bee"),
+          machine: machineCoreID),
+      ],
+      focusedPaneID: "core:t1",
+      coreID: "core-a"
+    )
+  }
+
+  @Test("a machine another host covers leaves the tree, and everything else stays")
+  func hidingACoveredMachine() {
+    let hidden = treeWithMachine().hidingMachines(coveredBy: ["core-b", "core-c"])
+    #expect(hidden.workspaces.map(\.id) == ["own"])
+    #expect(hidden.blockedPanes.isEmpty)
+    #expect(hidden.agentStatusCounts == AgentStatusCounts(idle: 1))
+    #expect(hidden.focusedPaneID == "core:t1")
+    #expect(hidden.coreID == "core-a")
+  }
+
+  @Test("a machine nothing covers stays, as does one whose id is not known yet")
+  func nothingCovers() {
+    let tree = treeWithMachine()
+    #expect(tree.hidingMachines(coveredBy: []) == tree)
+    #expect(tree.hidingMachines(coveredBy: ["core-c"]) == tree)
+    let unread = treeWithMachine(nil)
+    #expect(unread.hidingMachines(coveredBy: ["core-b"]) == unread)
+  }
+
+  @Test("the host's own terminals never go, even on a second host of the same core")
+  func ownGroupStays() {
+    #expect(
+      treeWithMachine().hidingMachines(coveredBy: ["core-a", "core-b"]).workspaces.map(\.id)
+        == ["own"])
+  }
+
+  @Test("the group of a pane a scene is open on stays, and only that one")
+  func keepingAPane() {
+    let tree = treeWithMachine()
+    #expect(tree.hidingMachines(coveredBy: ["core-b"], keeping: "core:bee/t1") == tree)
+    #expect(
+      tree.hidingMachines(coveredBy: ["core-b"], keeping: "core:t1").workspaces.map(\.id)
+        == ["own"])
+    #expect(
+      tree.hidingMachines(coveredBy: ["core-b"], keeping: "core:gone").workspaces.map(\.id)
+        == ["own"])
+  }
+
   @Test("a tab or workspace with no agent under it has no status at all")
   func containersWithoutAgentsHaveNoStatus() {
     // `nil`, not `.unknown`: a workspace of plain shells has nothing to badge.

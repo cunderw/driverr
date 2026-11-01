@@ -151,12 +151,14 @@ final class TerminalPresenter {
     }
     await model.settledPhase()
     guard model.phase == .connected, let session = model.session else { return }
-    if session.tree.isEmpty { await session.refresh() }
+    if session.reportedTree.isEmpty { await session.refresh() }
     // Pane id to witness, not a set of ids. herdr reuses pane ids, so an id alone cannot
     // tell the reader's pane from a rebuilt session's stand-in. A pane with no witness is
     // left out, because nothing can confirm it.
     let panesOnHost = Dictionary(
-      session.tree.allPanes.compactMap { pane in pane.sessionWitness.map { (pane.id, $0) } },
+      session.reportedTree.allPanes.compactMap { pane in
+        pane.sessionWitness.map { (pane.id, $0) }
+      },
       uniquingKeysWith: { first, _ in first })
     guard
       case .pane(_, let paneID) = BlockedPaneActivityRoute.resumed(

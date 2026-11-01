@@ -3,8 +3,8 @@ import Foundation
 
 /// How the opening of an `hc connect` went.
 enum CoreHandshake: Equatable, Sendable {
-  /// A core this build can use, now in framed mode.
-  case ready(version: String)
+  /// A core this build can use, now in framed mode. `coreID` is `hello.core.id`.
+  case ready(version: String, coreID: String?)
   /// A core, and one this build cannot use. See `HerdrAvailability.coreIncompatible`.
   case refused(version: String?, generation: Int?, missingMethods: [String])
   /// Nothing that answered like a core. Another program called `hc` exists, so the end of
@@ -52,7 +52,7 @@ enum CoreHello {
     guard result.framed == true, let version = result.version else {
       return .refused(version: result.version, generation: nil, missingMethods: [])
     }
-    return .ready(version: version)
+    return .ready(version: version, coreID: result.core?.id)
   }
 }
 

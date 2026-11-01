@@ -28,11 +28,17 @@ public struct BlockedPaneActivityAttributes: Codable, Hashable, Sendable {
     public let hostID: UUID
     public let hostName: String
     public let counts: AgentStatusCounts
+    /// The host's herdr-core, if it has one. Absent from a card an earlier build wrote.
+    ///
+    /// A background pass sees one host and has no registry, so this is how it knows what the
+    /// card's other hosts already count. See `BlockedPaneActivityPlan.coreIDs(coveringHost:in:)`.
+    public let coreID: String?
 
-    public init(hostID: UUID, hostName: String, counts: AgentStatusCounts) {
+    public init(hostID: UUID, hostName: String, counts: AgentStatusCounts, coreID: String? = nil) {
       self.hostID = hostID
       self.hostName = hostName
       self.counts = counts
+      self.coreID = coreID
     }
   }
 

@@ -6,7 +6,7 @@ import Testing
 
 @Suite("Core hello")
 struct CoreHelloTests {
-  private let ready = CoreHandshake.ready(version: "0.1.14")
+  private let ready = CoreHandshake.ready(version: "0.1.14", coreID: "f47b")
 
   private func scan(_ text: String) -> CoreHelloScanner.Step {
     var scanner = CoreHelloScanner()

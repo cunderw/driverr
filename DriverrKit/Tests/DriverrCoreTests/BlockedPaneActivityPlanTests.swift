@@ -69,6 +69,44 @@ struct BlockedPaneActivityPlanTests {
     return nil
   }
 
+  // MARK: - Who covers a machine
+
+  @Test("a background pass is told the cores of the card's other hosts, not its own")
+  func coveringCores() {
+    let standing = card(
+      cardA,
+      hosts: [
+        BlockedPaneActivityAttributes.HostSummary(
+          hostID: workbox, hostName: "workbox", counts: AgentStatusCounts(), coreID: "core-a"),
+        BlockedPaneActivityAttributes.HostSummary(
+          hostID: buildbox, hostName: "buildbox", counts: AgentStatusCounts(), coreID: "core-b"),
+        // The TUI, or a card an earlier build wrote.
+        host(sandbox, name: "sandbox"),
+      ])
+    #expect(
+      BlockedPaneActivityPlan.coreIDs(coveringHost: workbox, in: [standing]) == ["core-b"])
+    #expect(BlockedPaneActivityPlan.coreIDs(coveringHost: workbox, in: []).isEmpty)
+  }
+
+  @Test("the card keeps each host's core, through a pass that only saw one of them")
+  func coreIDsSurviveAScopedPass() throws {
+    let observed = HostActivityObservation(
+      hostID: workbox, hostName: "workbox", isConnected: true, blockedPanes: [],
+      counts: AgentStatusCounts(), observedAt: now, coreID: "core-a")
+    let standing = card(
+      cardA,
+      hosts: [
+        BlockedPaneActivityAttributes.HostSummary(
+          hostID: buildbox, hostName: "buildbox", counts: AgentStatusCounts(), coreID: "core-b"),
+        host(workbox),
+      ])
+    let actions = BlockedPaneActivityPlan.reconcile(
+      observations: [observed], scope: .oneHost(workbox), existing: [standing],
+      preferences: LiveActivityPreferences(), canRequest: false, now: now)
+    let state = try #require(updated(actions))
+    #expect(state.hosts.map(\.coreID) == ["core-b", "core-a"])
+  }
+
   // MARK: - The trigger
 
   @Test("a connected host with nothing blocked still gets a card")

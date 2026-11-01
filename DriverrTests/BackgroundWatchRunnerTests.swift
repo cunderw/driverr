@@ -279,6 +279,37 @@ struct BackgroundWatchRunnerTests {
     #expect(driver.preferenceValues.isEmpty)
   }
 
+  /// A watch sees one host, and the card carries the others' counts, machines included.
+  @Test("a poll leaves out a machine another host on the card shows")
+  func aPollHidesACoveredMachine() async throws {
+    let (runner, _, driver) = makeRunner()
+    driver.coveringCoreIDs[host.id] = ["core-b"]
+    let session = FakeWatchSession()
+    session.snapshot = SessionTree(
+      workspaces: [
+        Workspace(
+          id: "bee", number: 1, label: "bee",
+          tabs: [
+            Tab(
+              id: "t1", workspaceID: "bee", number: 1, label: "a",
+              panes: [pane("core:bee/t1", status: .blocked)])
+          ],
+          machineCoreID: "core-b")
+      ],
+      coreID: "core-a"
+    )
+    let task = FakeWatchTask()
+    session.afterSnapshot = { _ in runner.stop() }
+
+    runner.start(host: host, subject: "claude", session: session)
+    await runner.run(task)
+
+    let seen = try #require(driver.passes.first?.observations.first)
+    #expect(seen.blockedPanes.isEmpty)
+    #expect(seen.counts == AgentStatusCounts())
+    #expect(seen.coreID == "core-a")
+  }
+
   /// Indeterminate progress, reported once before any work. Watching a pane has no honest
   /// completion fraction.
   @Test("progress is reported indeterminate")

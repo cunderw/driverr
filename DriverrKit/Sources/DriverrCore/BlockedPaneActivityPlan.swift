@@ -21,13 +21,17 @@ public struct HostActivityObservation: Equatable, Sendable {
 
   public let observedAt: Date
 
+  /// `SessionTree.coreID`, for the card to carry. See `HostSummary.coreID`.
+  public let coreID: String?
+
   public init(
     hostID: UUID,
     hostName: String,
     isConnected: Bool,
     blockedPanes: [Pane],
     counts: AgentStatusCounts,
-    observedAt: Date
+    observedAt: Date,
+    coreID: String? = nil
   ) {
     self.hostID = hostID
     self.hostName = hostName
@@ -35,6 +39,7 @@ public struct HostActivityObservation: Equatable, Sendable {
     self.blockedPanes = blockedPanes
     self.counts = counts
     self.observedAt = observedAt
+    self.coreID = coreID
   }
 }
 
@@ -226,6 +231,18 @@ public enum BlockedPaneActivityPlan {
     return ends + [.update(activityID: card.activityID, desired)]
   }
 
+  /// The cores of the hosts the standing card speaks for, other than `hostID`.
+  ///
+  /// What a `.oneHost` pass hides from its tree, because the card carries those hosts over and
+  /// their counts already hold those machines. A host the card does not name covers nothing,
+  /// so with no card a machine is counted through the core that added it.
+  public static func coreIDs(
+    coveringHost hostID: UUID,
+    in existing: [ExistingLiveActivity]
+  ) -> Set<String> {
+    Set(existing.flatMap(\.state.hosts).filter { $0.hostID != hostID }.compactMap(\.coreID))
+  }
+
   // MARK: - Building the one state
 
   private struct MergedHosts {
@@ -267,7 +284,7 @@ public enum BlockedPaneActivityPlan {
       summaries.removeAll { $0.hostID == seen.hostID }
       summaries.append(
         BlockedPaneActivityAttributes.HostSummary(
-          hostID: seen.hostID, hostName: seen.hostName, counts: counts))
+          hostID: seen.hostID, hostName: seen.hostName, counts: counts, coreID: seen.coreID))
       if let first = waiting.first {
         candidates[seen.hostID] = BlockedPaneActivityAttributes.BlockedPaneSummary(
           hostID: seen.hostID, hostName: seen.hostName, paneID: first.id,

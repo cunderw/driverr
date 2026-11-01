@@ -23,6 +23,10 @@ protocol BlockedPaneActivityDriving: AnyObject, Sendable {
   /// The reader opened a pane. De-escalates the card that names it.
   func notePaneWasOpened(hostID: UUID, paneID: String) async
 
+  /// The cores of the card's other hosts, for a `.oneHost` pass to hide before it counts. See
+  /// `BlockedPaneActivityPlan.coreIDs(coveringHost:in:)`.
+  func coreIDs(coveringHost hostID: UUID) -> Set<String>
+
   /// The global switch or a per-host setting changed.
   ///
   /// Pushed in rather than read on each pass, because a `BGAppRefreshTask` relaunch has no
@@ -64,6 +68,10 @@ final class LiveBlockedPaneActivityDriver: BlockedPaneActivityDriving {
   func notePaneWasOpened(hostID: UUID, paneID: String) async {
     pending.append(.opened(hostID: hostID, paneID: paneID))
     await drain()
+  }
+
+  func coreIDs(coveringHost hostID: UUID) -> Set<String> {
+    BlockedPaneActivityPlan.coreIDs(coveringHost: hostID, in: readExistingActivities())
   }
 
   /// A queued preference change is replaced by a newer one, so flipping the switch twice
@@ -250,6 +258,7 @@ final class SilentBlockedPaneActivityDriver: BlockedPaneActivityDriving {
     _ observations: [HostActivityObservation], scope: ObservationScope, canRequest: Bool
   ) async {}
   func notePaneWasOpened(hostID: UUID, paneID: String) async {}
+  func coreIDs(coveringHost hostID: UUID) -> Set<String> { [] }
   func preferencesChanged(_ preferences: LiveActivityPreferences) async {}
 }
 

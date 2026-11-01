@@ -224,6 +224,42 @@ struct SessionModelTests {
     #expect(model.tree.allPanes.map(\.id) == ["core:t2"])
   }
 
+  /// `CoreControl.changedSnapshot` skips nothing here: what covers a machine is read at every
+  /// `tree`, so a pushed read and a poll land alike.
+  @Test("a pushed change leaves a covered machine out of what the host shows")
+  func pushedHidesACoveredMachine() async {
+    let onMachine = SessionTree(workspaces: [
+      Workspace(
+        id: "core:bee/workspace", number: 1, label: "bee",
+        tabs: [
+          DriverrCore.Tab(
+            id: "core:bee/tab", workspaceID: "core:bee/workspace", number: 1, label: "Terminals",
+            panes: [
+              Pane(
+                id: "core:bee/t1", tabID: "core:bee/tab", workspaceID: "core:bee/workspace",
+                title: "t1")
+            ])
+        ],
+        machineCoreID: "core-b")
+    ])
+    let control = PushingControl(oneTerminal())
+    let model = SessionModel(
+      control: control, pollInterval: .seconds(30), coveringCoreIDs: { ["core-b"] })
+    let polls = PollRecorder()
+    model.onSessionChanged = polls.record
+    model.startLiveUpdates()
+    defer { model.stopLiveUpdates() }
+    await polls.waitForPolls(2)
+
+    await control.moved(to: .success(onMachine))
+    control.signal()
+
+    await polls.waitForPolls(polls.completed + 1)
+    #expect(model.reportedTree.allPanes.map(\.id) == ["core:bee/t1"])
+    #expect(model.tree.isEmpty)
+    #expect(model.isEmptySession)
+  }
+
   @Test("a pushed change does not put the sidebar back into loading")
   func pushedKeepsItsState() async throws {
     let control = PushingControl(oneTerminal())

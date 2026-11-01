@@ -132,9 +132,15 @@ actor CoreEventFeed {
   /// Kept across a reconnect and a failed read, so neither can reorder the rows under a thumb.
   private var document: CoreAppDocument?
   private var sessions: [String: String] = [:]
+  private var machines: [CoreMachine] = []
+  /// `hello.core.id`, from the connection the subscription stands on.
+  private var coreID: String?
   private var documentIsStale = false
   /// The last read of it got no answer, so the watchdog's next tick asks again.
   private var documentReadWentUnanswered = false
+  private var machinesAreStale = false
+  /// As `documentReadWentUnanswered`.
+  private var machinesReadWentUnanswered = false
   private var staleSessions: Set<String> = []
   private var reading: Task<Void, Never>?
   private var pacer = CoreSignalPacer()
@@ -153,7 +159,11 @@ actor CoreEventFeed {
   func tree() async throws -> SessionTree {
     let terminals = try await subscribedTerminals()
     return CoreSnapshotMapper.tree(
-      from: CoreListResult(terminals: terminals), document: document, sessions: sessions)
+      from: CoreListResult(terminals: terminals, machines: machines),
+      document: document,
+      sessions: sessions,
+      coreID: coreID
+    )
   }
 
   /// Concurrent callers share one subscribing. A loop, because `isOpen` is another actor's
@@ -184,6 +194,7 @@ actor CoreEventFeed {
     defer { subscribing = nil }
     let (connection, handshake) = await link.established()
     guard let connection else { throw CoreControl.failure(for: handshake) }
+    if case .ready(_, let id) = handshake { coreID = id }
 
     let (frames, delivery) = AsyncStream.makeStream(of: CoreChannelEvent.self)
     let opened: (channel: UInt32, answer: CoreEventSnapshot)
@@ -210,6 +221,7 @@ actor CoreEventFeed {
       state: CoreEventState(opened.answer)
     )
     documentIsStale = true
+    machinesAreStale = true
     staleSessions.formUnion(opened.answer.terminals.map(\.address))
     await startReading().value
   }
@@ -252,8 +264,9 @@ actor CoreEventFeed {
     let decoded = try JSONDecoder().decode(CoreEventLine.self, from: line)
     guard let effect = subscription?.state.apply(decoded) else { return }
     documentIsStale = documentIsStale || effect.readsDocument
+    machinesAreStale = machinesAreStale || effect.readsMachines
     staleSessions.formUnion(effect.sessionReads)
-    if documentIsStale || !staleSessions.isEmpty { _ = startReading() }
+    if isAnythingStale { _ = startReading() }
     changed(effect.signal)
   }
 
@@ -276,9 +289,11 @@ actor CoreEventFeed {
     while !Task.isCancelled {
       try? await Task.sleep(for: heartbeatTick)
       guard !Task.isCancelled, subscription?.id == id else { return }
-      if documentReadWentUnanswered {
+      if documentReadWentUnanswered || machinesReadWentUnanswered {
+        documentIsStale = documentIsStale || documentReadWentUnanswered
+        machinesAreStale = machinesAreStale || machinesReadWentUnanswered
         documentReadWentUnanswered = false
-        documentIsStale = true
+        machinesReadWentUnanswered = false
         _ = startReading()
       }
       subscription?.silentTicks += 1
@@ -292,6 +307,10 @@ actor CoreEventFeed {
 
   // MARK: - What an event cannot carry
 
+  private var isAnythingStale: Bool {
+    documentIsStale || machinesAreStale || !staleSessions.isEmpty
+  }
+
   private func startReading() -> Task<Void, Never> {
     if let reading { return reading }
     let task = Task { await readWhatIsStale() }
@@ -302,15 +321,19 @@ actor CoreEventFeed {
   /// Off the consumer, so a silent read holds up no event, and one at a time, so an older
   /// answer cannot land on a newer one.
   private func readWhatIsStale() async {
-    while documentIsStale || !staleSessions.isEmpty, let held = subscription {
+    while isAnythingStale, let held = subscription {
       let readsDocument = documentIsStale
+      let readsMachines = machinesAreStale
       let addresses = staleSessions
       documentIsStale = false
+      machinesAreStale = false
       staleSessions = []
 
       async let documentRead: Void = readDocument(if: readsDocument, over: held.connection)
+      async let machinesRead: Void = readMachines(if: readsMachines, over: held.connection)
       await readSessions(of: addresses, over: held.connection)
       await documentRead
+      await machinesRead
     }
     reading = nil
   }
@@ -332,6 +355,23 @@ actor CoreEventFeed {
       return
     } catch {
       documentReadWentUnanswered = true
+    }
+  }
+
+  /// Goes again on the same terms as `readDocument(if:over:)`. A failed read keeps the last
+  /// answer, so a blip does not bring a covered machine's terminals back.
+  private func readMachines(if isStale: Bool, over connection: CoreConnection) async {
+    guard isStale else { return }
+    do {
+      let read = try await connection.call(
+        "machine.list", params: CoreNoParams(), as: CoreMachineListResult.self)
+      guard read.machines != machines else { return }
+      machines = read.machines
+      changed(.prompt)
+    } catch AppError.herdrResponseUnreadable {
+      return
+    } catch {
+      machinesReadWentUnanswered = true
     }
   }
 

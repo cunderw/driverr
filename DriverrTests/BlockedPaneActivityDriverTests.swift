@@ -25,6 +25,10 @@ final class RecordingActivityDriver: BlockedPaneActivityDriving {
   /// The calls in arrival order: the preferences have to reach the driver before the pass that
   /// would request a card.
   private(set) var events: [String] = []
+  /// What the standing card says of the other hosts, by the host asking.
+  var coveringCoreIDs: [UUID: Set<String>] = [:]
+
+  func coreIDs(coveringHost hostID: UUID) -> Set<String> { coveringCoreIDs[hostID] ?? [] }
 
   func observed(
     _ observations: [HostActivityObservation], scope: ObservationScope, canRequest: Bool
@@ -57,6 +61,20 @@ private func tree(_ panes: [Pane]) -> SessionTree {
       tabs: [Tab(id: "t1", workspaceID: "w1", number: 1, label: "a", panes: panes)])
   ])
 }
+
+/// A core's own working pane, and a blocked one on a machine it added.
+private let treeWithMachine = SessionTree(
+  workspaces: [
+    Workspace(id: "core:workspace", number: 1, label: "herdr-core",
+      tabs: [Tab(id: "t1", workspaceID: "core:workspace", number: 1, label: "a",
+        panes: [pane("core:t1", status: .working)])]),
+    Workspace(id: "core:bee/workspace", number: 1, label: "bee",
+      tabs: [Tab(id: "t2", workspaceID: "core:bee/workspace", number: 1, label: "a",
+        panes: [pane("core:bee/t1", status: .blocked)])],
+      machineCoreID: "core-b"),
+  ],
+  coreID: "core-a"
+)
 
 /// A connection that answers without a transport, so a refresh can be run end to end.
 @MainActor
@@ -163,6 +181,39 @@ struct BlockedPaneActivityDriverTests {
 
     #expect(await runner.run() == .refreshed(blockedPanes: 1))
     #expect(driver.preferenceValues.map(\.isEnabled) == [true])
+  }
+
+  /// The card names the machine's own host, so its counts already hold these panes.
+  @Test("a background refresh leaves out a machine another host on the card shows")
+  func theBackgroundFeedHidesACoveredMachine() async throws {
+    let driver = RecordingActivityDriver()
+    driver.coveringCoreIDs[workbox.id] = ["core-b"]
+    let runner = BackgroundRefreshRunner(
+      environment: environment(driver),
+      storedSelection: { self.workbox.id.uuidString },
+      makeSession: { _, _ in StubSession(snapshot: treeWithMachine) }
+    )
+
+    #expect(await runner.run() == .refreshed(blockedPanes: 0))
+    let seen = try #require(driver.passes.first?.observations.first)
+    #expect(seen.blockedPanes.isEmpty)
+    #expect(seen.counts == AgentStatusCounts(working: 1))
+    #expect(seen.coreID == "core-a")
+  }
+
+  /// No host on the card shows it, so the core that added it is the only way to it.
+  @Test("a background refresh counts a machine nothing on the card shows")
+  func theBackgroundFeedKeepsAnUncoveredMachine() async throws {
+    let driver = RecordingActivityDriver()
+    let runner = BackgroundRefreshRunner(
+      environment: environment(driver),
+      storedSelection: { self.workbox.id.uuidString },
+      makeSession: { _, _ in StubSession(snapshot: treeWithMachine) }
+    )
+
+    #expect(await runner.run() == .refreshed(blockedPanes: 1))
+    let seen = try #require(driver.passes.first?.observations.first)
+    #expect(seen.blockedPanes.map(\.id) == ["core:bee/t1"])
   }
 
   /// A refresh that finds nothing blocked still has to say so, or the card it could have

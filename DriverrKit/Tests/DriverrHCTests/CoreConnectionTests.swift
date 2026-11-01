@@ -45,7 +45,7 @@ struct CoreConnectionTests {
       callDeadline: deadline ?? patient,
       notifications: notifications
     )
-    #expect(await connection.handshake() == .ready(version: "0.1.14"))
+    #expect(await connection.handshake() == .ready(version: "0.1.14", coreID: "f47b"))
     return connection
   }
 

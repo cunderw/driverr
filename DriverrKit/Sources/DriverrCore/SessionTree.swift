@@ -218,6 +218,10 @@ public struct Workspace: Identifiable, Hashable, Sendable {
   /// herdr's roll-up for this workspace, or `nil` with no agent. See `Tab.status`.
   public let status: AgentStatus?
   public let tabs: [Tab]
+  /// The permanent id of the core behind this group, when it is on a machine a herdr-core
+  /// added. `nil` on the connected computer, and on a machine whose id has not been read yet.
+  /// See `SessionTree.hidingMachines(coveredBy:keeping:)`.
+  public let machineCoreID: String?
 
   public init(
     id: String,
@@ -225,7 +229,8 @@ public struct Workspace: Identifiable, Hashable, Sendable {
     label: String,
     isFocused: Bool = false,
     status: AgentStatus? = nil,
-    tabs: [Tab] = []
+    tabs: [Tab] = [],
+    machineCoreID: String? = nil
   ) {
     self.id = id
     self.number = number
@@ -233,6 +238,7 @@ public struct Workspace: Identifiable, Hashable, Sendable {
     self.isFocused = isFocused
     self.status = status
     self.tabs = tabs
+    self.machineCoreID = machineCoreID
   }
 
   /// Whether this workspace's tab level is worth drawing. One tab herdr named itself adds
@@ -361,10 +367,16 @@ public struct AgentStatusCounts: Codable, Hashable, Sendable {
 public struct SessionTree: Hashable, Sendable {
   public let workspaces: [Workspace]
   public let focusedPaneID: String?
+  /// The permanent id of the herdr-core this tree came through, or `nil` with no core in it.
+  ///
+  /// `hello.core.id`, which is what another core's `machine.list` calls this one. Names and SSH
+  /// targets cannot match them, because a machine's name is local to the core that added it.
+  public let coreID: String?
 
-  public init(workspaces: [Workspace] = [], focusedPaneID: String? = nil) {
+  public init(workspaces: [Workspace] = [], focusedPaneID: String? = nil, coreID: String? = nil) {
     self.workspaces = workspaces
     self.focusedPaneID = focusedPaneID
+    self.coreID = coreID
   }
 
   public static let empty = SessionTree()
@@ -440,6 +452,28 @@ public struct SessionTree: Hashable, Sendable {
     }
     // Neither. Open the first, because an all-closed tree looks empty.
     return Set(workspaces.first.map { [$0.id] } ?? [])
+  }
+
+  /// This tree without the machines that another host shows as its own.
+  ///
+  /// A core lists the terminals of machines it added, so a machine that is also a Driverr host
+  /// would show twice. `covered` holds the cores of the other hosts Driverr can see. A machine
+  /// nothing covers stays, so its terminals are still reachable while its own host is away.
+  ///
+  /// `paneID`'s group stays whatever covers it, for a scene already open on that pane.
+  public func hidingMachines(
+    coveredBy covered: Set<String>,
+    keeping paneID: String? = nil
+  ) -> SessionTree {
+    guard !covered.isEmpty else { return self }
+    return SessionTree(
+      workspaces: workspaces.filter { workspace in
+        guard let core = workspace.machineCoreID, covered.contains(core) else { return true }
+        return workspace.tabs.contains { $0.panes.contains { $0.id == paneID } }
+      },
+      focusedPaneID: focusedPaneID,
+      coreID: coreID
+    )
   }
 
   /// Where a pane lives, for a row outside the tree: "myproject › 2: tests".

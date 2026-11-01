@@ -20,8 +20,29 @@ final class SessionModel {
 
   private(set) var state: State = .idle
 
-  /// The last tree loaded, kept on screen across a refresh so the sidebar does not blank.
-  private(set) var tree: SessionTree = .empty
+  /// The last tree loaded, whole, as the host reported it, kept on screen across a refresh so
+  /// the sidebar does not blank.
+  ///
+  /// Whatever holds a pane open or keeps state per pane reads this, because a pane another
+  /// host has come to show is still a pane on this one: the terminal scene, the last-pane
+  /// record, and `Changes`, which would otherwise forget its chat, screen and draft.
+  private(set) var reportedTree: SessionTree = .empty
+
+  /// Whether a read has landed, because an empty `reportedTree` can also be a session with
+  /// nothing in it. Nothing draws this.
+  @ObservationIgnored private(set) var hasReadATree = false
+
+  /// What this host shows: `reportedTree` without the machines another host shows as its own.
+  ///
+  /// Derived, not stored, because a machine stops being covered when something happens on
+  /// another host, with nothing to read here. Observation follows `coveringCoreIDs` through
+  /// to that host's phase and tree, so a view redraws on its own.
+  var tree: SessionTree { tree(keeping: nil) }
+
+  /// `tree` with `paneID`'s group left in, for a scene already open on that pane.
+  func tree(keeping paneID: String?) -> SessionTree {
+    reportedTree.hidingMachines(coveredBy: coveringCoreIDs(), keeping: paneID)
+  }
 
   /// The expanded workspaces. Held here because the host screen's `@State` dies on every
   /// pop. Seeded once from the first snapshot's focus, so later focus changes do not reopen
@@ -57,6 +78,7 @@ final class SessionModel {
   @ObservationIgnored var onSessionChanged: ((Changes) -> Void)?
 
   @ObservationIgnored private let control: any HerdrControl
+  @ObservationIgnored private let coveringCoreIDs: @MainActor () -> Set<String>
   @ObservationIgnored private var liveUpdates: Task<Void, Never>?
   /// How many consumers hold live updates open. See `startLiveUpdates`.
   @ObservationIgnored private var consumers = 0
@@ -77,9 +99,16 @@ final class SessionModel {
   /// Three seconds is a judgement, not a measurement.
   static let defaultPollInterval = Duration.seconds(3)
 
-  init(control: any HerdrControl, pollInterval: Duration = SessionModel.defaultPollInterval) {
+  /// - Parameter coveringCoreIDs: the cores of the other hosts Driverr holds a link to. See
+  ///   `ConnectionRegistry.coreIDs(coveringHost:)`.
+  init(
+    control: any HerdrControl,
+    pollInterval: Duration = SessionModel.defaultPollInterval,
+    coveringCoreIDs: @escaping @MainActor () -> Set<String> = { [] }
+  ) {
     self.control = control
     self.pollInterval = pollInterval
+    self.coveringCoreIDs = coveringCoreIDs
   }
 
   var isLoading: Bool { state == .loading }
@@ -88,7 +117,7 @@ final class SessionModel {
 
   /// True once a snapshot came back empty: herdr is running with no session yet.
   var isEmptySession: Bool {
-    if case .loaded(let tree) = state { return tree.isEmpty }
+    if case .loaded = state { return tree.isEmpty }
     return false
   }
 
@@ -124,12 +153,13 @@ final class SessionModel {
     do {
       let tree = try await read()
       // Diffed against the tree being replaced, before it is replaced.
-      let changes = Self.changes(from: self.tree, to: tree)
-      recordBlockedSince(from: self.tree, to: tree)
+      let changes = Self.changes(from: reportedTree, to: tree)
+      recordBlockedSince(from: reportedTree, to: tree)
       if expandedWorkspaceIDs == nil {
         expandedWorkspaceIDs = tree.defaultExpandedWorkspaceIDs
       }
-      self.tree = tree
+      reportedTree = tree
+      hasReadATree = true
       state = .loaded(tree)
       lastFailure = nil
       onSessionChanged?(changes)

@@ -39,6 +39,7 @@ final class FakeCoreStream: HerdrStream, @unchecked Sendable {
   var replies: [String: Reply] = [
     "events.subscribe": .result(FakeCoreStream.subscribed()),
     "doc.get": .result(FakeCoreStream.noDocument),
+    "machine.list": .result(FakeCoreStream.noMachines),
   ]
 
   /// What `file.read` answers, by path. A path with no entry is a file that is not there.
@@ -299,6 +300,16 @@ final class FakeCoreStream: HerdrStream, @unchecked Sendable {
 
   /// What `doc.get` answers for a document nobody has written.
   static let noDocument = #"{"value":null,"version":0}"#
+
+  /// What `machine.list` answers on a core that has added nothing.
+  static let noMachines = #"{"machines":[]}"#
+
+  /// `machine.list` as a real core 0.1.15 wrote it, cut down to one machine.
+  static func machines(_ name: String, id: String) -> String {
+    #"{"machines":[{"host":"nas","id":"\#(id)","name":"\#(name)","session":null,"#
+      + #""state":"connected","target":"root@box","temporary":false,"version":"0.1.15","#
+      + #""via":false}]}"#
+  }
 
   /// `hello`'s reply as a real core 0.1.14 wrote it, `id` first, and with its options.
   static func helloReply(

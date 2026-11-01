@@ -192,10 +192,13 @@ final class BackgroundRefreshRunner {
       await session.disconnect()
       return .cancelled
     }
-    guard session.isConnectedForRefresh, let tree = await session.snapshotForRefresh() else {
+    guard session.isConnectedForRefresh, let reported = await session.snapshotForRefresh() else {
       await session.disconnect()
       return .couldNotReachTheHost
     }
+    // This process has no registry, so the card says what its other hosts already count.
+    let tree = reported.hidingMachines(
+      coveredBy: environment.blockedPaneActivities.coreIDs(coveringHost: host.id))
 
     // Its own notifier, reading the announced set the last run persisted. See
     // `AnnouncedPaneStore`.
@@ -232,7 +235,8 @@ final class BackgroundRefreshRunner {
           isConnected: true,
           blockedPanes: tree.blockedPanes,
           counts: tree.agentStatusCounts,
-          observedAt: .now
+          observedAt: .now,
+          coreID: tree.coreID
         )
       ],
       scope: .oneHost(host.id),

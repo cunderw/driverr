@@ -97,7 +97,8 @@ public struct CombinedControl: HerdrControl {
   /// The TUI's panes, then the core's.
   ///
   /// The core failing returns the TUI's tree, and both failing throws the TUI's error, which
-  /// is the one with a next step.
+  /// is the one with a next step. That tree has no `coreID`, so a host whose core is down
+  /// covers no machine.
   ///
   /// **The TUI failing returns the core's tree only when no session is running**, so a
   /// stopped session does not hide a running core. Any other failure is rethrown. A failed
@@ -129,7 +130,8 @@ public struct CombinedControl: HerdrControl {
     case (.tree(let tui), .success(let core)):
       return SessionTree(
         workspaces: tui.workspaces + core.workspaces,
-        focusedPaneID: tui.focusedPaneID
+        focusedPaneID: tui.focusedPaneID,
+        coreID: core.coreID
       )
     case (.tree(let tree), .failure):
       return tree

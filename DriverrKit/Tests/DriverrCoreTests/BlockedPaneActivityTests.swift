@@ -145,6 +145,24 @@ struct BlockedPaneActivityTests {
     }
   }
 
+  @Test("a host on a card written before core ids decodes with none")
+  func hostSummaryWithoutACoreID() throws {
+    let json = #"""
+      {"hostID":"11111111-0000-0000-0000-000000000001","hostName":"workbox",
+      "counts":{"blocked":0,"done":0,"working":0,"idle":0,"unknown":0,"shells":0}}
+      """#
+    let host = try JSONDecoder().decode(
+      BlockedPaneActivityAttributes.HostSummary.self, from: Data(json.utf8))
+    #expect(host.coreID == nil)
+
+    let carried = BlockedPaneActivityAttributes.HostSummary(
+      hostID: host.hostID, hostName: host.hostName, counts: host.counts, coreID: "core-a")
+    #expect(
+      try JSONDecoder().decode(
+        BlockedPaneActivityAttributes.HostSummary.self, from: JSONEncoder().encode(carried))
+        == carried)
+  }
+
   /// Derived on decode, so a payload cannot claim a stale date that contradicts it.
   @Test("a payload cannot carry a stale date that contradicts its confirmation time")
   func staleDateIsDerivedNotDecoded() throws {

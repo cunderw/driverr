@@ -12,6 +12,9 @@ import Foundation
 /// **The document only orders and names.** It is the app's private format, so a tree built
 /// without it holds the same terminals in the same groups. See `CoreAppDocument`.
 ///
+/// **A machine's group carries the machine's core id**, which `list.machines` holds, so a tree
+/// can drop a machine that another host shows. See `SessionTree.hidingMachines`.
+///
 /// **A status makes an agent.** Status comes only from OSC 7501, so a terminal with none is a
 /// plain shell, whatever it is running. `reported` is not read: a program that reported once
 /// and has since cleared its status is no agent now.
@@ -35,18 +38,25 @@ enum CoreSnapshotMapper {
   ]
 
   /// `sessions` holds each Claude terminal's session id, by address. See `CoreSessionFiles`.
+  /// `coreID` is this core's own, from its `hello`.
   static func tree(
     from list: CoreListResult,
     document: CoreAppDocument? = nil,
-    sessions: [String: String] = [:]
+    sessions: [String: String] = [:],
+    coreID: String? = nil
   ) -> SessionTree {
     let index = Index(document)
-    let machines = ordered(grouped(list.terminals, by: machine)) { $0.key == nil ? 0 : nil }
+    let machines = ordered(grouped(list.terminals, by: \.machine)) { $0.key == nil ? 0 : nil }
+    let coreIDs = Dictionary(
+      (list.machines ?? []).map { ($0.name, $0.id) }, uniquingKeysWith: { first, _ in first })
     return SessionTree(
       workspaces: machines.flatMap { machine in
         let index = machine.key == nil ? index : Index(nil)
-        return workspaces(machine.terminals, on: machine.key, index: index, sessions: sessions)
-      }
+        return workspaces(
+          machine.terminals, on: machine.key, coreID: machine.key.flatMap { coreIDs[$0] },
+          index: index, sessions: sessions)
+      },
+      coreID: coreID
     )
   }
 
@@ -54,6 +64,7 @@ enum CoreSnapshotMapper {
   private static func workspaces(
     _ terminals: [CoreTerminal],
     on machine: String?,
+    coreID: String?,
     index: Index,
     sessions: [String: String]
   ) -> [Workspace] {
@@ -64,7 +75,8 @@ enum CoreSnapshotMapper {
     return spaces.enumerated().map { offset, space in
       guard let key = space.key else {
         return flatWorkspace(
-          space.terminals, on: machine, prefix: prefix, number: offset + 1, sessions: sessions)
+          space.terminals, on: machine, coreID: coreID, prefix: prefix, number: offset + 1,
+          sessions: sessions)
       }
       let id = prefix + key
       let tabs = ordered(grouped(space.terminals) { label("herdr.tab", of: $0) }) { tab in
@@ -82,7 +94,8 @@ enum CoreSnapshotMapper {
         number: offset + 1,
         label: [machine, name].compactMap { $0 }.joined(separator: " · "),
         status: rollUp(tabs.flatMap(\.panes)),
-        tabs: tabs
+        tabs: tabs,
+        machineCoreID: coreID
       )
     }
   }
@@ -91,6 +104,7 @@ enum CoreSnapshotMapper {
   private static func flatWorkspace(
     _ terminals: [CoreTerminal],
     on machine: String?,
+    coreID: String?,
     prefix: String,
     number: Int,
     sessions: [String: String]
@@ -115,7 +129,8 @@ enum CoreSnapshotMapper {
           isAutoNamed: true,
           panes: panes
         )
-      ]
+      ],
+      machineCoreID: coreID
     )
   }
 
@@ -189,7 +204,7 @@ enum CoreSnapshotMapper {
     let reported = app?.isEmpty == false ? app : nil
     let foreground = terminal.foreground?.argv?.first.map(commandName)
     let program = (reported ?? foreground).flatMap { programs[$0.lowercased()] }
-    let machine = machine(of: terminal)
+    let machine = terminal.machine
     let kind = machine == nil ? program?.kind ?? reported?.lowercased() : nil
     return Agent(
       name: program?.name ?? reported ?? "Agent",
@@ -215,12 +230,6 @@ enum CoreSnapshotMapper {
   /// nothing up, so this is the only place it happens.
   private static func rollUp(_ panes: [Pane]) -> AgentStatus? {
     panes.compactMap { $0.agent?.status }.min { $0.sortPriority < $1.sortPriority }
-  }
-
-  /// The machine in `machine/t7`, or `nil` for a terminal on this core.
-  private static func machine(of terminal: CoreTerminal) -> String? {
-    guard let slash = terminal.address.firstIndex(of: "/") else { return nil }
-    return String(terminal.address[..<slash])
   }
 
   private static func label(_ name: String, of terminal: CoreTerminal) -> String? {

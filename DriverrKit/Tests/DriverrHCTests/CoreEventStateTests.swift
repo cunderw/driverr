@@ -256,10 +256,25 @@ struct CoreEventStateTests {
 
     #expect(addresses(state) == ["t2", "t4"])
     #expect(state.seq == 57)
-    #expect(effect == Effect(signal: .prompt, sessionReads: ["t2", "t4"], readsDocument: true))
+    #expect(
+      effect
+        == Effect(
+          signal: .prompt, sessionReads: ["t2", "t4"], readsDocument: true, readsMachines: true))
     // What was queued behind it is dropped by its seq.
     #expect(state.apply(try event("removed", on: "t2", seq: 57)) == Effect())
     #expect(addresses(state) == ["t2", "t4"])
+  }
+
+  @Test("a terminal arriving on a machine reads the machines, and one here does not")
+  func machineArrives() throws {
+    // A rename is `removed` then `created` under the new name, with no machine event.
+    for type in ["created", "restarted"] {
+      var state = try state(claude, seq: 10)
+      #expect(
+        state.apply(try event(type, on: "cee/t1", record("cee/t1"))) == Effect(
+          signal: .prompt, sessionReads: ["cee/t1"], readsMachines: true))
+      #expect(state.apply(try event(type, on: "t9", record("t9"), seq: 12)).readsMachines == false)
+    }
   }
 
   @Test("this core's app document reads again, with no signal until it has")
