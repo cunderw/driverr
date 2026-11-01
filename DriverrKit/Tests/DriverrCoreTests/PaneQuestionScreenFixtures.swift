@@ -311,4 +311,27 @@ enum PaneQuestionScreenFixture {
     "\u{1B}[0m\u{1B}[38;5;7mkeys to navigate · Esc to \u{1B}[0m",
     "\u{1B}[0m\u{1B}[38;5;7mcancel\u{1B}[0m",
   ].joined(separator: "\n")
+
+  /// `singleSelect`'s picker as herdr-core 0.1.15's `terminal.read` gives it, from Claude Code
+  /// 2.1.316 on a 200 column terminal, from the prompt down. A core's read is plain text, so
+  /// no row here has an escape, and that is the whole of what differs.
+  static let coreRead = [
+    "❯ Use the AskUserQuestion tool to ask me one single-select question \"Pick a fruit\" with header \"Fruit\" and options Apple, Banana, Cherry, each with a short description. Do nothing else.",
+    "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+    " ☐ Fruit",
+    "",
+    "Pick a fruit",
+    "",
+    "❯ 1. Apple",
+    "     Crisp and sweet, the classic pick.",
+    "  2. Banana",
+    "     Soft, potassium-rich, easy to peel.",
+    "  3. Cherry",
+    "     Small, tart or sweet, with a pit.",
+    "  4. Type something.",
+    "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+    "  5. Chat about this",
+    "",
+    "Enter to select · ↑/↓ to navigate · Esc to cancel",
+  ].joined(separator: "\n")
 }

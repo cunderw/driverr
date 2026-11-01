@@ -115,6 +115,20 @@ struct PaneQuestionScreenTests {
     #expect(read(PaneQuestionScreenFixture.shortPane) == nil)
   }
 
+  /// The active tab is found only by its background, and `terminal.read` is plain text, so a
+  /// core's picker has no active tab and no chips until it can read the styling. The second
+  /// half is what says the background is all that is missing.
+  @Test("a core's plain read of a picker is not read, for want of the tab's background")
+  func aCoreRead() throws {
+    let read = PaneQuestionScreenFixture.coreRead
+    #expect(!read.contains("\u{1B}"))
+    #expect(self.read(read) == nil)
+
+    let tab = " ☐ Fruit"
+    let styled = read.replacingOccurrences(of: tab, with: "\u{1B}[48;5;12m\(tab) \u{1B}[0m")
+    #expect(try question(styled).options == ["Apple", "Banana", "Cherry"])
+  }
+
   // MARK: - The keys that answer it
 
   private func selection(_ ansi: String) throws -> ReplyChipSelection {
