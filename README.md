@@ -34,6 +34,10 @@ why they are identical on every run.*
   characters iOS hides, and themes and type sizes you can change while looking at it.
 - **Pane controls** — rename or close a pane from the toolbar, and open a new one from the
   pane switcher.
+- **herdr-core and the desktop app** — a host can run the herdr TUI,
+  [herdr-core](https://github.com/herdrdev/herdr-core), the
+  [Herdr desktop app](https://github.com/herdrdev/herdr-app), or more than one of them.
+  Driverr finds what the host has when it connects, over the same SSH connection.
 - **Keys and passwords** — generate or import an Ed25519 key, or use a password. Both live
   in the device Keychain.
 - **Host keys checked** — Driverr remembers a host's key on first contact and stops hard if
@@ -49,7 +53,7 @@ Driverr has no backend. It talks directly to your own machines over SSH.
 
 The tests and `scripts/look.sh` run on a seeded fake session, so none of them needs a host.
 Using the app by hand needs a machine you can reach over SSH. herdr is optional: a host
-without it still opens as an ordinary SSH shell.
+without herdr or herdr-core still opens as an ordinary SSH shell.
 
 You need:
 
