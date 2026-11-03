@@ -621,6 +621,7 @@ final class ConnectionModel {
         herdrAvailability = availability
         // The new session takes over the old one's live-update holders. See
         // `SessionModel.handOverConsumers()`.
+        let wasRead = session?.hasReadATree ?? false
         let carried = session?.handOverConsumers() ?? 0
         let session = SessionModel(
           control: control,
@@ -637,6 +638,11 @@ final class ConnectionModel {
         }
         self.session = session
         for _ in 0..<carried { session.startLiveUpdates() }
+        // A reconnect that nothing holds still has to publish a tree, or the cover rule cannot
+        // see this host's core id and the host that added its machine keeps listing it. A Task,
+        // because this block deliberately has no await. A first connect is left to whatever
+        // opens the host.
+        if carried == 0, wasRead { Task { await session.loadIfNeeded() } }
         watchForLoss(coordinator)
       } else {
         // Not connected, so there is no set-up to hold the phase for.
