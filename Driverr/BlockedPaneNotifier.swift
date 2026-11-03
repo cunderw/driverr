@@ -69,8 +69,9 @@ final class BlockedPaneNotifier {
   /// Polls that arrive during the load await one task, and only the first applies it, so a
   /// later one cannot write a stale set over a fold that already happened.
   ///
-  /// Those waiters resume newest-first, not in the order they arrived. `sessionChanged`
-  /// stamps each poll on arrival and drops one older than the last it applied.
+  /// Those waiters resume in no guaranteed order (newest-first and oldest-first have both
+  /// been seen). `sessionChanged` stamps each poll on arrival and drops one older than the
+  /// last it applied.
   private func restoreAnnouncedIfNeeded() async {
     guard !hasRestored else { return }
     let task = restore ?? Task { [store, host] in await store.announcedPanes(forHost: host.id) }
@@ -93,9 +94,9 @@ final class BlockedPaneNotifier {
     arrivals += 1
     let stamp = arrivals
     await restoreAnnouncedIfNeeded()
-    // Polls queued behind the restore resume newest-first. Each carries the whole tree, so an
-    // older one has nothing a newer one has not already said, and applying it after would
-    // withdraw the newer one's card. Compared with the last applied stamp, not the last
+    // Polls queued behind the restore resume in no guaranteed order (both seen). Each carries
+    // the whole tree, so an older one has nothing a newer one has not already said, and
+    // applying it after would withdraw the newer one's card. Compared with the last applied stamp, not the last
     // issued, so a poll is only ever dropped for one that has already run.
     guard stamp > lastApplied else { return }
     lastApplied = stamp

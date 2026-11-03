@@ -158,38 +158,52 @@ struct BlockedPaneNotifierTests {
   }
 
   /// Two polls that arrive while the first store read is still out both wait on that read,
-  /// and they resume newest-first. The older tree must not undo what the newer one did.
+  /// and they resume in no guaranteed order (both have been seen). The older tree must not
+  /// undo what the newer one did.
   ///
-  /// This guards only while the runtime resumes those waiters newest-first. If a future
-  /// runtime resumes them oldest-first, the older fold runs first and the newer one corrects
-  /// it, so this test passes on the unfixed code too.
+  /// Only a newest-first resume exposes the bug: oldest-first applies the two trees in the
+  /// order they arrived, which is right with or without the fix. So the scenario runs 20
+  /// times, each with its own notifier, store and centre, and an unfixed notifier gets 20
+  /// chances to resume newest-first.
   @Test("a poll that waited on the first store read cannot undo a newer poll")
   func anOlderFoldCannotWithdrawANewerOnesCard() async {
-    let center = FakeNotificationCenter(status: .authorized)
-    let store = GatedAnnouncedPaneStore()
-    let notifier = notifier(center, store: store)
     let id = BlockedPaneAlerts.notificationID(hostID: host.id, paneID: "w1:p1")
 
-    // `Task.immediate` runs each body on this actor until it first suspends, which is the
-    // wait on the store read. So `a` has arrived and parked before `b` starts, with no
-    // reliance on the order the main actor happens to start plain tasks in.
-    let a = Task.immediate {
-      await notifier.sessionChanged(to: tree([pane("w1:p1", status: .working)]), isAppActive: false)
-    }
-    let b = Task.immediate {
-      await notifier.sessionChanged(to: tree([pane("w1:p1", status: .blocked)]), isAppActive: false)
-    }
+    for run in 1...20 {
+      let center = FakeNotificationCenter(status: .authorized)
+      let store = GatedAnnouncedPaneStore()
+      let notifier = notifier(center, store: store)
 
-    await waitUntilSignalled("the notifier never read the store") { await store.readRequested }
-    await store.release()
-    await a.value
-    await b.value
+      // `Task.immediate` runs each body on this actor until it first suspends, which is the
+      // wait on the store read. So `a` has arrived and parked before `b` starts, with no
+      // reliance on the order the main actor happens to start plain tasks in.
+      let a = Task.immediate {
+        await notifier.sessionChanged(
+          to: tree([pane("w1:p1", status: .working)]), isAppActive: false)
+      }
+      let b = Task.immediate {
+        await notifier.sessionChanged(
+          to: tree([pane("w1:p1", status: .blocked)]), isAppActive: false)
+      }
 
-    #expect(await center.withdrawn.isEmpty, "the older, working tree withdrew the card")
-    #expect(await center.posts.map(\.id) == [id])
-    // One write: the newer fold's. The older fold is dropped before it writes anything.
-    let writes = await store.writes
-    #expect(writes == [["w1:p1"]], "the stored set, oldest write first: \(writes)")
+      await waitUntilSignalled("the notifier never read the store") { await store.readRequested }
+      await store.release()
+      await a.value
+      await b.value
+
+      let withdrawn = await center.withdrawn
+      let posts = await center.posts.map(\.id)
+      let writes = await store.writes
+      #expect(withdrawn.isEmpty, "run \(run): the older, working tree withdrew the card")
+      #expect(posts == [id], "run \(run)")
+      // Newest-first drops the older fold before it writes anything. Oldest-first writes the
+      // older tree's empty set and then the newer one's. Either way the newer tree's set is
+      // the last word, with no stale write after it.
+      #expect(
+        writes == [["w1:p1"]] || writes == [[], ["w1:p1"]],
+        "run \(run): the stored set, oldest write first: \(writes)"
+      )
+    }
   }
 
   @Test("one request per newly-blocked pane, carrying both ids")
