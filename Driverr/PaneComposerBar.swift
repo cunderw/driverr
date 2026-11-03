@@ -42,9 +42,23 @@ struct PaneComposerBar: View {
   /// `DriverrCore.SlashSuggestionSelection`.
   @State private var suggestionSelection = SlashSuggestionSelection()
 
-  /// The field's caret, so the `/` list completes the word the caret is at the end of, not
-  /// only a leading one. `nil` until the field reports a caret; see `caretOffset`.
-  @State private var textSelection: TextSelection?
+  /// The caret the field last reported, or the one `choose` last handed it, so the `/` list
+  /// completes the word the caret is at the end of, not only a leading one. `nil` until the
+  /// field reports a caret; see `caretOffset`.
+  ///
+  /// Read only. It is never handed back to the field, because a field handed a selection it
+  /// has already reported loses typed keys (issue 51). When a hardware keyboard's first key
+  /// arrives, UIKit holds its key queue for a few tens of milliseconds and the keys pile up.
+  /// A view update that pushes a selection then makes the field drain that queue inside the
+  /// update, and the same update writes the text it started with over the drained keys:
+  /// five to seven keys of a 36-key burst, every time, on `Driverr iPad`.
+  /// `PaneComposerUITests.testAFastBurstArrivesIntact` is that burst.
+  @State private var reportedSelection: TextSelection?
+
+  /// A caret for the field to take once, set only by `choose` and withdrawn as soon as the
+  /// update that delivers it is over. The binding hands over `nil` the rest of the time. See
+  /// `selectionBinding`.
+  @State private var pendingSelection: TextSelection?
 
   @Bindable var model: PaneComposerModel
 
@@ -170,7 +184,8 @@ struct PaneComposerBar: View {
       // The same for the highlight: row 2 of one pane's list is a different command on another.
       suggestionSelection.reset()
       // And the caret: one pane's offset means nothing in another pane's draft.
-      textSelection = nil
+      reportedSelection = nil
+      pendingSelection = nil
     }
     // Its own task, keyed on the gate as well as the pane, so a request held by `.wait` is
     // acted on when the chat's read finishes. A request is used up once, so a later change
@@ -197,7 +212,14 @@ struct PaneComposerBar: View {
     }
     // A caret moved by a tap or a selection can point at another `/word`, or none, so the
     // highlight starts again for the same reason as a keystroke.
-    .onChange(of: textSelection) { suggestionSelection.reset() }
+    .onChange(of: reportedSelection) { suggestionSelection.reset() }
+    // The field takes a pending caret in the update that delivers it and never reports it
+    // back, so it is withdrawn on the next turn of the main actor, after that update. See
+    // `selectionBinding`.
+    .onChange(of: pendingSelection) { _, pending in
+      guard pending != nil else { return }
+      Task { @MainActor in pendingSelection = nil }
+    }
     // Reports the bar's own frame for `debug.keyboardMetrics`. Nothing lays out from it; see
     // `onLayoutProbe`.
     .modifier(ComposerLayoutProbe(report: onLayoutProbe))
@@ -252,13 +274,14 @@ struct PaneComposerBar: View {
 
   /// The caret as a `Character` offset into `model.text`.
   ///
+  /// Read from `reportedSelection`, so an arrow key that moves the caret moves the token.
   /// The end of the text when the field has reported nothing, or when the selection is
   /// stale: a send clears the text and leaves the old selection past its end. A range
   /// selection uses its end, so selecting a typed `/co` keeps the list.
   private var caretOffset: Int {
     let text = model.text
     let index: String.Index?
-    switch textSelection?.indices {
+    switch reportedSelection?.indices {
     case .selection(let range): index = range.upperBound
     case .multiSelection(let ranges): index = ranges.ranges.last?.upperBound
     case nil: index = nil
@@ -406,14 +429,52 @@ struct PaneComposerBar: View {
   /// Completes `command` into the field in place of the `/word` at the caret, never with a
   /// guessed argument. The rest of the text is kept, and the caret goes after the trailing
   /// space, where an argument would go.
+  ///
+  /// The one place the caret is written. It goes through `pendingSelection`, which the field
+  /// takes once; without it the field leaves the caret at the end of the text, and
+  /// `testChoosingBeforeLaterTextLeavesTheCaretAfterTheCommand` fails.
+  ///
+  /// `reportedSelection` gets the same caret, because the field never reports a caret it was
+  /// handed. Left at the old caret, a fully typed `/code-review` still reads as the word at
+  /// the caret, ahead of the new space, and the list reopens on a finished command
+  /// (`testChoosingAFullyTypedCommandClosesTheList`). It is never handed to the field, so it
+  /// cannot push.
   private func choose(_ command: SlashCommand) {
     guard let token = slashToken else { return }
     let completion = SlashCommandMatcher.complete(model.text, token: token, with: command)
     model.text = completion.text
-    textSelection = TextSelection(
+    let caret = TextSelection(
       insertionPoint: completion.text.index(
         completion.text.startIndex, offsetBy: completion.caret))
+    pendingSelection = caret
+    reportedSelection = caret
     suggestionSelection.reset()
+  }
+
+  /// The field's `selection:`. It reads `pendingSelection`, which is `nil` except straight
+  /// after `choose`, and stores what the field reports in `reportedSelection`.
+  ///
+  /// Not `$reportedSelection`: SwiftUI pushes a bound selection back into the field on every
+  /// update, and that push is what loses typed keys (see `reportedSelection`). The pending
+  /// caret is pushed too, so it must not outlive the update that delivers it. The field
+  /// never reports a caret it was handed, so nothing here would clear it until the next key,
+  /// and that key's update would push it over the keys behind it: a burst typed straight
+  /// after a completion lost seven keys that way. `barContent` withdraws it instead.
+  ///
+  /// A `nil` report is dropped. Each time the field reports a caret, SwiftUI reads this
+  /// binding back, finds `nil`, and writes `nil` straight after the real caret. Stored, it
+  /// put every caret back to the end of the text, so an arrow key back to a `/word` never
+  /// offered the list. The caret itself stays where the field has it: `nil` moves nothing.
+  /// A `nil` the field means, if it sends one on losing focus, is dropped too, and the list
+  /// keeps reading the last caret; that is still where the caret is.
+  private var selectionBinding: Binding<TextSelection?> {
+    Binding(
+      get: { pendingSelection },
+      set: { reported in
+        guard let reported else { return }
+        reportedSelection = reported
+      }
+    )
   }
 
   /// A hardware keyboard drives the same choice a tap does: Up and Down move the highlight,
@@ -531,7 +592,7 @@ struct PaneComposerBar: View {
   /// `lineLimit` do it; swapping the initialiser would change the field's identity and drop
   /// the keyboard.
   private var field: some View {
-    TextField(PaneComposerCopy.field, text: $model.text, selection: $textSelection, axis: .vertical)
+    TextField(PaneComposerCopy.field, text: $model.text, selection: selectionBinding, axis: .vertical)
       .textFieldStyle(.plain)
       .lineLimit(isCollapsed ? 1...1 : 1...5)
       // A terminal reply is not prose: an autocapitalised "Yes" or autocorrected flag is a
