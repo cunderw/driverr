@@ -535,7 +535,8 @@ struct HostDetailView: View {
             .foregroundStyle(.orange)
         }
       // A failure is not the resting state either. On a host key mismatch, a grey "Not
-      // connected" would contradict the Problem section below.
+      // connected" would contradict the Problem section below. Unlike the lost pill, the
+      // identifier is on the `Label`: its title is one `Text`, so there is nothing to rename.
       case .failed:
         Label {
           Text("Could not connect")
