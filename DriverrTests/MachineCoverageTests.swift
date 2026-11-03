@@ -195,6 +195,7 @@ struct MachineCoverageTests {
 
     #expect(try #require(adding.session).blockedPanesNewestFirst.isEmpty)
     #expect(try #require(own.session).blockedPanesNewestFirst.map(\.id) == ["core:t1"])
+    #expect(registry.summary(of: [adder, bee]).needsYouCount == 1)
 
     let observations = registry.liveActivityObservations()
     #expect(observations.reduce(0) { $0 + $1.blockedPanes.count } == 1)
@@ -499,11 +500,11 @@ struct MachineCoverageTests {
     await own.reconnect()
     #expect(own.phase == .connected)
 
-    do {
-      try await waitFor("the own host to cover its machine again", within: .seconds(5)) {
-        session.tree.pane(id: "core:bee/t1") == nil
-      }
-    } catch {}
+    // A signal wait on the asserted state. Without the read it never holds, and the suite's
+    // `.timeLimit` ends it.
+    await waitUntil("the own host to cover its machine again") {
+      session.tree.pane(id: "core:bee/t1") == nil
+    }
     #expect(
       own.session?.reportedTree.coreID == Self.beeCore,
       "the reconnected session was never read, so it has no core id to cover with")

@@ -640,8 +640,10 @@ final class ConnectionModel {
         for _ in 0..<carried { session.startLiveUpdates() }
         // A reconnect that nothing holds still has to publish a tree, or the cover rule cannot
         // see this host's core id and the host that added its machine keeps listing it. A Task,
-        // because this block deliberately has no await. A first connect is left to whatever
-        // opens the host.
+        // because this block deliberately has no await. Gated on `wasRead`, so a first connect
+        // is left to whatever opens the host. That includes the fresh `ConnectionModel`s of
+        // `BackgroundRefresh` and `BackgroundWatch`, which must not make an extra read and
+        // announce from it. Nothing tests that, so keep the gate.
         if carried == 0, wasRead { Task { await session.loadIfNeeded() } }
         watchForLoss(coordinator)
       } else {
