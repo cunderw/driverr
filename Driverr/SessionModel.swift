@@ -44,6 +44,11 @@ final class SessionModel {
     reportedTree.hidingMachines(coveredBy: coveringCoreIDs(), keeping: paneID)
   }
 
+  /// Why `tree` is empty, or `nil` when it has rows. Chooses the session tree's empty copy.
+  var emptyReason: EmptySessionReason? {
+    EmptySessionReason(shown: tree, reported: reportedTree)
+  }
+
   /// The expanded workspaces. Held here because the host screen's `@State` dies on every
   /// pop. Seeded once from the first snapshot's focus, so later focus changes do not reopen
   /// a workspace the reader closed.

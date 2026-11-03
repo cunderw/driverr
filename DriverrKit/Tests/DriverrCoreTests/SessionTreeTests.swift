@@ -470,6 +470,22 @@ struct SessionTreeTests {
         == ["own"])
   }
 
+  @Test("an empty tree says whether the host has nothing or another host shows it all")
+  func emptySessionReason() {
+    let tree = treeWithMachine()
+    let onlyMachine = SessionTree(workspaces: [tree.workspaces[1]], coreID: "core-a")
+    let covered = onlyMachine.hidingMachines(coveredBy: ["core-b"])
+    #expect(covered.isEmpty)
+    #expect(EmptySessionReason(shown: covered, reported: onlyMachine) == .shownUnderAnotherHost)
+
+    #expect(EmptySessionReason(shown: .empty, reported: .empty) == .nothingOpen)
+
+    // Partly covered still has rows, so there is no empty copy to choose.
+    let partly = tree.hidingMachines(coveredBy: ["core-b"])
+    #expect(EmptySessionReason(shown: partly, reported: tree) == nil)
+    #expect(EmptySessionReason(shown: tree, reported: tree) == nil)
+  }
+
   @Test("a tab or workspace with no agent under it has no status at all")
   func containersWithoutAgentsHaveNoStatus() {
     // `nil`, not `.unknown`: a workspace of plain shells has nothing to badge.
