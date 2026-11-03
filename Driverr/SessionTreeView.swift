@@ -246,15 +246,11 @@ struct SessionTreeView: View {
           .accessibilityIdentifier("session.error")
 
       default:
-        if model.tree.isEmpty {
-          // A core has terminals and no workspaces, so the sentence follows who can start one.
-          Text(
-            onStartTerminal == nil
-              ? "herdr is running here, but has no workspaces open."
-              : "No terminals are open here."
-          )
-          .foregroundStyle(.secondary)
-          .accessibilityIdentifier("session.empty")
+        if let reason = model.emptyReason {
+          Text(emptySentence(reason))
+            .foregroundStyle(.secondary)
+            .accessibilityIdentifier("session.empty")
+          // Under both sentences, because a start lands on this host either way.
           if let onStartTerminal, model.offersTerminalStart {
             startTerminalRows(onStartTerminal)
           }
@@ -290,6 +286,20 @@ struct SessionTreeView: View {
         Text("Connection lost. Showing the last session read.")
           .accessibilityIdentifier("session.stale")
       }
+    }
+  }
+
+  /// The empty tree's one sentence. A covered host's terminals are still there, so it must not
+  /// say nothing is open. It names no host, because more than one can cover a machine.
+  private func emptySentence(_ reason: EmptySessionReason) -> LocalizedStringKey {
+    switch reason {
+    case .shownUnderAnotherHost:
+      "This host's terminals are shown under another connected host."
+    case .nothingOpen:
+      // A core has terminals and no workspaces, so the sentence follows who can start one.
+      onStartTerminal == nil
+        ? "herdr is running here, but has no workspaces open."
+        : "No terminals are open here."
     }
   }
 
@@ -665,6 +675,16 @@ struct SessionTreeView: View {
   /// herdr is running, but nothing is open in it. Its own state, not a failure.
   #Preview("Session tree — empty session") {
     PreviewSessionTree(tree: .empty)
+  }
+
+  /// A core whose every machine another connected host shows as its own. Its terminals are
+  /// there, so the copy must not say nothing is open, and New Terminal still starts one here.
+  #Preview("Session tree — shown under another host") {
+    PreviewSessionTree(
+      tree: PreviewSupport.coveredSession,
+      coveringCoreIDs: [PreviewSupport.coveringCoreID],
+      canStartTerminal: true
+    )
   }
 
 #endif

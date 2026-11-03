@@ -13,6 +13,6 @@ public enum EmptySessionReason: Equatable, Sendable {
   /// `nil` when `shown` has rows to draw.
   public init?(shown: SessionTree, reported: SessionTree) {
     guard shown.isEmpty else { return nil }
-    self = .nothingOpen
+    self = reported.isEmpty ? .nothingOpen : .shownUnderAnotherHost
   }
 }
