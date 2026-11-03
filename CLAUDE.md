@@ -43,9 +43,8 @@ This file holds the rules and traps on top of that.
   and forgets a chat. A machine several connected hosts' cores added shows under the one
   whose `host.id.uuidString` sorts first, and under the next when that one drops; its own
   host, when connected, outranks every host that added it. A background pass has no
-  registry, so it takes the
-  other hosts' cores and the machines they show from the standing card
-  (`HostSummary.coreID`, `HostSummary.machineCoreIDs`).
+  registry, so it takes the other hosts' cores and the machines they show from the standing
+  card (`HostSummary.coreID`, `HostSummary.machineCoreIDs`).
 - **`DriverrTerm` must not import `DriverrSSH`.** It renders a `TerminalFeed`, a struct of
   closures over a byte stream, so a PTY channel, a herdr pane or a recorded transcript can
   drive it. The adapter is in the app target, `Driverr/TerminalFeed+PTYChannel.swift`, the
