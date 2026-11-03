@@ -793,7 +793,7 @@ struct ContentView: View {
         // nothing.
         if let message = model.errorMessage {
           Section {
-            RowProblemLabel(message, systemImage: "exclamationmark.triangle")
+            RowProblemLabel(message, systemImage: "exclamationmark.triangle", font: .body)
               .accessibilityIdentifier("hosts.error")
           }
         }

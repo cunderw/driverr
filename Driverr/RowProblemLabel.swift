@@ -6,14 +6,20 @@ import SwiftUI
 /// Only the glyph is orange. As footnote text on a light row, orange reads at about 2.3:1, and
 /// these are sentences someone has to act on.
 ///
+/// Footnote by default. The host list's error row sits among body-size rows and passes
+/// `.body`. It sets no foreground of its own, so the text takes the style around
+/// it: primary in a row, secondary in a section footer.
+///
 /// The caller puts the identifier on this view, which is the leaf.
 struct RowProblemLabel: View {
   private let message: String
   private let systemImage: String
+  private let font: Font
 
-  init(_ message: String, systemImage: String) {
+  init(_ message: String, systemImage: String, font: Font = .footnote) {
     self.message = message
     self.systemImage = systemImage
+    self.font = font
   }
 
   var body: some View {
@@ -23,7 +29,7 @@ struct RowProblemLabel: View {
       Image(systemName: systemImage)
         .foregroundStyle(.orange)
     }
-    .font(.footnote)
+    .font(font)
   }
 }
 
