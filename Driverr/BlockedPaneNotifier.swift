@@ -96,8 +96,8 @@ final class BlockedPaneNotifier {
     await restoreAnnouncedIfNeeded()
     // Polls queued behind the restore resume in no guaranteed order (both seen). Each carries
     // the whole tree, so an older one has nothing a newer one has not already said, and
-    // applying it after would withdraw the newer one's card. Compared with the last applied stamp, not the last
-    // issued, so a poll is only ever dropped for one that has already run.
+    // applying it after would withdraw the newer one's card. Compared with the last applied
+    // stamp, not the last issued, so a poll is only ever dropped for one that has already run.
     guard stamp > lastApplied else { return }
     lastApplied = stamp
     let outcome = alerts.update(to: tree, isAppActive: isAppActive)
