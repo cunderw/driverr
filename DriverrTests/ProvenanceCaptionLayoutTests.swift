@@ -196,6 +196,24 @@ struct ProvenanceCaptionLayoutTests {
     }
   }
 
+  /// The iPhone Duo's outer display is 466 pt, and its bar column takes the right edge, so the
+  /// chat's column is 382 pt: in the Duo tour's chat capture the separator under the Chat and
+  /// Terminal picker ends at x 1146 px (3x), and the composer card sits 16 pt inside it.
+  private static let duoColumn: CGFloat = 382
+
+  @Test("at the Duo's 382 pt column with a count, the caption is not elided")
+  func theCaptionIsWholeOnTheDuoWithACount() {
+    let clamped = frames(at: Self.duoColumn, usage: Self.widestCount)
+    let wanted = frames(at: Self.unclamped, usage: Self.widestCount)
+    #expect(
+      clamped.caption.width >= wanted.caption.width - 0.5,
+      """
+      At the Duo's \(Self.duoColumn) pt the caption resolves to \(clamped.caption.width) pt \
+      against the \(wanted.caption.width) pt it wants, so it is elided.
+      """
+    )
+  }
+
   /// The pad has the room, so a count there costs the caption nothing.
   @Test("the caption stays whole on the pad with a count beside it")
   func theCaptionStaysWholeOnThePadWithACount() {
