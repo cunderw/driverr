@@ -971,9 +971,9 @@ struct AppEnvironment {
   /// Whether the terminal keeps its key row with a hardware keyboard attached.
   ///
   /// Off in production, on under `-uiTesting`. The simulator's hardware keyboard is the Mac's,
-  /// so `GCKeyboard.coalesced` is never nil during a run, and the hiding rule would remove the
-  /// row from every UI test. The hidden branch is covered by `KeyboardNoticeModelTests` and by
-  /// hand on a device.
+  /// so `GCKeyboard.coalesced` can be non-nil during a run (it is when Simulator.app's Connect
+  /// Hardware Keyboard is on), and the hiding rule would then remove the row from UI tests.
+  /// The hidden branch is covered by `KeyboardNoticeModelTests` and by hand on a device.
   static var keepsKeyboardAccessoryRow: Bool {
     ProcessInfo.processInfo.arguments.contains("-uiTesting")
   }

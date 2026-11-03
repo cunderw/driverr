@@ -1177,9 +1177,11 @@ struct TerminalScreen: View {
   /// banners.
   @ViewBuilder
   private var hardwareKeyboardNotice: some View {
-    // The forcing flag is OR'd in because `GCKeyboard.coalesced` is nil in a UI-test
-    // launch, so the model never shows the notice there and UI tests can only check
-    // rendering. `KeyboardNoticeModelTests` covers the state machine.
+    // The forcing flag is OR'd in because no test controls whether `GCKeyboard.coalesced` is
+    // nil: the model shows the notice in a UI test only when Simulator.app's Connect Hardware
+    // Keyboard is on, so a test that needs the notice forces it and checks only rendering.
+    // `KeyboardNoticeModelTests` covers the state machine. A capture that must not ship
+    // with the notice asserts it absent, as `ScreenshotTourUITests` does for the terminal.
     if scene.keyboardNotice.showsHardwareKeyboardNotice
       || (AppEnvironment.isForcingHardwareKeyboardNotice && !isHardwareNoticeDismissed)
     {

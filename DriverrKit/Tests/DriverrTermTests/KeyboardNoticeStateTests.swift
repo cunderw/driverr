@@ -4,8 +4,8 @@ import Testing
 @testable import DriverrTerm
 
 /// Suppressed, dismissed or normal as a function of three facts. In a UI-test launch
-/// `GCKeyboard.coalesced` is nil, so only this tier can drive a hardware keyboard connecting
-/// and going away.
+/// `GCKeyboard.coalesced` follows Simulator.app's Connect Hardware Keyboard, which no test
+/// controls, so only this tier can drive a hardware keyboard connecting and going away.
 @Suite("KeyboardNoticeState")
 struct KeyboardNoticeStateTests {
   @Test("not first responder is always dismissed, whatever the hardware keyboard is doing")
