@@ -5,20 +5,20 @@ import UIKit
 
 @testable import Driverr
 
-/// The chat's provenance caption must not clip on the phone. It ends with the file's age, the
-/// one fact on the row that says whether the session is still alive.
+/// The chat's provenance caption must never cut a word. It ends with the file's age, the one
+/// fact on the row that says whether the session is still alive.
 ///
-/// This tier cannot read the rendered string back, so it lays the same row out twice and
-/// compares the caption's width. Given room, a `Text` takes its intrinsic width; clamped, it
-/// elides. A caption as wide at 402 pt as at 2000 pt rendered whole.
-/// `theProbeCanSeeATruncation` shows the comparison can also come out the other way.
+/// The row draws `TranscriptHeader.caption` where it fits, `shortCaption` where only that fits,
+/// and `shortCaption` cut in the middle only where neither does. `ProvenanceRow` reports which
+/// of the three drew. This tier cannot read the rendered string back, so a test also compares
+/// the drawn caption's width with the width its string takes when nothing clamps it: as wide
+/// as that, it rendered whole. `theProbeCanSeeATruncation` shows the comparison can also come
+/// out the other way.
 ///
-/// The whole-caption tests are for a row without a context count. `theCountSurvives` covers a
-/// row with one, where the caption gives way on the phone.
-///
-/// At 402 pt the row leaves its caption 341 pt, the number `ProvenanceRow` and
-/// `TranscriptHeader.caption` are sized against. It measures the real `ProvenanceRow`, because
-/// the subject is that row's `.lineLimit(1)` and truncation mode.
+/// Without a count, the whole caption fits on the 402 pt phone, which leaves it 341 pt; the
+/// scope phrases in `TranscriptHeader.caption` are sized against that. With a count, the phone
+/// and the Duo draw the short caption. It measures the real `ProvenanceRow`, because the
+/// subject is that row's candidates and their `.lineLimit(1)`.
 ///
 /// `.serialized`: see `ChatGlassLayoutTests`.
 @MainActor
@@ -56,27 +56,36 @@ struct ProvenanceCaptionLayoutTests {
     )
   }
 
-  /// The caption's frame when the row is laid out at `width`.
-  private func captionFrame(at width: CGFloat, header: TranscriptHeader? = nil) -> CGRect {
-    var caption = CGRect.zero
+  /// What the row drew for its caption.
+  private struct Drawn {
+    var frame = CGRect.zero
+    var variant: ProvenanceRow.CaptionVariant?
+  }
+
+  /// The caption's frame and variant when the row is laid out at `width`.
+  private func caption(at width: CGFloat, header: TranscriptHeader? = nil) -> Drawn {
+    var drawn = Drawn()
     let window = HostedProbe.window(
-      ProvenanceRow(header: header ?? widestHeader(), onCaptionFrame: { caption = $0 }),
+      ProvenanceRow(
+        header: header ?? widestHeader(),
+        onCaptionFrame: { drawn = Drawn(frame: $0, variant: $1) }
+      ),
       size: CGSize(width: width, height: HostedProbe.phone.height)
     )
     withExtendedLifetime(window) {}
-    return caption
+    return drawn
   }
 
   /// The caption's and the context count's frames when the row carries a count.
   private func frames(
     at width: CGFloat, usage: ContextUsage, typeSize: DynamicTypeSize = .large
-  ) -> (caption: CGRect, count: CGRect) {
-    var caption = CGRect.zero
+  ) -> (caption: Drawn, count: CGRect) {
+    var caption = Drawn()
     var count = CGRect.zero
     let window = HostedProbe.window(
       ProvenanceRow(
         header: widestHeader(contextUsage: usage),
-        onCaptionFrame: { caption = $0 },
+        onCaptionFrame: { caption = Drawn(frame: $0, variant: $1) },
         onCountFrame: { count = $0 }
       )
       .environment(\.dynamicTypeSize, typeSize),
@@ -86,6 +95,24 @@ struct ProvenanceCaptionLayoutTests {
     return (caption, count)
   }
 
+  /// The width `text` takes in the caption's font when nothing clamps it.
+  private func intrinsicWidth(of text: String) -> CGFloat {
+    var frame = CGRect.zero
+    let window = HostedProbe.window(
+      Text(text).font(.caption).lineLimit(1).fixedSize().measuredFrame { frame = $0 },
+      size: CGSize(width: Self.unclamped, height: HostedProbe.phone.height)
+    )
+    withExtendedLifetime(window) {}
+    return frame.width
+  }
+
+  /// The string a variant draws for `header`.
+  private func text(of variant: ProvenanceRow.CaptionVariant?, for header: TranscriptHeader)
+    -> String
+  {
+    variant == .full ? header.caption : header.shortCaption
+  }
+
   /// The widest count the formatter writes below a million: three digits and a unit.
   private static let widestCount = ContextUsage(
     inputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 999_999
@@ -93,6 +120,11 @@ struct ProvenanceCaptionLayoutTests {
 
   /// Wide enough that nothing clamps the caption, so it reports what it wants to be.
   private static let unclamped: CGFloat = 2000
+
+  /// The iPhone Duo's outer display is 466 pt, and its bar column takes the right edge, so the
+  /// chat's column is 382 pt: in the Duo tour's chat capture the separator under the Chat and
+  /// Terminal picker ends at x 1146 px (3x), and the composer card sits 16 pt inside it.
+  private static let duoColumn: CGFloat = 382
 
   /// Without a context count. See `theCountSurvives` for the Claude case.
   @Test("the whole caption renders at 402 pt without a context count, age included")
@@ -108,51 +140,106 @@ struct ProvenanceCaptionLayoutTests {
 
   @Test("Claude's record fits on the phone too")
   func theRecordCaptionSurvivesOnThePhone() {
-    let clamped = captionFrame(at: HostedProbe.phone.width, header: recordHeader())
-    let wanted = captionFrame(at: Self.unclamped, header: recordHeader())
-    #expect(wanted.width > 0)
-    #expect(clamped.width >= wanted.width - 0.5)
+    let drawn = caption(at: HostedProbe.phone.width, header: recordHeader())
+    let wanted = intrinsicWidth(of: recordHeader().caption)
+    #expect(drawn.variant == .full)
+    #expect(wanted > 0)
+    #expect(drawn.frame.width >= wanted - 0.5)
   }
 
   /// Lays out a row without a context count; `theCountSurvives` measures the row with one.
   private func expectTheCaptionIsWhole(at width: CGFloat, on device: String) {
-    let clamped = captionFrame(at: width)
-    let wanted = captionFrame(at: Self.unclamped)
+    let drawn = caption(at: width)
+    let wanted = intrinsicWidth(of: widestHeader().caption)
 
     #expect(
-      clamped.width >= wanted.width - 0.5,
+      drawn.variant == .full,
       """
-      The provenance caption resolves to \(clamped.width) pt on the \(device) at \(width) pt, \
-      against the \(wanted.width) pt it takes when nothing clamps it, so \
-      \(wanted.width - clamped.width) pt of it is elided. The caption ends with \
-      the file's age, so what is thrown away is the only evidence on the row that the session \
-      is still alive. Either the scope phrase in `TranscriptHeader.caption` grew again, or the \
-      row stopped leaving the caption its 16 pt inset and \(ProvenanceRow.glyphGap) pt glyph gap.
+      The \(device) at \(width) pt draws the \(String(describing: drawn.variant)) caption \
+      without a count. It has the room for the whole one, so either the scope phrase in \
+      `TranscriptHeader.caption` grew again, or the row stopped leaving the caption its 16 pt \
+      inset and \(ProvenanceRow.glyphGap) pt glyph gap.
+      """
+    )
+    #expect(
+      drawn.frame.width >= wanted - 0.5,
+      """
+      The provenance caption resolves to \(drawn.frame.width) pt on the \(device) at \(width) pt, \
+      against the \(wanted) pt it takes when nothing clamps it, so \
+      \(wanted - drawn.frame.width) pt of it is elided.
       """
     )
 
     let inset = ProvenanceRow.horizontalPadding
     #expect(
-      clamped.maxX <= width - inset + 0.5,
+      drawn.frame.maxX <= width - inset + 0.5,
       """
-      The caption runs to x \(clamped.maxX) on the \(device) at \(width) pt, past the \
+      The caption runs to x \(drawn.frame.maxX) on the \(device) at \(width) pt, past the \
       \(width - inset) pt the row's own \(inset) pt inset leaves it.
       """
     )
   }
 
-  /// Without this, a probe that measured the wrong view would pass the two tests above.
+  /// Without this, a probe that measured the wrong view would pass every whole-caption test.
+  /// At 150 pt not even the short caption fits, so only the last candidate is left.
   @Test("the probe can see a truncation when there is one")
   func theProbeCanSeeATruncation() {
-    let squeezed = captionFrame(at: 300)
-    let wanted = captionFrame(at: Self.unclamped)
+    let squeezed = caption(at: 150)
+    let wanted = intrinsicWidth(of: widestHeader().shortCaption)
+
+    #expect(squeezed.variant == .elided)
+    #expect(
+      squeezed.frame.width > 0 && squeezed.frame.width < wanted - 0.5,
+      """
+      The caption reports \(squeezed.frame.width) pt in a 150 pt window, against the \
+      \(wanted) pt the short caption takes unclamped, so it is not being clamped at all — this \
+      probe cannot tell a truncated caption from a whole one, and every other assertion in \
+      this suite passes vacuously.
+      """
+    )
+  }
+
+  /// The Duo's outer display cut "reported" to "rep…" before the short caption existed.
+  @Test("at the Duo's 382 pt column with a count, a whole caption draws, age included")
+  func theCaptionIsWholeOnTheDuoWithACount() {
+    expectAWholeCaptionBesideTheCount(at: Self.duoColumn, on: "Duo")
+  }
+
+  /// The phone has no room for the whole caption beside a count either, and draws the short one.
+  @Test("at 402 pt with a count, a whole caption draws, age included")
+  func theCaptionIsWholeOnThePhoneWithACount() {
+    expectAWholeCaptionBesideTheCount(at: HostedProbe.phone.width, on: "phone")
+  }
+
+  private func expectAWholeCaptionBesideTheCount(at width: CGFloat, on device: String) {
+    let header = widestHeader(contextUsage: Self.widestCount)
+    let (drawn, count) = frames(at: width, usage: Self.widestCount)
+    let string = text(of: drawn.variant, for: header)
+    let wanted = intrinsicWidth(of: string)
+    print(
+      "[provenance caption] \(device) \(width) pt with a count: \(String(describing: drawn.variant)) "
+        + "\"\(string)\", \(drawn.frame.width) of \(wanted) pt")
 
     #expect(
-      squeezed.width < wanted.width - 0.5,
+      drawn.variant == .full || drawn.variant == .short,
       """
-      The caption reports \(squeezed.width) pt in a 300 pt window and \(wanted.width) pt \
-      unclamped, so it is not being clamped at all — this probe cannot tell a truncated \
-      caption from a whole one, and every other assertion in this suite passes vacuously.
+      The \(device) at \(width) pt draws the \(String(describing: drawn.variant)) caption beside \
+      a count, which cuts a word. `shortCaption` must fit here.
+      """
+    )
+    #expect(
+      wanted > 0 && drawn.frame.width >= wanted - 0.5,
+      """
+      "\(string)" resolves to \(drawn.frame.width) pt on the \(device), against the \(wanted) pt \
+      it takes unclamped, so it is elided.
+      """
+    )
+    #expect(string.hasSuffix(TranscriptAge.phrase(for: 0)), "\"\(string)\" lost its age.")
+    #expect(
+      drawn.frame.maxX <= count.minX - ProvenanceRow.glyphGap + 0.5,
+      """
+      The caption ends at x \(drawn.frame.maxX) and the count starts at \(count.minX) on the \
+      \(device): they collide.
       """
     )
   }
@@ -161,15 +248,16 @@ struct ProvenanceCaptionLayoutTests {
   /// because that trade is a design judgement.
   @Test("the context count renders whole beside the caption on the phone and the pad")
   func theCountSurvives() {
-    for (device, width) in [("phone", HostedProbe.phone.width), ("pad", HostedProbe.pad.width)] {
+    for (device, width) in [
+      ("Duo", Self.duoColumn), ("phone", HostedProbe.phone.width), ("pad", HostedProbe.pad.width),
+    ] {
       let clamped = frames(at: width, usage: Self.widestCount)
       let wanted = frames(at: Self.unclamped, usage: Self.widestCount)
-      let bare = captionFrame(at: Self.unclamped)
       print(
         """
         [provenance count] \(device) \(width) pt: count \(clamped.count.width) pt \
         at x \(clamped.count.minX), \
-        caption \(clamped.caption.width) of \(bare.width) pt wanted
+        caption \(String(describing: clamped.caption.variant)) \(clamped.caption.frame.width) pt
         """
       )
 
@@ -187,41 +275,24 @@ struct ProvenanceCaptionLayoutTests {
         "The count runs to x \(clamped.count.maxX), past the row's \(inset) pt inset."
       )
       #expect(
-        clamped.caption.maxX <= clamped.count.minX - ProvenanceRow.glyphGap + 0.5,
+        clamped.caption.frame.maxX <= clamped.count.minX - ProvenanceRow.glyphGap + 0.5,
         """
-        The caption ends at x \(clamped.caption.maxX) and the count starts at \
+        The caption ends at x \(clamped.caption.frame.maxX) and the count starts at \
         \(clamped.count.minX) on the \(device): they collide.
         """
       )
     }
   }
 
-  /// The iPhone Duo's outer display is 466 pt, and its bar column takes the right edge, so the
-  /// chat's column is 382 pt: in the Duo tour's chat capture the separator under the Chat and
-  /// Terminal picker ends at x 1146 px (3x), and the composer card sits 16 pt inside it.
-  private static let duoColumn: CGFloat = 382
-
-  @Test("at the Duo's 382 pt column with a count, the caption is not elided")
-  func theCaptionIsWholeOnTheDuoWithACount() {
-    let clamped = frames(at: Self.duoColumn, usage: Self.widestCount)
-    let wanted = frames(at: Self.unclamped, usage: Self.widestCount)
-    #expect(
-      clamped.caption.width >= wanted.caption.width - 0.5,
-      """
-      At the Duo's \(Self.duoColumn) pt the caption resolves to \(clamped.caption.width) pt \
-      against the \(wanted.caption.width) pt it wants, so it is elided.
-      """
-    )
-  }
-
   /// The pad has the room, so a count there costs the caption nothing.
   @Test("the caption stays whole on the pad with a count beside it")
   func theCaptionStaysWholeOnThePadWithACount() {
     let clamped = frames(at: HostedProbe.pad.width, usage: Self.widestCount)
-    let bare = captionFrame(at: Self.unclamped)
+    let wanted = intrinsicWidth(of: widestHeader().caption)
+    #expect(clamped.caption.variant == .full)
     #expect(
-      clamped.caption.width >= bare.width - 0.5,
-      "The pad elides \(bare.width - clamped.caption.width) pt of the caption beside a count."
+      clamped.caption.frame.width >= wanted - 0.5,
+      "The pad elides \(wanted - clamped.caption.frame.width) pt of the caption beside a count."
     )
   }
 
@@ -235,13 +306,16 @@ struct ProvenanceCaptionLayoutTests {
       let larger = frames(at: width, usage: Self.widestCount, typeSize: size)
       print(
         "[provenance count AX] \(size): count \(larger.count.width) pt, "
-          + "caption \(larger.caption.width) pt")
+          + "caption \(String(describing: larger.caption.variant)) "
+          + "\(larger.caption.frame.width) pt")
       #expect(
         abs(larger.count.width - ax1.count.width) < 0.5
-          && abs(larger.caption.width - ax1.caption.width) < 0.5,
+          && abs(larger.caption.frame.width - ax1.caption.frame.width) < 0.5
+          && larger.caption.variant == ax1.caption.variant,
         """
-        At \(size) the count is \(larger.count.width) pt and the caption \(larger.caption.width) pt, \
-        against \(ax1.count.width) and \(ax1.caption.width) at AX1: the row is not capped.
+        At \(size) the count is \(larger.count.width) pt and the caption \
+        \(larger.caption.frame.width) pt, against \(ax1.count.width) and \
+        \(ax1.caption.frame.width) at AX1: the row is not capped.
         """
       )
     }
