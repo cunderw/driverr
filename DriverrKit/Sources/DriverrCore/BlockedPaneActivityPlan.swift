@@ -24,6 +24,10 @@ public struct HostActivityObservation: Equatable, Sendable {
   /// `SessionTree.coreID`, for the card to carry. See `HostSummary.coreID`.
   public let coreID: String?
 
+  /// The machines this host shows, `SessionTree.machineCoreIDs` of the tree `counts` came
+  /// from. See `HostSummary.machineCoreIDs`.
+  public let machineCoreIDs: Set<String>
+
   public init(
     hostID: UUID,
     hostName: String,
@@ -31,7 +35,8 @@ public struct HostActivityObservation: Equatable, Sendable {
     blockedPanes: [Pane],
     counts: AgentStatusCounts,
     observedAt: Date,
-    coreID: String? = nil
+    coreID: String? = nil,
+    machineCoreIDs: Set<String> = []
   ) {
     self.hostID = hostID
     self.hostName = hostName
@@ -40,6 +45,7 @@ public struct HostActivityObservation: Equatable, Sendable {
     self.counts = counts
     self.observedAt = observedAt
     self.coreID = coreID
+    self.machineCoreIDs = machineCoreIDs
   }
 }
 

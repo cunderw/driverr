@@ -107,6 +107,76 @@ struct BlockedPaneActivityPlanTests {
     #expect(state.hosts.map(\.coreID) == ["core-b", "core-a"])
   }
 
+  @Test("a background pass is also told the machines the card's other hosts show")
+  func coveringMachines() {
+    let standing = card(
+      cardA,
+      hosts: [
+        BlockedPaneActivityAttributes.HostSummary(
+          hostID: workbox, hostName: "workbox", counts: AgentStatusCounts(), coreID: "core-a",
+          machineCoreIDs: ["core-w"]),
+        BlockedPaneActivityAttributes.HostSummary(
+          hostID: buildbox, hostName: "buildbox", counts: AgentStatusCounts(), coreID: "core-b",
+          machineCoreIDs: ["core-m", "core-n"]),
+      ])
+    #expect(
+      BlockedPaneActivityPlan.coreIDs(coveringHost: workbox, in: [standing])
+        == ["core-b", "core-m", "core-n"])
+    #expect(
+      BlockedPaneActivityPlan.coreIDs(coveringHost: buildbox, in: [standing])
+        == ["core-a", "core-w"])
+  }
+
+  @Test("the card keeps the machines each host shows, sorted, and none as nil")
+  func machinesSurviveAScopedPass() throws {
+    let observed = HostActivityObservation(
+      hostID: workbox, hostName: "workbox", isConnected: true, blockedPanes: [],
+      counts: AgentStatusCounts(), observedAt: now, coreID: "core-a",
+      machineCoreIDs: ["core-n", "core-m"])
+    let standing = card(
+      cardA,
+      hosts: [
+        BlockedPaneActivityAttributes.HostSummary(
+          hostID: buildbox, hostName: "buildbox", counts: AgentStatusCounts(), coreID: "core-b",
+          machineCoreIDs: ["core-x"]),
+        host(workbox),
+      ])
+    let actions = BlockedPaneActivityPlan.reconcile(
+      observations: [observed], scope: .oneHost(workbox), existing: [standing],
+      preferences: LiveActivityPreferences(), canRequest: false, now: now)
+    let state = try #require(updated(actions))
+    #expect(state.hosts.map(\.machineCoreIDs) == [["core-x"], ["core-m", "core-n"]])
+
+    // Showing none writes nothing new, so a card from before this field is not rewritten.
+    let bare = HostActivityObservation(
+      hostID: workbox, hostName: "workbox", isConnected: true, blockedPanes: [],
+      counts: AgentStatusCounts(), observedAt: now, coreID: "core-a")
+    let again = BlockedPaneActivityPlan.reconcile(
+      observations: [bare], scope: .oneHost(workbox), existing: [standing],
+      preferences: LiveActivityPreferences(), canRequest: false, now: now)
+    #expect(try #require(updated(again)).hosts.map(\.machineCoreIDs) == [["core-x"], nil])
+  }
+
+  /// Every foreground poll builds the set again, and a card is written whenever `hosts` differs.
+  @Test("the same machines seen twice are not worth a write")
+  func machineOrderIsNotAChange() throws {
+    let machines: Set<String> = Set((0..<16).map { "core-\($0)" })
+    func pass(_ existing: [ExistingLiveActivity]) -> [LiveActivityAction] {
+      BlockedPaneActivityPlan.reconcile(
+        observations: [
+          HostActivityObservation(
+            hostID: workbox, hostName: "workbox", isConnected: true, blockedPanes: [],
+            counts: AgentStatusCounts(), observedAt: now, coreID: "core-a",
+            machineCoreIDs: Set(machines.shuffled()))
+        ],
+        scope: .everyConnectedHost, existing: existing, preferences: LiveActivityPreferences(),
+        canRequest: true, now: now)
+    }
+    let first = try #require(requested(pass([])))
+    #expect(first.hosts.first?.machineCoreIDs == machines.sorted())
+    #expect(pass([ExistingLiveActivity(activityID: cardA, state: first)]).isEmpty)
+  }
+
   // MARK: - The trigger
 
   @Test("a connected host with nothing blocked still gets a card")

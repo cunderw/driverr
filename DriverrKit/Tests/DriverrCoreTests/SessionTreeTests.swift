@@ -486,6 +486,14 @@ struct SessionTreeTests {
     #expect(EmptySessionReason(shown: tree, reported: tree) == nil)
   }
 
+  @Test("a tree names the machines it holds a group for, and no others")
+  func machineCoreIDs() {
+    #expect(treeWithMachine().machineCoreIDs == ["core-b"])
+    #expect(treeWithMachine(nil).machineCoreIDs.isEmpty, "an id not read yet matches nothing")
+    #expect(treeWithMachine().hidingMachines(coveredBy: ["core-b"]).machineCoreIDs.isEmpty)
+    #expect(SessionTree.empty.machineCoreIDs.isEmpty)
+  }
+
   @Test("a tab or workspace with no agent under it has no status at all")
   func containersWithoutAgentsHaveNoStatus() {
     // `nil`, not `.unknown`: a workspace of plain shells has nothing to badge.

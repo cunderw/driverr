@@ -454,6 +454,15 @@ public struct SessionTree: Hashable, Sendable {
     return Set(workspaces.first.map { [$0.id] } ?? [])
   }
 
+  /// The permanent ids of the machines this tree holds a group for, which its core added.
+  ///
+  /// Read from `reportedTree`, it is what a host's core lists. Read from `tree`, it is what the
+  /// host shows, after `hidingMachines`. A group whose machine id has not been read yet is not
+  /// here, because nothing can match it.
+  public var machineCoreIDs: Set<String> {
+    Set(workspaces.compactMap(\.machineCoreID))
+  }
+
   /// This tree without the machines that another host shows as its own.
   ///
   /// A core lists the terminals of machines it added, so a machine that is also a Driverr host

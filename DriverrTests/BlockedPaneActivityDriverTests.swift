@@ -199,6 +199,7 @@ struct BlockedPaneActivityDriverTests {
     #expect(seen.blockedPanes.isEmpty)
     #expect(seen.counts == AgentStatusCounts(working: 1))
     #expect(seen.coreID == "core-a")
+    #expect(seen.machineCoreIDs.isEmpty)
   }
 
   /// No host on the card shows it, so the core that added it is the only way to it.
@@ -214,6 +215,8 @@ struct BlockedPaneActivityDriverTests {
     #expect(await runner.run() == .refreshed(blockedPanes: 1))
     let seen = try #require(driver.passes.first?.observations.first)
     #expect(seen.blockedPanes.map(\.id) == ["core:bee/t1"])
+    // The card carries it, so a pass over another host that also added it leaves it out.
+    #expect(seen.machineCoreIDs == ["core-b"])
   }
 
   /// A refresh that finds nothing blocked still has to say so, or the card it could have
