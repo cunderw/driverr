@@ -159,6 +159,10 @@ struct BlockedPaneNotifierTests {
 
   /// Two polls that arrive while the first store read is still out both wait on that read,
   /// and they resume newest-first. The older tree must not undo what the newer one did.
+  ///
+  /// This guards only while the runtime resumes those waiters newest-first. If a future
+  /// runtime resumes them oldest-first, the older fold runs first and the newer one corrects
+  /// it, so this test passes on the unfixed code too.
   @Test("a poll that waited on the first store read cannot undo a newer poll")
   func anOlderFoldCannotWithdrawANewerOnesCard() async {
     let center = FakeNotificationCenter(status: .authorized)
@@ -183,8 +187,9 @@ struct BlockedPaneNotifierTests {
 
     #expect(await center.withdrawn.isEmpty, "the older, working tree withdrew the card")
     #expect(await center.posts.map(\.id) == [id])
+    // One write: the newer fold's. The older fold is dropped before it writes anything.
     let writes = await store.writes
-    #expect(writes.last == ["w1:p1"], "the stored set, oldest write first: \(writes)")
+    #expect(writes == [["w1:p1"]], "the stored set, oldest write first: \(writes)")
   }
 
   @Test("one request per newly-blocked pane, carrying both ids")
