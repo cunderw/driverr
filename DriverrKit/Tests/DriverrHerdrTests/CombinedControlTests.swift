@@ -291,6 +291,36 @@ struct CombinedControlTests {
     await #expect(throws: tuiFailure) { try await combined.snapshot() }
   }
 
+  /// Only a TUI with no session backs off. One that failed some other way has a failure on
+  /// screen, and one that answers is the host's own session.
+  @Test(
+    "a TUI that fails for any reason but no session is read on every tick",
+    arguments: [
+      HerdrAvailability.ready(version: "0.9.1", protocolVersion: 22),
+      HerdrAvailability.tooOld(version: "0.7.0", protocolVersion: 16),
+      HerdrAvailability.statusUnreadable(version: "0.9.1"),
+      HerdrAvailability.notInstalled,
+    ]
+  )
+  func failedTUIIsReadEveryTick(answer: HerdrAvailability) async {
+    let tui = CountingTUI(read: .failure(tuiFailure), answer: answer)
+    let combined = CombinedControl(tui: tui, core: Side(binaryPath: "hc", tree: coreTree))
+    for _ in 1...12 {
+      await #expect(throws: tuiFailure) { try await combined.snapshot() }
+    }
+    #expect(await tui.snapshots == 12)
+  }
+
+  @Test("a TUI that answers is read on every tick")
+  func readyTUIIsReadEveryTick() async throws {
+    let tui = CountingTUI(read: .success(tuiTree))
+    let combined = CombinedControl(tui: tui, core: Side(binaryPath: "hc", tree: coreTree))
+    for _ in 1...12 {
+      #expect(try await combined.snapshot().allPanes.map(\.id) == ["w1:p1", "core:t1"])
+    }
+    #expect(await tui.snapshots == 12)
+  }
+
   @Test("both failing throws the TUI's error")
   func bothFail() async {
     let combined = control(
@@ -382,6 +412,107 @@ struct CombinedControlTests {
     await #expect(throws: tuiFailure) { try await combined.changedSnapshot() }
   }
 
+  // MARK: - A TUI with no session
+
+  /// The gap doubles from one tick after each check that finds no session, up to
+  /// `longestTUIBackoff`: checks on ticks 1, 3, 6, 11, 20, then every eleventh.
+  @Test("a TUI with no session is asked less and less often, down to a floor")
+  func noSessionBacksOff() async throws {
+    let tui = CountingTUI(read: .failure(tuiFailure), answer: .serverNotRunning(version: "1"))
+    let combined = CombinedControl(tui: tui, core: Side(binaryPath: "hc", tree: coreTree))
+    var asked: [Int] = []
+    for tick in 1...60 {
+      let before = await tui.snapshots
+      #expect(try await combined.snapshot() == coreTree)
+      if await tui.snapshots > before { asked.append(tick) }
+    }
+    #expect(asked == [1, 3, 6, 11, 20, 31, 42, 53])
+    #expect(await tui.snapshots == 8)
+    #expect(await tui.availabilityChecks == 8)
+  }
+
+  /// The issue's own measure: failing TUI reads over a fixed window, on the shared fake.
+  @Test("a fake host with no session is asked 8 times in 60 ticks, not 60")
+  func noSessionBacksOffOnTheFake() async throws {
+    let tui = FakeControl(
+      tree: .empty, failure: tuiFailure, availability: .serverNotRunning(version: "0.9.1"))
+    let combined = CombinedControl(tui: tui, core: FakeControl(tree: coreTree))
+    for _ in 1...60 { _ = try await combined.snapshot() }
+    #expect(await tui.snapshotCount == 8)
+  }
+
+  @Test("a session that starts is shown at the next check, and read on every tick after")
+  func sessionStartsDuringBackoff() async throws {
+    let tui = CountingTUI(read: .failure(tuiFailure), answer: .serverNotRunning(version: "1"))
+    let combined = CombinedControl(tui: tui, core: Side(binaryPath: "hc", tree: coreTree))
+    // Checks on ticks 1 and 3, then 4 and 5 are skipped.
+    for _ in 1...4 { _ = try await combined.snapshot() }
+    #expect(await tui.snapshots == 2)
+
+    await tui.moved(to: .success(tuiTree))
+    #expect(try await combined.snapshot().allPanes.map(\.id) == ["core:t1"])
+    #expect(await tui.snapshots == 2)
+
+    #expect(try await combined.snapshot().allPanes.map(\.id) == ["w1:p1", "core:t1"])
+    #expect(await tui.snapshots == 3)
+    for expected in 4...9 {
+      _ = try await combined.snapshot()
+      #expect(await tui.snapshots == expected)
+    }
+  }
+
+  @Test("a tick that skips the TUI still answers with the core's latest tree")
+  func skippedTickReadsTheCore() async throws {
+    let tui = CountingTUI(read: .failure(tuiFailure), answer: .serverNotRunning(version: "1"))
+    let core = PushingCore(read: .success(coreTree))
+    let combined = CombinedControl(tui: tui, core: core)
+    _ = try await combined.snapshot()
+
+    for tick in 2...10 {
+      let id = "core:t\(tick)"
+      await core.moved(to: .success(tree("core:workspace", panes: [id])))
+      #expect(try await combined.snapshot().allPanes.map(\.id) == [id])
+    }
+    #expect(await core.snapshots == 10)
+  }
+
+  @Test("a reset in the middle of a backoff makes the next poll ask the TUI")
+  func resetEndsTheBackoff() async throws {
+    let tui = CountingTUI(read: .failure(tuiFailure), answer: .serverNotRunning(version: "1"))
+    let combined = CombinedControl(tui: tui, core: Side(binaryPath: "hc", tree: coreTree))
+    // Checks on ticks 1, 3 and 6, then 7 to 10 are skipped.
+    for _ in 1...7 { _ = try await combined.snapshot() }
+    #expect(await tui.snapshots == 3)
+
+    await combined.resetBackoff()
+    _ = try await combined.snapshot()
+    #expect(await tui.snapshots == 4)
+    // And the schedule starts again: one skipped, then a check.
+    _ = try await combined.snapshot()
+    #expect(await tui.snapshots == 4)
+    _ = try await combined.snapshot()
+    #expect(await tui.snapshots == 5)
+  }
+
+  /// As `changedSnapshot()` does: the core failing is likely the link, and the TUI says so.
+  @Test("a core that fails on a skipped tick asks the TUI, and starts the schedule again")
+  func coreFailsDuringBackoff() async throws {
+    let tui = CountingTUI(read: .failure(tuiFailure), answer: .serverNotRunning(version: "1"))
+    let core = PushingCore(read: .success(coreTree))
+    let combined = CombinedControl(tui: tui, core: core)
+    // Checks on ticks 1 and 3, so tick 4 would be skipped.
+    for _ in 1...3 { _ = try await combined.snapshot() }
+    #expect(await tui.snapshots == 2)
+
+    await core.moved(to: .failure(coreFailure))
+    await #expect(throws: tuiFailure) { try await combined.snapshot() }
+    #expect(await tui.snapshots == 3)
+
+    await core.moved(to: .success(coreTree))
+    #expect(try await combined.snapshot() == coreTree)
+    #expect(await tui.snapshots == 4)
+  }
+
   @Test("a combined host still polls, for the TUI, and hears the core's changes")
   func pollsAndListens() async throws {
     let tui = CountingTUI(read: .success(tuiTree))
@@ -399,6 +530,8 @@ struct CombinedControlTests {
     #expect(side.needsPolling)
     #expect(side.changes == nil)
     #expect(try await side.changedSnapshot().allPanes.map(\.id) == ["w1:p1"])
+    await side.resetBackoff()
+    #expect(await side.calls.isEmpty)
   }
 
   // MARK: - Availability

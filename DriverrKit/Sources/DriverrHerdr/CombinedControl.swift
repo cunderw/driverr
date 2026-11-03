@@ -40,13 +40,50 @@ public struct CombinedControl: HerdrControl {
   }
 
   /// A struct cannot remember, and this control is copied into every model that reads it.
+  ///
+  /// So every copy shares one backoff, and a host is on one schedule however many models poll
+  /// it. The schedule counts snapshots, not time, so two pollers on one host reach each check
+  /// sooner than one would.
   private actor Memory {
     var tui: TUISide?
+    /// Polls left that answer from a remembered `.noSession` without asking the TUI.
+    private var ticksToSkip = 0
+    /// What the last check that found no session set `ticksToSkip` to. Zero once the TUI
+    /// answers or fails some other way, so the next no session starts the schedule again.
+    private var gap = 0
 
-    func remember(_ tui: TUISide) {
+    /// The remembered `.noSession` when this poll is one to skip, counted off.
+    func skipTUI() -> TUISide? {
+      guard case .noSession = tui, ticksToSkip > 0 else { return nil }
+      ticksToSkip -= 1
+      return tui
+    }
+
+    /// What a poll that asked the TUI found, and how many polls to leave it for.
+    func checked(_ tui: TUISide) {
       self.tui = tui
+      if case .noSession = tui {
+        gap = min(max(gap * 2, 1), CombinedControl.longestTUIBackoff)
+      } else {
+        gap = 0
+      }
+      ticksToSkip = gap
+    }
+
+    func resetBackoff() {
+      ticksToSkip = 0
+      gap = 0
     }
   }
+
+  /// The most polls in a row that skip a TUI with no session running, counted in ticks. The
+  /// wall time that comes to depends on the caller's poll interval.
+  ///
+  /// A judgement, not a measurement. A session started at the desk shows within it, and a
+  /// host that never starts one is asked once in eleven polls instead of every one. The gap
+  /// doubles from one poll after each check that finds no session, so the checks fall on
+  /// polls 1, 3, 6, 11, 20 and then every eleventh.
+  static let longestTUIBackoff = 10
 
   private let tui: any HerdrControl
   private let core: any HerdrControl
@@ -82,7 +119,8 @@ public struct CombinedControl: HerdrControl {
   public var needsPolling: Bool { tui.needsPolling || core.needsPolling }
 
   /// The core's news on the TUI's last tree, with no command on the host. The TUI's own poll
-  /// goes on regardless, so that tree is at most a tick old.
+  /// goes on regardless, so that tree is at most a tick old. A remembered no session can be as
+  /// old as `longestTUIBackoff`.
   ///
   /// **A core that failed goes back to a whole poll.** It usually means the link went, and the
   /// TUI's last tree came over that link. Answered with it, the core's panes look gone, and
@@ -104,7 +142,17 @@ public struct CombinedControl: HerdrControl {
   /// stopped session does not hide a running core. Any other failure is rethrown. A failed
   /// poll passed over as a tree clears `SessionModel.lastFailure`, and `ConnectionModel.apply`
   /// then forgets every TUI pane's transcript, screen, draft and surface.
+  ///
+  /// **A TUI with no session is asked less and less often**, because each check is a failing
+  /// snapshot and a status command on the user's machine. A poll in the gap reads only the
+  /// core and answers with it, as `changedSnapshot()` does, and a core that fails there gets
+  /// the whole read. `longestTUIBackoff` has the schedule, and `resetBackoff()` ends it.
   public func snapshot() async throws -> SessionTree {
+    if let tuiSide = await memory.skipTUI() {
+      let coreRead = await Result { try await core.snapshot() }
+      if case .success = coreRead { return try merged(tuiSide, coreRead) }
+    }
+
     async let tuiTree = Result { try await tui.snapshot() }
     async let coreTree = Result { try await core.snapshot() }
     let (tuiRead, coreRead) = await (tuiTree, coreTree)
@@ -118,8 +166,12 @@ public struct CombinedControl: HerdrControl {
     case (.failure(let failure), .failure):
       tuiSide = .failed(failure)
     }
-    await memory.remember(tuiSide)
+    await memory.checked(tuiSide)
     return try merged(tuiSide, coreRead)
+  }
+
+  public func resetBackoff() async {
+    await memory.resetBackoff()
   }
 
   private func merged(
