@@ -514,9 +514,13 @@ struct HostDetailView: View {
       // Not "Not connected", which means never reached. The user needs to know the session
       // was lost.
       case .lost:
-        Label("Connection lost", systemImage: "exclamationmark.triangle")
-          .foregroundStyle(.orange)
-          .accessibilityIdentifier("connect.lost")
+        Label {
+          Text("Connection lost")
+        } icon: {
+          Image(systemName: "exclamationmark.triangle")
+            .foregroundStyle(.orange)
+        }
+        .accessibilityIdentifier("connect.lost")
         // Why it went: a network change and a host that stopped answering need different
         // responses. On its own `Text`, never the `VStack`.
         if let reason = model.lossReason {
@@ -528,9 +532,13 @@ struct HostDetailView: View {
       // A failure is not the resting state either. On a host key mismatch, a grey "Not
       // connected" would contradict the Problem section below.
       case .failed:
-        Label("Could not connect", systemImage: "exclamationmark.triangle")
-          .foregroundStyle(.orange)
-          .accessibilityIdentifier("connect.failedPill")
+        Label {
+          Text("Could not connect")
+        } icon: {
+          Image(systemName: "exclamationmark.triangle")
+            .foregroundStyle(.orange)
+        }
+        .accessibilityIdentifier("connect.failedPill")
       case .idle:
         Label("Not connected", systemImage: "circle.dashed")
           .foregroundStyle(.secondary)

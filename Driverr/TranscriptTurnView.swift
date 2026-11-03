@@ -430,12 +430,19 @@ struct TranscriptTurnView: View {
       // row; see `body`.
       if let pending = run.pendingCall {
         let notice = pending.pendingNotice(agentStatus: agentStatus, blockedKind: blockedKind)
-        Text(notice.label)
-          .font(.caption.weight(.semibold))
-          // Orange only for a question. A running tool reads like the other rows.
-          .foregroundStyle(notice.isAsking ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
-          .padding(.top, 6)
-          .accessibilityIdentifier("pane.chat.turn.pending")
+        // A question gets an orange glyph and primary text: orange caption text reads at
+        // about 2.3:1 on a light row. A running tool reads like the other rows. The
+        // identifier stays on the `Text`, the leaf.
+        HStack(alignment: .firstTextBaseline, spacing: 4) {
+          if notice.isAsking {
+            PendingQuestionGlyph()
+          }
+          Text(notice.label)
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(notice.isAsking ? Color.primary : Color.secondary)
+            .accessibilityIdentifier("pane.chat.turn.pending")
+        }
+        .padding(.top, 6)
       }
     }
     .padding(.horizontal, 10)

@@ -661,10 +661,13 @@ struct PaneChatView: View {
               .font(.caption.weight(.semibold))
               .foregroundStyle(themeAccent)
               .accessibilityAddTraits(.isHeader)
-            Text(notice)
-              .font(.caption.weight(.semibold))
-              .foregroundStyle(.orange)
-              .accessibilityIdentifier("pane.chat.turn.pending")
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+              PendingQuestionGlyph()
+              Text(notice)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(Color.primary)
+                .accessibilityIdentifier("pane.chat.turn.pending")
+            }
           }
           .padding(.bottom, 10)
         }
