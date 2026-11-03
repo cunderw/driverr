@@ -256,6 +256,75 @@ struct TranscriptParserTests {
     #expect(page.records == 1)
   }
 
+  /// Claude Code writes its interrupt marker as a `user` record: one `text` block holding
+  /// exactly the marker, no `origin`, no `isMeta`, the shape seen in real session files.
+  private static func interruptMarker(_ text: String, uuid: String = "int1") -> String {
+    Fixture.line(
+      ["type": "user", "uuid": uuid, "timestamp": Fixture.timestamp],
+      raw: [
+        "isSidechain": "false",
+        "message": "{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"\(Fixture.escaped(text))\"}]}",
+      ]
+    )
+  }
+
+  @Test("Claude Code's interrupt marker is not a human turn, in either wording or shape")
+  func interruptMarkerIsNotAHumanTurn() {
+    for marker in ["[Request interrupted by user]", "[Request interrupted by user for tool use]"] {
+      for record in [Self.interruptMarker(marker), Fixture.human(marker, uuid: "int1")] {
+        let page = TranscriptParser.page(
+          from: [Fixture.assistant("working on it"), record, Fixture.human("the real one", uuid: "h")]
+            .joined(separator: "\n")
+        )
+        #expect(page.records == 3)
+        #expect(page.turns.filter(\.isHuman).map(\.text) == ["the real one"], "\(record) was read as a person")
+      }
+    }
+  }
+
+  /// The match is exact, never a prefix: agents and people both quote the phrase.
+  @Test("a message that only mentions the interrupt marker is still a person")
+  func interruptMarkerInsideAMessageIsAHumanTurn() {
+    let said = "why did I get [Request interrupted by user] there?"
+    let page = TranscriptParser.page(from: Self.interruptMarker(said))
+    #expect(page.turns.filter(\.isHuman).map(\.text) == [said])
+  }
+
+  /// `origin` is authoritative where it exists, so a person who types the marker said it.
+  @Test("the marker's exact text typed by a person is still a human turn")
+  func interruptMarkerWithHumanOriginIsAHumanTurn() {
+    let page = TranscriptParser.page(from: Fixture.humanWithOrigin("[Request interrupted by user]"))
+    #expect(page.turns.filter(\.isHuman).map(\.text) == ["[Request interrupted by user]"])
+  }
+
+  /// The marker is text-only. A record that also carries an image is something sent.
+  @Test("a marker record carrying an image keeps its image")
+  func interruptMarkerWithAnImageIsKept() {
+    let record = Fixture.line(
+      ["type": "user", "uuid": "im", "timestamp": Fixture.timestamp],
+      raw: [
+        "isSidechain": "false",
+        "message": "{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"[Request interrupted by user]\"},"
+          + "{\"type\":\"image\",\"source\":\(Fixture.base64Source())}]}",
+      ]
+    )
+    let page = TranscriptParser.page(from: record)
+    #expect(page.turns.filter(\.isHuman).map(\.attachedImages) == [1])
+  }
+
+  /// Intended change: the marker used to be a You bubble, which stopped `attach(duration:)`.
+  @Test("a turn duration after the marker belongs to the interrupted assistant turn")
+  func durationCrossesTheInterruptMarker() {
+    let page = TranscriptParser.page(
+      from: [
+        Fixture.human("go"), Fixture.assistant("partial", uuid: "a"),
+        Self.interruptMarker("[Request interrupted by user]"), Fixture.turnDuration("1200"),
+      ].joined(separator: "\n")
+    )
+    #expect(page.turns.map(\.id) == ["u1", "a"])
+    #expect(page.turns.last?.durationMs == 1200)
+  }
+
   @Test("a compacted summary is not something anybody said")
   func compactSummaryIsNotAHumanTurn() {
     let page = TranscriptParser.page(
