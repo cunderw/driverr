@@ -285,9 +285,14 @@ struct TranscriptParserTests {
   /// The match is exact, never a prefix: agents and people both quote the phrase.
   @Test("a message that only mentions the interrupt marker is still a person")
   func interruptMarkerInsideAMessageIsAHumanTurn() {
-    let said = "why did I get [Request interrupted by user] there?"
-    let page = TranscriptParser.page(from: Self.interruptMarker(said))
-    #expect(page.turns.filter(\.isHuman).map(\.text) == [said])
+    // The second one opens with the marker, so a prefix match would drop it.
+    for said in [
+      "why did I get [Request interrupted by user] there?",
+      "[Request interrupted by user] can you resume?",
+    ] {
+      let page = TranscriptParser.page(from: Self.interruptMarker(said))
+      #expect(page.turns.filter(\.isHuman).map(\.text) == [said])
+    }
   }
 
   /// `origin` is authoritative where it exists, so a person who types the marker said it.
