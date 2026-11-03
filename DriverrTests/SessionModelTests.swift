@@ -99,6 +99,11 @@ private actor PushingControl: HerdrControl {
   private var startGate: CheckedContinuation<Void, Never>?
   private var holdsStarts = false
   private(set) var starts = 0
+  private(set) var backoffResets = 0
+
+  func resetBackoff() {
+    backoffResets += 1
+  }
 
   nonisolated var changes: AsyncStream<Void>? { listener.listen() }
   /// `true` for a host with a TUI beside its core, which is polled as well as pushed.
@@ -513,6 +518,24 @@ struct SessionModelTests {
     #expect(model.isEmptySession)
 
     await control.release()
+  }
+
+  /// A user who has just started herdr and pulls to refresh must not wait out the backoff. A
+  /// tick must not reset it, or a host with no TUI session would be asked every tick again.
+  @Test("a refresh asks the host to read everything now, and a poll tick does not")
+  func refreshResetsTheBackoff() async {
+    let control = PushingControl(oneTerminal(), needsPolling: true)
+    let (model, polls) = live(control, pollInterval: interval)
+    model.startLiveUpdates()
+    defer { model.stopLiveUpdates() }
+    // The first read is `loadIfNeeded()`'s refresh, then the pushed read on the way in, then
+    // at least two ticks.
+    await polls.waitForPolls(4)
+    #expect(await control.snapshots >= 3)
+    #expect(await control.backoffResets == 1)
+
+    await model.refresh()
+    #expect(await control.backoffResets == 2)
   }
 
   /// Until a tree lands, each tick still goes through `.loading`, so this host's `session.error`
