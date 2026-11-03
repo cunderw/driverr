@@ -63,9 +63,25 @@
     /// A session model over a fixed tree. The caller loads it through a `.task`, as the app
     /// does, because `HerdrControl` is an actor. Static, not scripted, so the preview holds
     /// still.
-    static func model(_ tree: SessionTree) -> SessionModel {
-      SessionModel(control: FakeControl(tree: tree))
+    static func model(
+      _ tree: SessionTree, coveringCoreIDs: Set<String> = [], canStartTerminal: Bool = false
+    ) -> SessionModel {
+      SessionModel(
+        control: FakeControl(tree: tree, canStartTerminal: canStartTerminal),
+        coveringCoreIDs: { coveringCoreIDs })
     }
+
+    /// The core another connected host is, in `coveredSession`.
+    static let coveringCoreID = "preview-covering-core"
+
+    /// The seed as machines a core added, all of which another connected host shows as its
+    /// own, so this host's tree draws empty while it still reports terminals.
+    static let coveredSession = SessionTree(
+      workspaces: seededSession.workspaces.map {
+        Workspace(
+          id: $0.id, number: $0.number, label: $0.label, isFocused: $0.isFocused,
+          status: $0.status, tabs: $0.tabs, machineCoreID: coveringCoreID)
+      })
 
     /// The seed's pane with a reported `agent_session`, so a chat preview draws the exact
     /// header. Chosen by session, not kind, because the first Claude pane has no session.
@@ -132,6 +148,10 @@
     /// Whether the rows are interactive. `true` matches the host screen. `false` shows the
     /// read-only shape.
     var interactive = true
+    /// The cores of other connected hosts. See `SessionModel.tree`.
+    var coveringCoreIDs: Set<String> = []
+    /// Whether this host is a core, which offers New Terminal on an empty tree.
+    var canStartTerminal = false
 
     @State private var model: SessionModel?
 
@@ -142,12 +162,14 @@
             model: model,
             transcripts: PreviewSupport.transcripts,
             onSelect: interactive ? { _ in } : nil,
-            onReply: interactive ? { _ in } : nil
+            onReply: interactive ? { _ in } : nil,
+            onStartTerminal: canStartTerminal ? {} : nil
           )
         }
       }
       .task {
-        let model = PreviewSupport.model(tree)
+        let model = PreviewSupport.model(
+          tree, coveringCoreIDs: coveringCoreIDs, canStartTerminal: canStartTerminal)
         await model.refresh()
         self.model = model
       }
