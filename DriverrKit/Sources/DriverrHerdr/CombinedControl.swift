@@ -42,7 +42,8 @@ public struct CombinedControl: HerdrControl {
   /// A struct cannot remember, and this control is copied into every model that reads it.
   ///
   /// So every copy shares one backoff, and a host is on one schedule however many models poll
-  /// it.
+  /// it. The schedule counts snapshots, not time, so two pollers on one host reach each check
+  /// sooner than one would.
   private actor Memory {
     var tui: TUISide?
     /// Polls left that answer from a remembered `.noSession` without asking the TUI.
@@ -75,11 +76,11 @@ public struct CombinedControl: HerdrControl {
     }
   }
 
-  /// The most polls in a row that skip a TUI with no session running, which is 30 s at
-  /// `SessionModel.defaultPollInterval`.
+  /// The most polls in a row that skip a TUI with no session running, counted in ticks. The
+  /// wall time that comes to depends on the caller's poll interval.
   ///
   /// A judgement, not a measurement. A session started at the desk shows within it, and a
-  /// host that never starts one is asked twice a minute instead of twenty times. The gap
+  /// host that never starts one is asked once in eleven polls instead of every one. The gap
   /// doubles from one poll after each check that finds no session, so the checks fall on
   /// polls 1, 3, 6, 11, 20 and then every eleventh.
   static let longestTUIBackoff = 10
