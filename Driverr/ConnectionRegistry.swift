@@ -118,20 +118,20 @@ final class ConnectionRegistry {
     return covered
   }
 
-  /// Every connected core, as `hostChanged()` last found them.
-  @ObservationIgnored private var connectedCoreIDs: Set<String> = []
+  /// What each host's tree leaves out, as `hostChanged()` last found it.
+  @ObservationIgnored private var coveredCoreIDs: [DriverrCore.Host.ID: Set<String>] = [:]
 
   /// A host's phase or tree moved.
   ///
   /// When that moved what covers a machine, the other hosts' notifiers hear it now. Their trees
   /// already say so, and the pass below gathers from them, but a core pushes only on change,
-  /// so a read of their own might not come.
+  /// so a read of their own might not come. Compared per host, not as the set of connected
+  /// cores: a core adding a machine another host also added changes no core, and moves it.
   private func hostChanged() {
-    let cores = Set(
-      models.values.compactMap { $0.phase == .connected ? $0.session?.reportedTree.coreID : nil }
-    )
-    if cores != connectedCoreIDs {
-      connectedCoreIDs = cores
+    let covered = Dictionary(
+      uniqueKeysWithValues: models.keys.map { ($0, coreIDs(coveringHost: $0)) })
+    if covered != coveredCoreIDs {
+      coveredCoreIDs = covered
       for model in models.values { model.notifyOfBlockedPanes() }
     }
     pushLiveActivityObservations()
