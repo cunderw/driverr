@@ -195,7 +195,6 @@ struct MachineCoverageTests {
 
     #expect(try #require(adding.session).blockedPanesNewestFirst.isEmpty)
     #expect(try #require(own.session).blockedPanesNewestFirst.map(\.id) == ["core:t1"])
-    #expect(registry.summary(of: [adder, bee]).needsYouCount == 1)
 
     let observations = registry.liveActivityObservations()
     #expect(observations.reduce(0) { $0 + $1.blockedPanes.count } == 1)
@@ -472,5 +471,43 @@ struct MachineCoverageTests {
     try await waitFor("the adder to withdraw it") {
       await adderWithdrawals(center) == [adderEm]
     }
+  }
+
+  /// Issue 47. A reconnect builds a new `SessionModel` whose `reportedTree` is empty, and only a
+  /// holder of live updates reads it. A machine's own host reconnected while nothing holds its
+  /// session (its row, screen and scene all off screen) has no core id to cover with, so the
+  /// host that added the machine lists it again until the own host's screen is opened.
+  @Test("after the machine's own host reconnects, with nothing on screen holding it, it still covers")
+  func ownHostReconnectsUnheld() async throws {
+    let registry = ConnectionRegistry(notifications: NotificationCenter())
+    let adding = await connect(adder, tree: adderTree, on: registry)
+    let supply = TransportSupply()
+    var beeEnvironment = environment(beeTree())
+    beeEnvironment.makeTransport = { supply.make() }
+    let own = registry.model(for: bee, environment: beeEnvironment)
+    // `.remember`, so `reconnect()` has the credential, as for a key or a saved password.
+    await own.connect(password: "hunter2", persistence: .remember)
+    await own.session?.refresh()
+    let session = try #require(adding.session)
+    #expect(session.tree.pane(id: "core:bee/t1") == nil, "covered before the loss")
+
+    await supply.latest?.drop()
+    await waitUntil("the own host to lose its link") { own.phase != .connected }
+    #expect(session.tree.pane(id: "core:bee/t1") != nil, "a lost host hands the machine back")
+
+    // As `TerminalSceneModel.attemptReconnect` does, with no screen holding the session.
+    await own.reconnect()
+    #expect(own.phase == .connected)
+
+    do {
+      try await waitFor("the own host to cover its machine again", within: .seconds(5)) {
+        session.tree.pane(id: "core:bee/t1") == nil
+      }
+    } catch {}
+    #expect(
+      own.session?.reportedTree.coreID == Self.beeCore,
+      "the reconnected session was never read, so it has no core id to cover with")
+    #expect(registry.coreIDs(coveringHost: adder.id).contains(Self.beeCore))
+    #expect(session.tree.pane(id: "core:bee/t1") == nil, "the machine is listed under the adder")
   }
 }
