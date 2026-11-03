@@ -89,35 +89,49 @@ final class ConnectionRegistry {
 
   // MARK: - Which host shows a machine
 
-  /// The cores of the hosts other than `hostID` that Driverr holds a link to.
+  /// The machines `hostID`'s core may have added that another connected host shows instead.
   ///
-  /// A core lists the machines it added, so a machine that is also a host would show twice.
-  /// This is what each host's `SessionModel.tree` leaves out. Only a connected host covers
-  /// anything, so a lost link hands its terminals back to the core that added the machine,
-  /// and a host with no core tree yet has nothing to cover with.
+  /// A core lists the machines it added, so a machine that is also a host, or that two hosts'
+  /// cores both added, would show twice. This is what each host's `SessionModel.tree` leaves
+  /// out. Two rules, in this order:
+  ///
+  /// - A machine that is a host itself shows under that host. Every other host's core is here.
+  /// - A machine two hosts added shows under the one whose id sorts first, the order
+  ///   `pendingHostKeyPrompt()` uses. So the machines of every host that sorts before
+  ///   `hostID` are here.
+  ///
+  /// Only a connected host covers anything, so a lost link hands a machine to the next host
+  /// that added it, and a host with no core tree yet has nothing to cover with. Read from
+  /// `reportedTree`, which is what a host's core lists. `tree` would be the wrong set, and
+  /// reading it here would call back into this registry for that host's own covered set.
   func coreIDs(coveringHost hostID: DriverrCore.Host.ID) -> Set<String> {
-    Set(
-      models.values.compactMap { model in
-        guard model.host.id != hostID, model.phase == .connected else { return nil }
-        return model.session?.reportedTree.coreID
+    var covered: Set<String> = []
+    for model in models.values {
+      guard model.host.id != hostID, model.phase == .connected,
+        let reported = model.session?.reportedTree
+      else { continue }
+      if let core = reported.coreID { covered.insert(core) }
+      if model.host.id.uuidString < hostID.uuidString {
+        covered.formUnion(reported.machineCoreIDs)
       }
-    )
+    }
+    return covered
   }
 
-  /// Every connected core, as `hostChanged()` last found them.
-  @ObservationIgnored private var connectedCoreIDs: Set<String> = []
+  /// What each host's tree leaves out, as `hostChanged()` last found it.
+  @ObservationIgnored private var coveredCoreIDs: [DriverrCore.Host.ID: Set<String>] = [:]
 
   /// A host's phase or tree moved.
   ///
   /// When that moved what covers a machine, the other hosts' notifiers hear it now. Their trees
   /// already say so, and the pass below gathers from them, but a core pushes only on change,
-  /// so a read of their own might not come.
+  /// so a read of their own might not come. Compared per host, not as the set of connected
+  /// cores: a core adding a machine another host also added changes no core, and moves it.
   private func hostChanged() {
-    let cores = Set(
-      models.values.compactMap { $0.phase == .connected ? $0.session?.reportedTree.coreID : nil }
-    )
-    if cores != connectedCoreIDs {
-      connectedCoreIDs = cores
+    let covered = Dictionary(
+      uniqueKeysWithValues: models.keys.map { ($0, coreIDs(coveringHost: $0)) })
+    if covered != coveredCoreIDs {
+      coveredCoreIDs = covered
       for model in models.values { model.notifyOfBlockedPanes() }
     }
     pushLiveActivityObservations()
@@ -146,7 +160,9 @@ final class ConnectionRegistry {
         blockedPanes: tree.blockedPanes,
         counts: tree.agentStatusCounts,
         observedAt: now,
-        coreID: tree.coreID
+        coreID: tree.coreID,
+        // What it shows, not what its core lists, because these are what `counts` include.
+        machineCoreIDs: tree.machineCoreIDs
       )
     }
   }

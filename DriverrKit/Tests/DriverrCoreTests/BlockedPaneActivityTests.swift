@@ -145,7 +145,7 @@ struct BlockedPaneActivityTests {
     }
   }
 
-  @Test("a host on a card written before core ids decodes with none")
+  @Test("a host on a card written before core ids decodes with none, and no machines")
   func hostSummaryWithoutACoreID() throws {
     let json = #"""
       {"hostID":"11111111-0000-0000-0000-000000000001","hostName":"workbox",
@@ -154,9 +154,11 @@ struct BlockedPaneActivityTests {
     let host = try JSONDecoder().decode(
       BlockedPaneActivityAttributes.HostSummary.self, from: Data(json.utf8))
     #expect(host.coreID == nil)
+    #expect(host.machineCoreIDs == nil)
 
     let carried = BlockedPaneActivityAttributes.HostSummary(
-      hostID: host.hostID, hostName: host.hostName, counts: host.counts, coreID: "core-a")
+      hostID: host.hostID, hostName: host.hostName, counts: host.counts, coreID: "core-a",
+      machineCoreIDs: ["core-c"])
     #expect(
       try JSONDecoder().decode(
         BlockedPaneActivityAttributes.HostSummary.self, from: JSONEncoder().encode(carried))

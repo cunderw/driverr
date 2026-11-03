@@ -33,12 +33,26 @@ public struct BlockedPaneActivityAttributes: Codable, Hashable, Sendable {
     /// A background pass sees one host and has no registry, so this is how it knows what the
     /// card's other hosts already count. See `BlockedPaneActivityPlan.coreIDs(coveringHost:in:)`.
     public let coreID: String?
+    /// The machines another host's core added that this host's `counts` include, sorted.
+    ///
+    /// `nil` when it shows none, and on a card an earlier build wrote. A machine two hosts
+    /// added is counted by one of them, and a background pass hides it when another host on
+    /// the card already shows it. Sorted, because the card is rewritten whenever `hosts`
+    /// differs, and set order would differ between two passes over the same tree.
+    public let machineCoreIDs: [String]?
 
-    public init(hostID: UUID, hostName: String, counts: AgentStatusCounts, coreID: String? = nil) {
+    public init(
+      hostID: UUID,
+      hostName: String,
+      counts: AgentStatusCounts,
+      coreID: String? = nil,
+      machineCoreIDs: [String]? = nil
+    ) {
       self.hostID = hostID
       self.hostName = hostName
       self.counts = counts
       self.coreID = coreID
+      self.machineCoreIDs = machineCoreIDs
     }
   }
 

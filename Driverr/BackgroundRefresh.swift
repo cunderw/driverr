@@ -236,7 +236,8 @@ final class BackgroundRefreshRunner {
           blockedPanes: tree.blockedPanes,
           counts: tree.agentStatusCounts,
           observedAt: .now,
-          coreID: tree.coreID
+          coreID: tree.coreID,
+          machineCoreIDs: tree.machineCoreIDs
         )
       ],
       scope: .oneHost(host.id),

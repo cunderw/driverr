@@ -24,6 +24,10 @@ public struct HostActivityObservation: Equatable, Sendable {
   /// `SessionTree.coreID`, for the card to carry. See `HostSummary.coreID`.
   public let coreID: String?
 
+  /// The machines this host shows, `SessionTree.machineCoreIDs` of the tree `counts` came
+  /// from. See `HostSummary.machineCoreIDs`.
+  public let machineCoreIDs: Set<String>
+
   public init(
     hostID: UUID,
     hostName: String,
@@ -31,7 +35,8 @@ public struct HostActivityObservation: Equatable, Sendable {
     blockedPanes: [Pane],
     counts: AgentStatusCounts,
     observedAt: Date,
-    coreID: String? = nil
+    coreID: String? = nil,
+    machineCoreIDs: Set<String> = []
   ) {
     self.hostID = hostID
     self.hostName = hostName
@@ -40,6 +45,7 @@ public struct HostActivityObservation: Equatable, Sendable {
     self.counts = counts
     self.observedAt = observedAt
     self.coreID = coreID
+    self.machineCoreIDs = machineCoreIDs
   }
 }
 
@@ -231,16 +237,20 @@ public enum BlockedPaneActivityPlan {
     return ends + [.update(activityID: card.activityID, desired)]
   }
 
-  /// The cores of the hosts the standing card speaks for, other than `hostID`.
+  /// The cores of the hosts the standing card speaks for, other than `hostID`, and the
+  /// machines those hosts show.
   ///
   /// What a `.oneHost` pass hides from its tree, because the card carries those hosts over and
   /// their counts already hold those machines. A host the card does not name covers nothing,
-  /// so with no card a machine is counted through the core that added it.
+  /// so with no card a machine is counted through the core that added it. A machine two hosts
+  /// added is counted by whichever the card says shows it, which the foreground decided by
+  /// `ConnectionRegistry.coreIDs(coveringHost:)`.
   public static func coreIDs(
     coveringHost hostID: UUID,
     in existing: [ExistingLiveActivity]
   ) -> Set<String> {
-    Set(existing.flatMap(\.state.hosts).filter { $0.hostID != hostID }.compactMap(\.coreID))
+    let others = existing.flatMap(\.state.hosts).filter { $0.hostID != hostID }
+    return Set(others.compactMap(\.coreID) + others.flatMap { $0.machineCoreIDs ?? [] })
   }
 
   // MARK: - Building the one state
@@ -284,7 +294,9 @@ public enum BlockedPaneActivityPlan {
       summaries.removeAll { $0.hostID == seen.hostID }
       summaries.append(
         BlockedPaneActivityAttributes.HostSummary(
-          hostID: seen.hostID, hostName: seen.hostName, counts: counts, coreID: seen.coreID))
+          hostID: seen.hostID, hostName: seen.hostName, counts: counts, coreID: seen.coreID,
+          // Sorted, so a pass over the same tree writes the same summary.
+          machineCoreIDs: seen.machineCoreIDs.isEmpty ? nil : seen.machineCoreIDs.sorted()))
       if let first = waiting.first {
         candidates[seen.hostID] = BlockedPaneActivityAttributes.BlockedPaneSummary(
           hostID: seen.hostID, hostName: seen.hostName, paneID: first.id,

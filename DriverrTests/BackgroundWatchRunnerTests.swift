@@ -308,6 +308,37 @@ struct BackgroundWatchRunnerTests {
     #expect(seen.blockedPanes.isEmpty)
     #expect(seen.counts == AgentStatusCounts())
     #expect(seen.coreID == "core-a")
+    #expect(seen.machineCoreIDs.isEmpty)
+  }
+
+  /// The card carries what this host shows, so another host's pass can leave it out.
+  @Test("a poll tells the card which machines it counted")
+  func aPollReportsTheMachinesItShows() async throws {
+    let (runner, _, driver) = makeRunner()
+    driver.coveringCoreIDs[host.id] = ["core-x"]
+    let session = FakeWatchSession()
+    session.snapshot = SessionTree(
+      workspaces: [
+        Workspace(
+          id: "bee", number: 1, label: "bee",
+          tabs: [
+            Tab(
+              id: "t1", workspaceID: "bee", number: 1, label: "a",
+              panes: [pane("core:bee/t1", status: .blocked)])
+          ],
+          machineCoreID: "core-b")
+      ],
+      coreID: "core-a"
+    )
+    let task = FakeWatchTask()
+    session.afterSnapshot = { _ in runner.stop() }
+
+    runner.start(host: host, subject: "claude", session: session)
+    await runner.run(task)
+
+    let seen = try #require(driver.passes.first?.observations.first)
+    #expect(seen.blockedPanes.map(\.id) == ["core:bee/t1"])
+    #expect(seen.machineCoreIDs == ["core-b"])
   }
 
   /// Indeterminate progress, reported once before any work. Watching a pane has no honest
