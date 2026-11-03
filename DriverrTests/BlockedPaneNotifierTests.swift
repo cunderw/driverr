@@ -80,10 +80,42 @@ private func tree(_ panes: [Pane]) -> SessionTree {
   ])
 }
 
+/// An announced-pane store whose read does not answer until the test says so.
+///
+/// It holds a notifier's first fold inside `restoreAnnouncedIfNeeded`, so a test can queue
+/// more folds behind the same restore. The write is not gated.
+private actor GatedAnnouncedPaneStore: AnnouncedPaneStore {
+  /// Whether the read has started. The test waits for this before releasing it.
+  private(set) var readRequested = false
+  /// Every write, oldest first.
+  private(set) var writes: [Set<String>] = []
+  private var released = false
+  private var waiter: CheckedContinuation<Void, Never>?
+
+  func announcedPanes(forHost hostID: UUID) async -> Set<String> {
+    readRequested = true
+    Waker.signalShared()
+    if !released {
+      await withCheckedContinuation { waiter = $0 }
+    }
+    return []
+  }
+
+  func setAnnouncedPanes(_ paneIDs: Set<String>, forHost hostID: UUID) async {
+    writes.append(paneIDs)
+  }
+
+  func release() {
+    released = true
+    waiter?.resume()
+    waiter = nil
+  }
+}
+
 /// The app-tier half of blocked-pane notifications: permission, the card's two strings, and
 /// the identifiers a later open withdraws by. The timing rule is `BlockedPaneAlertsTests`.
 @MainActor
-@Suite("BlockedPaneNotifier")
+@Suite("BlockedPaneNotifier", .timeLimit(.minutes(1)))
 struct BlockedPaneNotifierTests {
   private let host = DriverrCore.Host(
     name: "workbox",
@@ -123,6 +155,55 @@ struct BlockedPaneNotifierTests {
       .sessionChanged(to: tree([pane("w1:p1", status: .blocked)]), isAppActive: false)
 
     #expect(await store.announcedPanes(forHost: host.id) == ["w1:p1"])
+  }
+
+  /// Two polls that arrive while the first store read is still out both wait on that read,
+  /// and they resume in no guaranteed order (both have been seen). The older tree must not
+  /// undo what the newer one did.
+  ///
+  /// Only a newest-first resume exposes the bug: oldest-first applies the two trees in the
+  /// order they arrived, which is right with or without the fix. So the scenario runs 20
+  /// times, each with its own notifier, store and centre, and an unfixed notifier gets 20
+  /// chances to resume newest-first.
+  @Test("a poll that waited on the first store read cannot undo a newer poll")
+  func anOlderFoldCannotWithdrawANewerOnesCard() async {
+    let id = BlockedPaneAlerts.notificationID(hostID: host.id, paneID: "w1:p1")
+
+    for run in 1...20 {
+      let center = FakeNotificationCenter(status: .authorized)
+      let store = GatedAnnouncedPaneStore()
+      let notifier = notifier(center, store: store)
+
+      // `Task.immediate` runs each body on this actor until it first suspends, which is the
+      // wait on the store read. So `a` has arrived and parked before `b` starts, with no
+      // reliance on the order the main actor happens to start plain tasks in.
+      let a = Task.immediate {
+        await notifier.sessionChanged(
+          to: tree([pane("w1:p1", status: .working)]), isAppActive: false)
+      }
+      let b = Task.immediate {
+        await notifier.sessionChanged(
+          to: tree([pane("w1:p1", status: .blocked)]), isAppActive: false)
+      }
+
+      await waitUntilSignalled("the notifier never read the store") { await store.readRequested }
+      await store.release()
+      await a.value
+      await b.value
+
+      let withdrawn = await center.withdrawn
+      let posts = await center.posts.map(\.id)
+      let writes = await store.writes
+      #expect(withdrawn.isEmpty, "run \(run): the older, working tree withdrew the card")
+      #expect(posts == [id], "run \(run)")
+      // Newest-first drops the older fold before it writes anything. Oldest-first writes the
+      // older tree's empty set and then the newer one's. Either way the newer tree's set is
+      // the last word, with no stale write after it.
+      #expect(
+        writes == [["w1:p1"]] || writes == [[], ["w1:p1"]],
+        "run \(run): the stored set, oldest write first: \(writes)"
+      )
+    }
   }
 
   @Test("one request per newly-blocked pane, carrying both ids")

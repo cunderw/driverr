@@ -41,6 +41,10 @@ final class BlockedPaneNotifier {
   /// Whether a permission request is in flight, so polls do not stack up one request per
   /// tick behind an unanswered alert.
   private var isRequestingAuthorization = false
+  /// How many polls have arrived, which stamps each one in arrival order.
+  private var arrivals = 0
+  /// The stamp of the newest poll folded in so far. See `sessionChanged`.
+  private var lastApplied = 0
 
   init(host: DriverrCore.Host, center: any NotificationScheduling, store: any AnnouncedPaneStore) {
     self.host = host
@@ -64,6 +68,10 @@ final class BlockedPaneNotifier {
   ///
   /// Polls that arrive during the load await one task, and only the first applies it, so a
   /// later one cannot write a stale set over a fold that already happened.
+  ///
+  /// Those waiters resume in no guaranteed order (newest-first and oldest-first have both
+  /// been seen). `sessionChanged` stamps each poll on arrival and drops one older than the
+  /// last it applied.
   private func restoreAnnouncedIfNeeded() async {
     guard !hasRestored else { return }
     let task = restore ?? Task { [store, host] in await store.announcedPanes(forHost: host.id) }
@@ -82,7 +90,16 @@ final class BlockedPaneNotifier {
   ///
   /// `.denied` is final and silent. The app already shows a Needs-you count on every screen.
   func sessionChanged(to tree: SessionTree, isAppActive: Bool) async {
+    // Stamped before the first `await`, so the stamp is the order polls arrived in.
+    arrivals += 1
+    let stamp = arrivals
     await restoreAnnouncedIfNeeded()
+    // Polls queued behind the restore resume in no guaranteed order (both seen). Each carries
+    // the whole tree, so an older one has nothing a newer one has not already said, and
+    // applying it after would withdraw the newer one's card. Compared with the last applied
+    // stamp, not the last issued, so a poll is only ever dropped for one that has already run.
+    guard stamp > lastApplied else { return }
+    lastApplied = stamp
     let outcome = alerts.update(to: tree, isAppActive: isAppActive)
     // Written before the cards go out. Dying after the write costs one missed notification.
     // Dying after posting but before the write would re-alert every blocked pane on every
