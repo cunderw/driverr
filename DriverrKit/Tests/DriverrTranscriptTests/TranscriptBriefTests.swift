@@ -24,6 +24,16 @@ struct TranscriptBriefTests {
       ]) == "review the diff on the focus branch")
   }
 
+  /// Claude Code's interrupt marker carries no `origin`, so the origin check passes it.
+  @Test("Claude Code's interrupt marker is not a brief")
+  func interruptMarker() {
+    #expect(
+      brief([
+        Fixture.humanBlocks("[Request interrupted by user for tool use]", uuid: "m"),
+        Fixture.humanWithOrigin("review the diff on the focus branch"),
+      ]) == "review the diff on the focus branch")
+  }
+
   @Test("only the first line of a long opening message")
   func firstLineOnly() {
     #expect(

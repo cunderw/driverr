@@ -642,6 +642,8 @@ enum TranscriptParser {
       guard let content = record.message?.content else { continue }
       if content.blocks.contains(where: \.isToolResult) { continue }
       let said = content.string ?? joinedText(content.blocks)
+      // Not through `isHumanAuthored`, so the marker needs its own check.
+      if isInterruptMarker(record, saying: said) { continue }
       // A paste is what the person pasted, so its body skips `openingLine`'s command and
       // markup rules.
       if !isClientEnvelope(said), let pasted = pastedContent(in: said) {
@@ -783,7 +785,8 @@ enum TranscriptParser {
   /// 1. A compacted summary is machine text.
   /// 2. `origin.kind` is authoritative where it exists: `human` is a person, anything else
   ///    is the client.
-  /// 3. The client envelope (`<command-name>`, `<bash-input>` and kin), the only signal in
+  /// 3. Claude Code's interrupt marker, matched exactly. See `isInterruptMarker`.
+  /// 4. The client envelope (`<command-name>`, `<bash-input>` and kin), the only signal in
   ///    files written before `origin` existed. It is a machine-written wrapper, closer to a
   ///    typed field than to a glyph.
   ///
@@ -799,7 +802,30 @@ enum TranscriptParser {
   static func isHumanAuthored(_ record: ClaudeRecord, saying text: String) -> Bool {
     guard !record.isCompacted else { return false }
     if let kind = record.origin?.kind, kind != "human" { return false }
+    guard !isInterruptMarker(record, saying: text) else { return false }
     return !isClientEnvelope(text)
+  }
+
+  /// What Claude Code writes when the person interrupts a turn.
+  static let interruptMarkers: Set<String> = [
+    "[Request interrupted by user]",
+    "[Request interrupted by user for tool use]",
+  ]
+
+  /// Whether a `user` record is Claude Code's interrupt marker rather than something typed.
+  ///
+  /// The marker is a fixed string the client writes, closer to the command-name envelope
+  /// than to a glyph: one `text` block holding exactly the marker, with no `origin`,
+  /// `isMeta` or `toolUseResult`. `interruptedMessageId` marked it on 2.1.283 to 2.1.304
+  /// only and was dropped after, so the text is the one signal every version carries.
+  ///
+  /// **Exact, never a prefix.** Agents and people quote the phrase in prose. A record with a
+  /// human `origin` is a person who typed it, and one carrying an image is something sent.
+  static func isInterruptMarker(_ record: ClaudeRecord, saying text: String) -> Bool {
+    guard record.origin?.kind != "human" else { return false }
+    guard interruptMarkers.contains(text.trimmingCharacters(in: .whitespacesAndNewlines))
+    else { return false }
+    return !(record.message?.content?.blocks.contains(where: \.isImage) ?? false)
   }
 
   /// The wrappers Claude Code puts around its own output in a `user` record.
