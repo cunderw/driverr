@@ -40,9 +40,10 @@ This file holds the rules and traps on top of that.
   `machine.list[].id`, because a machine's name is local to the core that added it. Read
   `tree` for anything that lists or counts panes. Read `reportedTree` for anything that holds
   a pane open or keeps state per pane, or the machine's own host connecting closes a scene
-  and forgets a chat. A machine two connected hosts' cores both added shows under the one
+  and forgets a chat. A machine several connected hosts' cores added shows under the one
   whose `host.id.uuidString` sorts first, and under the next when that one drops; its own
-  host, when connected, outranks both. A background pass has no registry, so it takes the
+  host, when connected, outranks every host that added it. A background pass has no
+  registry, so it takes the
   other hosts' cores and the machines they show from the standing card
   (`HostSummary.coreID`, `HostSummary.machineCoreIDs`).
 - **`DriverrTerm` must not import `DriverrSSH`.** It renders a `TerminalFeed`, a struct of

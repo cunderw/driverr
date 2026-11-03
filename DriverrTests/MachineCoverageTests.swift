@@ -350,6 +350,13 @@ struct MachineCoverageTests {
     BlockedPaneAlerts.notificationID(hostID: adder.id, paneID: "core:em/t1")
   }
 
+  /// What the adder withdrew. The other host's notifier shares the centre, and what it
+  /// withdraws of its own is not what these tests are about.
+  private func adderWithdrawals(_ center: FakeNotificationCenter) async -> [String] {
+    let prefix = BlockedPaneAlerts.notificationID(hostID: adder.id, paneID: "")
+    return await center.withdrawn.filter { $0.hasPrefix(prefix) }
+  }
+
   @Test(
     "a machine two hosts added shows under the first in host order, whichever connected first",
     arguments: [true, false])
@@ -428,7 +435,9 @@ struct MachineCoverageTests {
     #expect(await center.posts.first?.userInfo[NotificationTapRouter.paneIDKey] == "core:em/t1")
 
     let first = await connect(cat, tree: catSharing, on: registry, center: center)
-    try await waitFor("the adder to withdraw it") { await center.withdrawn == [adderEm] }
+    try await waitFor("the adder to withdraw it") {
+      await adderWithdrawals(center) == [adderEm]
+    }
 
     await first.disconnect()
     try await waitFor("the adder to announce it again") {
@@ -456,10 +465,12 @@ struct MachineCoverageTests {
     let first = await connect(cat, tree: catAlone, on: registry, control: control, center: center)
     #expect(try #require(first.session).tree.pane(id: "core:mach/t1") == nil)
 
-    #expect(await center.withdrawn.isEmpty)
+    #expect(await adderWithdrawals(center).isEmpty)
 
     await control.update(to: catSharing)
     await first.session?.refresh()
-    try await waitFor("the adder to withdraw it") { await center.withdrawn == [adderEm] }
+    try await waitFor("the adder to withdraw it") {
+      await adderWithdrawals(center) == [adderEm]
+    }
   }
 }
