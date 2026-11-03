@@ -121,6 +121,7 @@ struct TerminalSceneModelTests {
     wait: @escaping ReconnectWaiter = { try? await Task.sleep(for: $0) },
     openSettlingWindow: Duration = TerminalSession.defaultOpenSettlingWindow,
     coreSizeDeadline: Duration = DeferredPaneBridge.defaultSizeDeadline,
+    stepDeadline: Duration = TerminalSceneModel.defaultStepDeadline,
     responder: @escaping @Sendable (String) -> Data?
   ) async -> (TerminalSceneModel, FakeSSHTransport) {
     let (model, transport) = await makeConnection(
@@ -133,6 +134,7 @@ struct TerminalSceneModelTests {
       model: model,
       initialTarget: initialTarget,
       wait: wait,
+      stepDeadline: stepDeadline,
       openSettlingWindow: openSettlingWindow,
       coreSizeDeadline: coreSizeDeadline,
       notifications: notifications
@@ -729,14 +731,15 @@ struct TerminalSceneModelTests {
   /// The scene on a core pane with an agent, read from its chat, and the control that can take
   /// the agent away.
   private func watchedAgentScene(
-    _ attacher: FakeCoreAttacher
+    _ attacher: FakeCoreAttacher,
+    stepDeadline: Duration = TerminalSceneModel.defaultStepDeadline
   ) async throws -> (TerminalSceneModel, FakeControl, FakeCoreViewer) {
     let agent = FakeControl.seededTree.pane(id: "w1:p1")?.agent
     let control = FakeControl(
       tree: tree(withCorePane: "core:t7", agent: agent), attacher: attacher)
     let (scene, _) = await makeScene(
       initialTarget: .pane(id: "core:t7"), surface: .chat, herdr: control,
-      openSettlingWindow: .zero, responder: Self.everythingPaints)
+      openSettlingWindow: .zero, stepDeadline: stepDeadline, responder: Self.everythingPaints)
     let observer = try await opened(scene, attacher)
     #expect(scene.currentRole == .observer)
     return (scene, control, observer)
@@ -823,7 +826,10 @@ struct TerminalSceneModelTests {
   @Test("a promotion the terminal's end refuses says the pane closed, in either order")
   func aPromotionRefusedByTheEnd() async throws {
     let attacher = FakeCoreAttacher()
-    var (scene, control, observer) = try await watchedAgentScene(attacher)
+    // The promotion is held at the gate below, and the app's step deadline would answer it
+    // "herdr did not answer." over the close if the machine is slow to get there.
+    var (scene, control, observer) = try await watchedAgentScene(
+      attacher, stepDeadline: .seconds(120))
     observer.gatePromotion()
     observer.refusePromotion()
     await control.update(to: tree(withCorePane: "core:t7"))
@@ -831,8 +837,9 @@ struct TerminalSceneModelTests {
     scene.treeChanged()
     await waitUntilSignalled("the promotion") { observer.promotionCount == 1 }
 
+    // The scene writes the close itself and nothing signals the waker, so wait by observation.
     observer.end()
-    await waitUntilSignalled("the close") { scene.notice == .closed }
+    await waitUntil("the close") { scene.notice == .closed }
     observer.openPromotionGate()
     await scene.settle()
     #expect(scene.notice == .closed)
@@ -844,7 +851,7 @@ struct TerminalSceneModelTests {
     #expect(scene.notice == .failed(.channelFailed(reason: "The pane could not be opened.")))
 
     observer.end()
-    await waitUntilSignalled("the close") { scene.notice == .closed }
+    await waitUntil("the close") { scene.notice == .closed }
   }
 
   /// The chat is what is on screen again, so a controller behind it would hold the size for
