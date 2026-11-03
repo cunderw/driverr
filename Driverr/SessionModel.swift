@@ -129,8 +129,12 @@ final class SessionModel {
     return false
   }
 
+  /// A read someone asked for, so it asks everything the control has been skipping. See
+  /// `HerdrControl.resetBackoff()`. `poll()` comes here only before a tree has landed, which a
+  /// host in a backoff has already passed.
   func refresh() async {
     state = .loading
+    await control.resetBackoff()
     await read { [control] in try await control.snapshot() }
   }
 

@@ -131,6 +131,14 @@ public protocol HerdrControl: Sendable {
   /// an older one that had not been listed yet. That terminal may not be in the next snapshot;
   /// see `SessionModel.startTerminal()`.
   func startTerminal() async throws -> String
+
+  /// Makes the next `snapshot()` ask every side it would skip on a timer.
+  ///
+  /// For a read the user asked for. A combined host asks a TUI with no session less and less
+  /// often, and someone who has just started herdr and pulls to refresh should not wait out
+  /// the gap. See `CombinedControl.longestTUIBackoff`. Defaulted to nothing: only a combined
+  /// host backs off.
+  func resetBackoff() async
 }
 
 extension HerdrControl {
@@ -145,6 +153,7 @@ extension HerdrControl {
   public func startTerminal() async throws -> String {
     throw AppError.herdrCommandFailed(reason: "This host cannot start a terminal.")
   }
+  public func resetBackoff() async {}
 }
 
 /// Drives herdr through its command-line interface.

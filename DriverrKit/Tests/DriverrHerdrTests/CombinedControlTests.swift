@@ -476,6 +476,24 @@ struct CombinedControlTests {
     #expect(await core.snapshots == 10)
   }
 
+  @Test("a reset in the middle of a backoff makes the next poll ask the TUI")
+  func resetEndsTheBackoff() async throws {
+    let tui = CountingTUI(read: .failure(tuiFailure), answer: .serverNotRunning(version: "1"))
+    let combined = CombinedControl(tui: tui, core: Side(binaryPath: "hc", tree: coreTree))
+    // Checks on ticks 1, 3 and 6, then 7 to 10 are skipped.
+    for _ in 1...7 { _ = try await combined.snapshot() }
+    #expect(await tui.snapshots == 3)
+
+    await combined.resetBackoff()
+    _ = try await combined.snapshot()
+    #expect(await tui.snapshots == 4)
+    // And the schedule starts again: one skipped, then a check.
+    _ = try await combined.snapshot()
+    #expect(await tui.snapshots == 4)
+    _ = try await combined.snapshot()
+    #expect(await tui.snapshots == 5)
+  }
+
   /// As `changedSnapshot()` does: the core failing is likely the link, and the TUI says so.
   @Test("a core that fails on a skipped tick asks the TUI, and starts the schedule again")
   func coreFailsDuringBackoff() async throws {
@@ -512,6 +530,8 @@ struct CombinedControlTests {
     #expect(side.needsPolling)
     #expect(side.changes == nil)
     #expect(try await side.changedSnapshot().allPanes.map(\.id) == ["w1:p1"])
+    await side.resetBackoff()
+    #expect(await side.calls.isEmpty)
   }
 
   // MARK: - Availability
