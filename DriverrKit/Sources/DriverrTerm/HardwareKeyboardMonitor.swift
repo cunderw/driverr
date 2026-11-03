@@ -6,8 +6,9 @@ import Observation
 ///
 /// The one reader of `GCKeyboard.coalesced`, so call sites cannot disagree.
 ///
-/// `subscribe` is a seam, so a Kit test fires connect and disconnect by hand. In a UI-test
-/// launch `GCKeyboard.coalesced` is nil, so a UI test cannot drive either change.
+/// `subscribe` is a seam, so a Kit test fires connect and disconnect by hand. A UI test
+/// cannot drive either change: `GCKeyboard.coalesced` follows Simulator.app's Connect
+/// Hardware Keyboard setting, which no test controls.
 @MainActor
 @Observable
 public final class HardwareKeyboardMonitor {

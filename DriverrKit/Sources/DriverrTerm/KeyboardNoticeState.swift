@@ -12,8 +12,9 @@ public enum KeyboardNoticeIdiom: Equatable, Sendable {
 
 /// Why the software keyboard is or is not on screen, as a pure function of three facts.
 ///
-/// A `swift test` can drive it. In a UI-test launch `GCKeyboard.coalesced` is nil, so a UI
-/// test only ever sees the hardware keyboard disconnected.
+/// A `swift test` can drive it. In a UI-test launch the hardware keyboard is connected only
+/// when Simulator.app's Connect Hardware Keyboard is on, which no test controls, so a UI test
+/// cannot rely on either state.
 public enum KeyboardNoticeState: Equatable, Sendable {
   /// The software keyboard is on screen, or nothing has asked for it yet.
   case normal
