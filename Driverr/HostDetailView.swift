@@ -514,23 +514,37 @@ struct HostDetailView: View {
       // Not "Not connected", which means never reached. The user needs to know the session
       // was lost.
       case .lost:
-        Label("Connection lost", systemImage: "exclamationmark.triangle")
-          .foregroundStyle(.orange)
-          .accessibilityIdentifier("connect.lost")
-        // Why it went: a network change and a host that stopped answering need different
-        // responses. On its own `Text`, never the `VStack`.
-        if let reason = model.lossReason {
-          Text(reason)
-            .font(.footnote)
-            .foregroundStyle(.secondary)
-            .accessibilityIdentifier("connect.lostReason")
+        // The reason sits in the title, so it starts under the words and not under the glyph.
+        // Each identifier is on its own `Text`, never the `Label` or the `VStack`, whose
+        // identifier would rename both.
+        Label {
+          VStack(alignment: .leading, spacing: 3) {
+            Text("Connection lost")
+              .accessibilityIdentifier("connect.lost")
+            // Why it went: a network change and a host that stopped answering need different
+            // responses.
+            if let reason = model.lossReason {
+              Text(reason)
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .accessibilityIdentifier("connect.lostReason")
+            }
+          }
+        } icon: {
+          Image(systemName: "exclamationmark.triangle")
+            .foregroundStyle(.orange)
         }
       // A failure is not the resting state either. On a host key mismatch, a grey "Not
-      // connected" would contradict the Problem section below.
+      // connected" would contradict the Problem section below. Unlike the lost pill, the
+      // identifier is on the `Label`: its title is one `Text`, so there is nothing to rename.
       case .failed:
-        Label("Could not connect", systemImage: "exclamationmark.triangle")
-          .foregroundStyle(.orange)
-          .accessibilityIdentifier("connect.failedPill")
+        Label {
+          Text("Could not connect")
+        } icon: {
+          Image(systemName: "exclamationmark.triangle")
+            .foregroundStyle(.orange)
+        }
+        .accessibilityIdentifier("connect.failedPill")
       case .idle:
         Label("Not connected", systemImage: "circle.dashed")
           .foregroundStyle(.secondary)

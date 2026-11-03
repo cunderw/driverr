@@ -344,8 +344,7 @@ struct KeyInstallSheet: View {
     } footer: {
       VStack(alignment: .leading, spacing: 8) {
         if let error = model.keyError {
-          Text(error)
-            .foregroundStyle(.orange)
+          RowProblemLabel(error, systemImage: "exclamationmark.triangle")
             .accessibilityIdentifier("keyInstall.keyError")
         }
         Text(
