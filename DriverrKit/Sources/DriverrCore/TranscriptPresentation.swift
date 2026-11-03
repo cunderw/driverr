@@ -55,8 +55,8 @@ public struct TranscriptHeader: Equatable, Sendable {
   /// for a finished session. `asOf` is a parameter so a `TimelineView` can advance it and
   /// tests can inject a date.
   public let age: TimeInterval?
-  /// The page's context count, drawn beside `caption`, never inside it. With a count, the
-  /// phone elides the middle of the caption, and the count must not be what it eats.
+  /// The page's context count, drawn beside `caption`, never inside it. With a count, a
+  /// phone draws `shortCaption`, and the count must never be what gives way.
   public let contextUsage: ContextUsage?
   /// Whether the session id came from Claude Code's own record, not from herdr.
   private let isFromClaudeRecord: Bool
@@ -80,25 +80,47 @@ public struct TranscriptHeader: Equatable, Sendable {
 
   /// The whole pinned row as one line: the kind of match and how fresh the file is.
   ///
-  /// The row truncates in the middle, so the age stays the last segment and survives. The
-  /// scope phrases are kept short so a row with no context count fits whole on a 402 pt
-  /// phone, where the caption gets 341 pt. `TranscriptPresentationTests.theScopeLeavesRoomForTheAge`
-  /// and `ProvenanceCaptionLayoutTests` pin both.
+  /// The age is the last segment. Where this does not fit, `ProvenanceRow` draws
+  /// `shortCaption` instead of cutting it. The scope phrases are kept short so a row with no
+  /// context count fits whole on a 402 pt phone, where the caption gets 341 pt.
+  /// `TranscriptPresentationTests.theScopeLeavesRoomForTheAge` and
+  /// `ProvenanceCaptionLayoutTests` pin both.
   public var caption: String {
-    let scope: String
+    let base = "\(agentName) session · \(scope)"
+    guard let age else { return base }
+    return "\(base) · \(TranscriptAge.phrase(for: age))"
+  }
+
+  /// `caption` with one segment fewer, for a row too narrow for the whole of it.
+  ///
+  /// It keeps the age, the one segment that says whether the session is still alive, and
+  /// drops a segment instead of cutting a word. An exact match drops its scope, because the
+  /// green check already says the match is exact. Every other variant keeps its scope and
+  /// drops the agent's name, because the scope is the caveat or the fact that tells it apart,
+  /// and a guess must never read as a fact. A sub-agent keeps both in two words.
+  public var shortCaption: String {
+    let base: String
+    switch provenance {
+    case .reportedByHerdr, .continuedFromHerdrSession: base = "\(agentName) session"
+    case .subagent: base = "\(agentName) sub-agent"
+    case .matchedByDirectory, .chosenByHand: base = scope
+    }
+    guard let age else { return base }
+    return "\(base) · \(TranscriptAge.phrase(for: age))"
+  }
+
+  /// The middle segment of `caption`: how this file was matched to the pane.
+  private var scope: String {
     switch provenance {
     // A continued session reads the same: Claude Code named the successor itself, so the
     // match is as exact as herdr's.
     case .reportedByHerdr, .continuedFromHerdrSession:
-      scope = isFromClaudeRecord ? "from Claude's record" : "reported by herdr"
+      isFromClaudeRecord ? "from Claude's record" : "reported by herdr"
     // Keep this short. A longer phrase pushed the age off the end of the row on a phone.
-    case .matchedByDirectory: scope = "matched by directory"
-    case .chosenByHand: scope = "you picked this file"
-    case .subagent: scope = "sub-agent"
+    case .matchedByDirectory: "matched by directory"
+    case .chosenByHand: "you picked this file"
+    case .subagent: "sub-agent"
     }
-    let base = "\(agentName) session · \(scope)"
-    guard let age else { return base }
-    return "\(base) · \(TranscriptAge.phrase(for: age))"
   }
 
   /// The raw evidence `caption` leaves out (a uuid, a directory, a filename), behind a

@@ -162,10 +162,65 @@ struct TranscriptPresentationTests {
     #expect(header(provenance, session: record) == scope)
   }
 
-  /// `ProvenanceRow` truncates in the middle, so the age stays last and the scope phrase is
-  /// held to the longest one that fits. At 12 pt the caption has 341 pt on a 402 pt phone,
-  /// measured by `ProvenanceCaptionLayoutTests`. "matched by this pane's directory" ran the
-  /// caption 40.7 pt over and pushed the age out.
+  // MARK: - The short caption
+
+  /// What a row too narrow for `caption` draws. An exact match drops the scope the green check
+  /// already states; a guess or a pick keeps its caveat and drops the agent's name.
+  @Test(
+    "the short caption keeps the age and drops one segment",
+    arguments: [
+      (TranscriptProvenance.reportedByHerdr(sessionID: "s"), false, "Claude session · written 12s ago"),
+      (.reportedByHerdr(sessionID: "s"), true, "Claude session · written 12s ago"),
+      (.continuedFromHerdrSession(reportedID: "s", sessionID: "t"), false, "Claude session · written 12s ago"),
+      (.matchedByDirectory, false, "matched by directory · written 12s ago"),
+      (.chosenByHand, false, "you picked this file · written 12s ago"),
+      (.subagent, false, "Claude sub-agent · written 12s ago"),
+    ])
+  func shortCaptionKeepsTheAge(
+    provenance: TranscriptProvenance, fromRecord: Bool, expected: String
+  ) {
+    let record = AgentSession(
+      agent: "claude", kind: "id", value: "s", source: AgentSession.claudeRecordSource)
+    let header = TranscriptHeader(
+      agentName: "Claude",
+      source: TranscriptSource(
+        file: file(age: 12), provenance: provenance, directory: "/Users/x/Dev/driverr"),
+      session: fromRecord ? record : nil
+    )
+    #expect(header.shortCaption == expected)
+    let segments = header.shortCaption.components(separatedBy: " \u{00B7} ")
+    #expect(
+      segments.count == 2 && segments.last == "written 12s ago",
+      """
+      \(provenance) shortens to "\(header.shortCaption)". The short caption is what a narrow \
+      row draws, and the last thing it does is cut its middle, so it is two segments with the \
+      age last.
+      """
+    )
+    // Shorter than the whole caption, or the row gains nothing by switching.
+    #expect(header.shortCaption.count < header.caption.count)
+  }
+
+  /// A guess stays a guess with nothing else left to say.
+  @Test("a short caption with no readable age is its first segment alone")
+  func shortCaptionWithoutAnAge() {
+    func short(_ provenance: TranscriptProvenance) -> String {
+      TranscriptHeader(
+        agentName: "Codex",
+        source: TranscriptSource(
+          file: file(age: nil), provenance: provenance, directory: "/Users/x/Dev/driverr")
+      ).shortCaption
+    }
+    #expect(short(.matchedByDirectory) == "matched by directory")
+    #expect(short(.chosenByHand) == "you picked this file")
+    #expect(short(.reportedByHerdr(sessionID: "s")) == "Codex session")
+    #expect(short(.subagent) == "Codex sub-agent")
+  }
+
+  /// The age stays last in `caption` too, and the scope phrase is held to the longest one
+  /// that fits. At 12 pt the caption has 341 pt on a 402 pt phone without a count, measured
+  /// by `ProvenanceCaptionLayoutTests`. "matched by this pane's directory" ran the caption
+  /// 40.7 pt over and pushed the age out. With a count, `ProvenanceRow` draws `shortCaption`.
   @Test("the age is the caption's last segment, and the scope leaves room for it")
   func theScopeLeavesRoomForTheAge() {
     let variants: [(TranscriptProvenance, String)] = [
@@ -193,17 +248,17 @@ struct TranscriptPresentationTests {
       #expect(
         segments.count == 3,
         """
-        \(provenance) captions as \(segments.count) segments, not three. The row truncates in \
-        the middle so that the agent's name leads and the age trails; a caption of some other \
-        shape has no guarantee about which part survives.
+        \(provenance) captions as \(segments.count) segments, not three. The agent's name \
+        leads and the age trails, and `shortCaption` is this with one segment dropped; a \
+        caption of some other shape has no guarantee about which part survives.
         """
       )
       #expect(
         segments.last == "written just now",
         """
-        \(provenance) puts "\(segments.last ?? "")" last, not the age. Middle truncation only \
-        protects the ends, so an age anywhere else is the segment that gets \
-        clipped.
+        \(provenance) puts "\(segments.last ?? "")" last, not the age. The row's last fallback \
+        truncates in the middle, which only protects the ends, so an age anywhere else is the \
+        segment that gets clipped.
         """
       )
       #expect(
