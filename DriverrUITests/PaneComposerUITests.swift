@@ -533,6 +533,35 @@ final class PaneComposerUITests: XCTestCase {
     )
   }
 
+  /// Choosing a command whose whole name is already typed closes the list.
+  ///
+  /// The field never reports the caret a completion hands it, so the list has to learn it
+  /// from `PaneComposerBar.choose` itself. Read from before the completion, the caret sits
+  /// at the end of the typed name, ahead of the inserted space, and the list reopens on a
+  /// finished command.
+  func testChoosingAFullyTypedCommandClosesTheList() {
+    let app = composerOnACommandTranscript()
+
+    let field = require(app, "composer.text", "Expected the composer field")
+    field.tap()
+    app.typeText("/code-review")
+
+    let row = require(app, "composer.suggestions.row.0", "Expected /code-review to be offered")
+    XCTAssertEqual(row.label, "/code-review", "Expected the typed command first")
+    row.tap()
+
+    XCTAssertEqual(
+      field.value as? String,
+      "/code-review ",
+      "Choosing must add only the trailing space. Field held: \(String(describing: field.value))"
+    )
+    requireGone(
+      app,
+      "composer.suggestions.row.0",
+      "The list must close once a command has been chosen, even one typed in full"
+    )
+  }
+
   /// A `/word` after prose offers commands, and choosing one replaces only that word.
   ///
   /// Mid-sentence, Claude Code sends a built-in as prose, so the fixture's built-in
@@ -603,6 +632,60 @@ final class PaneComposerUITests: XCTestCase {
       "fix /code-review Xmore",
       """
       The caret must sit after the command and its space, where an argument goes.
+      Field held: \(String(describing: field.value))
+      """
+    )
+  }
+
+  /// A fast burst of keys arrives whole once the field has reported a caret.
+  ///
+  /// When a burst's first key puts UIKit into hardware-keyboard mode, the key queue is held
+  /// for a few tens of milliseconds and the keys pile up behind it. A field handed back a
+  /// selection it had already reported drained that queue mid-update and wrote stale text
+  /// over the drained keys: five to seven of these 36 went missing, in 8 of 8 launches on
+  /// `Driverr iPad`. See `PaneComposerBar.reportedSelection`.
+  ///
+  /// One key first, so the field has a caret to report. A burst into a field that has not
+  /// reported one arrived whole even with the old binding, so it cannot fail. The software
+  /// keyboard leaves when typing starts and comes back within a second; the burst waits for
+  /// it, so its first key flips the mode again.
+  func testAFastBurstArrivesIntact() {
+    let app = composerOnACommandTranscript()
+
+    let field = require(app, "composer.text", "Expected the composer field")
+    field.tap()
+    app.typeText("_")
+    XCTAssertTrue(
+      app.keyboards.firstMatch.waitForExistence(timeout: 10),
+      "Expected the software keyboard back after the first key"
+    )
+    let burst = "abcdefghijklmnopqrstuvwxyz0123456789"
+    app.typeText(burst)
+
+    XCTAssertEqual(
+      field.value as? String,
+      "_" + burst,
+      "Every key of a fast burst must reach the field. Field held: \(String(describing: field.value))"
+    )
+
+    // The other path: straight after a completion from the `/` list, the one time the field
+    // is handed a caret. A caret still being handed over when the burst lands is the same
+    // loss.
+    app.typeText(" /co")
+    let row = require(app, "composer.suggestions.row.0", "A /word after prose must offer commands")
+    let chosen = row.label
+    row.tap()
+    XCTAssertTrue(
+      app.keyboards.firstMatch.waitForExistence(timeout: 10),
+      "Expected the software keyboard after choosing"
+    )
+    app.typeText(burst)
+
+    XCTAssertEqual(
+      field.value as? String,
+      "_" + burst + " " + chosen + " " + burst,
+      """
+      Every key of a burst typed after a completion must reach the field.
       Field held: \(String(describing: field.value))
       """
     )
@@ -760,9 +843,15 @@ final class PaneComposerUITests: XCTestCase {
     let field = require(app, "composer.text", "Expected the composer field")
     field.tap()
     let oneLine = field.frame.height
-    let text = "please look at the retry path again and when that is done run /"
+    // About 140 characters, so it wraps in the iPad's chat column as well as on a phone. The
+    // 64 this used to type fit on one line in that column, and the test measured nothing.
+    let text =
+      "please look at the retry path again, then read the timeout handling in the uploader "
+      + "and the reconnect loop, and when all of that is done run /"
     app.typeText(text)
     require(app, "composer.suggestions.row.0", "A trailing / must offer commands")
+    // Measured once every key has landed, so the height is the whole text's.
+    XCTAssertEqual(field.value as? String, text, "Expected the whole text in the field")
     XCTAssertGreaterThan(
       field.frame.height,
       oneLine * 1.5,
