@@ -345,6 +345,11 @@ struct MachineCoverageTests {
 
   // MARK: - A machine two hosts added
 
+  /// The adder's notification for `core-m`'s blocked pane.
+  private var adderEm: String {
+    BlockedPaneAlerts.notificationID(hostID: adder.id, paneID: "core:em/t1")
+  }
+
   @Test(
     "a machine two hosts added shows under the first in host order, whichever connected first",
     arguments: [true, false])
@@ -423,7 +428,7 @@ struct MachineCoverageTests {
     #expect(await center.posts.first?.userInfo[NotificationTapRouter.paneIDKey] == "core:em/t1")
 
     let first = await connect(cat, tree: catSharing, on: registry, center: center)
-    try await waitFor("the adder to withdraw it") { await center.withdrawn.count == 1 }
+    try await waitFor("the adder to withdraw it") { await center.withdrawn == [adderEm] }
 
     await first.disconnect()
     try await waitFor("the adder to announce it again") {
@@ -451,8 +456,10 @@ struct MachineCoverageTests {
     let first = await connect(cat, tree: catAlone, on: registry, control: control, center: center)
     #expect(try #require(first.session).tree.pane(id: "core:mach/t1") == nil)
 
+    #expect(await center.withdrawn.isEmpty)
+
     await control.update(to: catSharing)
     await first.session?.refresh()
-    try await waitFor("the adder to withdraw it") { await center.withdrawn.count == 1 }
+    try await waitFor("the adder to withdraw it") { await center.withdrawn == [adderEm] }
   }
 }

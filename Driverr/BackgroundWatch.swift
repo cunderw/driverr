@@ -442,7 +442,8 @@ final class BackgroundWatchRunner {
               blockedPanes: tree.blockedPanes,
               counts: tree.agentStatusCounts,
               observedAt: Date(),
-              coreID: tree.coreID
+              coreID: tree.coreID,
+              machineCoreIDs: tree.machineCoreIDs
             )
           ],
           scope: .oneHost(host.id),
