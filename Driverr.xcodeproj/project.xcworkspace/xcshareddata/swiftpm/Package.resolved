@@ -78,7 +78,7 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/cunderw/SwiftTerm.git",
       "state" : {
-        "revision" : "96771c0ea228df36583daf71c1e17698e41efb67"
+        "revision" : "645635cb246f47b5a10cae7462e4a3b3745eb829"
       }
     }
   ],
