@@ -779,6 +779,91 @@ struct TerminalSessionTests {
     #expect(session.visibleLines(last: 6) == nil)
   }
 
+  // MARK: - A core observer's bytes, at the terminal's width (#45)
+
+  /// The width a core terminal was sized to by whoever is active on it, wider than the phone.
+  private static let programColumns = 80
+  /// About what a portrait phone's grid holds.
+  private static let phoneColumns = 48
+
+  /// One frame as Claude Code's renderer writes it: an erase of as many lines as the last
+  /// frame was, cursor-relative, then each line and a newline. The program counts lines at its
+  /// own width, which is the terminal's, so a narrower grid wraps them and the erase falls short.
+  private static func agentFrame(_ lines: [String], erasingLinesOf previous: [String]) -> String {
+    // The previous frame's lines plus the empty one its trailing newline left the cursor on.
+    let count = previous.isEmpty ? 0 : previous.count + 1
+    var erase = ""
+    for index in 0..<count {
+      erase += "\u{1b}[2K" + (index < count - 1 ? "\u{1b}[1A" : "")
+    }
+    if count > 0 { erase += "\u{1b}[G" }
+    // `\r\n`: the pty's own newline translation is in the raw bytes a core forwards.
+    return erase + lines.joined(separator: "\r\n") + "\r\n"
+  }
+
+  /// A status line padded to the program's width, its right half flush with the last column.
+  private static func statusLine(_ left: String, _ right: String) -> String {
+    left + String(repeating: " ", count: programColumns - left.count - right.count) + right
+  }
+
+  private static let rule = String(repeating: "-", count: programColumns)
+
+  private static let firstFrame = [
+    "* Five lines, as asked: one, two, three, four, five, and then the word DONE.",
+    "",
+    rule,
+    "> ",
+    rule,
+    statusLine("  INSERT | drover-testing", "ctx:68.6k  5h:21%  wk:15%"),
+  ]
+
+  private static let secondFrame = [
+    "* DONE. Nothing else was touched, and no tool ran for this one, as you asked.",
+    "",
+    rule,
+    "> ",
+    rule,
+    statusLine("  INSERT | drover-testing", "ctx:68.7k  5h:22%  wk:15%"),
+  ]
+
+  /// What a thumbnail should hold: the program's last six rows, as `visibleText` trims them.
+  private static var secondFrameRows: [String] {
+    secondFrame.map { String($0.reversed().drop(while: { $0 == " " }).reversed()) }
+  }
+
+  private func thumbnailAfterTwoFrames(columns: Int) async -> [String]? {
+    let feed = TestFeed(raw: true)
+    let renderer = HeadlessRenderer(columns: columns, rows: 20)
+    let session = TerminalSession(feed: feed.feed)
+    session.attach({ renderer.feed($0) }, visibleText: { renderer.screen })
+    session.start()
+
+    feed.emit(Self.agentFrame(Self.firstFrame, erasingLinesOf: []))
+    feed.emit(Self.agentFrame(Self.secondFrame, erasingLinesOf: Self.firstFrame))
+    await waitUntil { renderer.screen.contains("ctx:68.7k") }
+    // `PaneThumbnailModel.lineCount`, which lives in the app target.
+    return session.visibleLines(last: 6)
+  }
+
+  /// The control for the test below: the same bytes into a grid as wide as the program's.
+  @Test("an agent's redraw reads back as its own rows in a grid as wide as its terminal")
+  func agentRedrawAtTheTerminalsWidth() async {
+    #expect(await thumbnailAfterTwoFrames(columns: Self.programColumns) == Self.secondFrameRows)
+  }
+
+  /// #45. On Chat the current core pane holds an observer, and the pane sheet reads its tile
+  /// from that observer's hidden view. A core forwards the program's own bytes at the
+  /// terminal's width and never resizes the terminal for an observer, so the view's grid is
+  /// the phone's and the program's lines wrap and overwrite each other in it.
+  ///
+  /// Fails while a thumbnail reads a core observer's grid. Measured on the kit tier with a raw
+  /// feed in place of `CoreAttachment`; the live core repro is still to come.
+  @Test("a core observer's thumbnail is the program's rows when its terminal is wider than the grid")
+  func coreObserverThumbnailInANarrowerGrid() async {
+    let lines = await thumbnailAfterTwoFrames(columns: Self.phoneColumns)
+    #expect(lines == Self.secondFrameRows)
+  }
+
   /// A tap on a PTY is a press and then a release, and the far side must hear them in order.
   /// Many clicks, so a race shows as a count.
   @Test("a PTY click's press reaches the far side before its release, every time")
