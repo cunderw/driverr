@@ -23,14 +23,17 @@ final class PaneComposerCache {
   /// screen. Stated once here and handed to every composer, so no composer has to find
   /// its sibling caches.
   private let onSent: @MainActor (String, PaneComposerState.Attempt) -> Void
-  /// How a composer's attachment gets on the wire. `nil` means the link is down, which the
-  /// attachment row reports.
-  private let makeUpload: @MainActor (Data, String) -> (any ImageUploading)?
+  /// How a composer's attachment gets on the wire, from the pane's id, the bytes and the file
+  /// name. The id picks where the bytes go. `nil` means the link is down, which the attachment
+  /// row reports.
+  private let makeUpload: @MainActor (String, Data, String) -> (any ImageUploading)?
   private var models: [String: PaneComposerModel] = [:]
 
   init(
     control: @escaping @MainActor () -> (any HerdrControl)?,
-    makeUpload: @escaping @MainActor (Data, String) -> (any ImageUploading)? = { _, _ in nil },
+    makeUpload: @escaping @MainActor (String, Data, String) -> (any ImageUploading)? = {
+      _, _, _ in nil
+    },
     onSent: @escaping @MainActor (String, PaneComposerState.Attempt) -> Void = { _, _ in }
   ) {
     self.control = control

@@ -97,6 +97,57 @@ struct PaneAttachmentMachineRoutingTests {
       "the SSH host's inbox path was typed into a pane on box, where no such file exists")
   }
 
+  /// Where the core put the file on `box`. It exists only there.
+  nonisolated private static let machinePath = "/home/carson/.local/state/hc/files/t7/a.png"
+
+  @Test("the path box answers is the one typed into the pane on box")
+  func aMachinePanesPhotoGetsTheMachinesPath() async throws {
+    let machineUploads = HostUploadLog()
+    let asked = PaneIDLog()
+    let control = FakeControl(imageUploads: { paneID, bytes, _ in
+      asked.record(paneID)
+      machineUploads.record()
+      return LandedUpload(hostPath: Self.machinePath, byteCount: bytes.count)
+    })
+    let hostUploads = HostUploadLog()
+    let model = ConnectionModel(
+      host: workbox, environment: environment(control: control, hostUploads: hostUploads))
+    await model.connect(password: "hunter2", persistence: .promptEveryTime)
+    let composers = try #require(model.composers)
+
+    let composer = composers.model(for: machinePane)
+    composer.attachment.attach(try Self.pngBytes())
+    await waitUntil("the machine pane's attachment settles") {
+      Self.settled(composer.attachment.phase)
+    }
+
+    #expect(composer.attachment.phase == .handedOver)
+    #expect(asked.ids == [machinePane.id])
+    #expect(machineUploads.count == 1)
+    #expect(hostUploads.count == 0)
+    #expect(await control.sent == [.text(paneID: machinePane.id, text: Self.machinePath)])
+  }
+
+  @Test("a machine Driverr cannot send to says so, and nothing goes to the host or the pane")
+  func aMachineWithNoUploaderIsRefused() async throws {
+    let control = FakeControl(imageUploads: { _, _, _ in nil })
+    let hostUploads = HostUploadLog()
+    let model = ConnectionModel(
+      host: workbox, environment: environment(control: control, hostUploads: hostUploads))
+    await model.connect(password: "hunter2", persistence: .promptEveryTime)
+    let composers = try #require(model.composers)
+
+    let composer = composers.model(for: machinePane)
+    composer.attachment.attach(try Self.pngBytes())
+    await waitUntil("the machine pane's attachment settles") {
+      Self.settled(composer.attachment.phase)
+    }
+
+    #expect(composer.attachment.phase == .failed("Driverr can't send images to box."))
+    #expect(hostUploads.count == 0)
+    #expect(await control.sent.isEmpty)
+  }
+
   /// The control: a pane on the SSH host itself still uses the host's uploader and gets its path.
   @Test("a photo for a pane on the SSH host still lands in the host's inbox")
   func aHostPanesPhotoStillUsesTheHost() async throws {
@@ -124,6 +175,13 @@ final class HostUploadLog: Sendable {
   private let calls = Mutex(0)
   var count: Int { calls.withLock { $0 } }
   func record() { calls.withLock { $0 += 1 } }
+}
+
+/// The pane ids a machine uploader was asked for. Read on the main actor after the wait.
+private final class PaneIDLog: Sendable {
+  private let asked = Mutex<[String]>([])
+  var ids: [String] { asked.withLock { $0 } }
+  func record(_ id: String) { asked.withLock { $0.append(id) } }
 }
 
 /// An upload that lands at once at a fixed host path.

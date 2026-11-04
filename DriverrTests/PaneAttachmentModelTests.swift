@@ -162,6 +162,29 @@ import UIKit
     #expect(model.isAttached)
   }
 
+  /// At a machine the sentence names it. With no uploader at all it is still the host's: no
+  /// link reaches a machine either.
+  @Test func aMachinesFailureNamesItAndNoLinkStaysTheHosts() async throws {
+    let model = PaneAttachmentModel(
+      place: .machine("box"),
+      makeUpload: { _, _ in StubUpload(outcome: .failure(ImageUploadFailure.stalled)) })
+    model.attach(try pngBytes())
+    await waitFor("the failure") {
+      if case .failed = model.phase { return true }
+      return false
+    }
+    #expect(
+      model.phase == .failed("Nothing came back from box, so the upload was stopped. Try again."))
+
+    let unlinked = PaneAttachmentModel(place: .machine("box"), makeUpload: { _, _ in nil })
+    unlinked.attach(try pngBytes())
+    await waitFor("the failure") {
+      if case .failed = unlinked.phase { return true }
+      return false
+    }
+    #expect(unlinked.phase == .failed("Driverr isn't connected to this host."))
+  }
+
   /// No uploader means the link went while the picker was up, which gets a sentence.
   @Test func noLinkIsReportedRatherThanIgnored() async throws {
     let model = PaneAttachmentModel(makeUpload: { _, _ in nil })

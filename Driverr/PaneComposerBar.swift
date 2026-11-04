@@ -787,7 +787,9 @@ struct PaneComposerBar: View {
         .lineLimit(isCollapsed ? 1 : 2)
         .accessibilityIdentifier("composer.attachment.failure")
     case .some(let phase):
-      Text(Self.statusText(phase, byteCount: model.attachment.byteCount))
+      Text(
+        Self.statusText(
+          phase, byteCount: model.attachment.byteCount, place: model.attachment.place))
         .font(.caption)
         .foregroundStyle(.secondary)
         .lineLimit(1)
@@ -800,7 +802,11 @@ struct PaneComposerBar: View {
 
   /// The row's sentence for every phase but the failure. The strings are
   /// `DriverrCore.PaneAttachmentCopy`'s.
-  private static func statusText(_ phase: PaneAttachmentPhase, byteCount: Int) -> String {
+  private static func statusText(
+    _ phase: PaneAttachmentPhase,
+    byteCount: Int,
+    place: PaneAttachmentPlace
+  ) -> String {
     switch phase {
     case .preparing:
       return PaneAttachmentCopy.preparing
@@ -809,7 +815,7 @@ struct PaneComposerBar: View {
     case .uploading(let progress):
       return PaneAttachmentCopy.progress(progress)
     case .uploaded:
-      return PaneAttachmentCopy.uploaded
+      return PaneAttachmentCopy.uploaded(at: place)
     case .handedOver:
       return PaneAttachmentCopy.handedOver
     case .failed(let sentence):

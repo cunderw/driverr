@@ -41,6 +41,13 @@ public actor FakeControl: HerdrControl {
   /// What a start answers with, in place of a new pane. Not `failure`, which would also fail
   /// the read that puts the empty state on screen.
   private let startFailure: AppError?
+  /// What puts an image beside a pane, for a test of a machine's upload. `nil` answers `nil`
+  /// for every pane, as the TUI does.
+  private let imageUploads: ImageUploads?
+
+  /// Builds an upload from a pane id, the bytes and the file name.
+  public typealias ImageUploads =
+    @Sendable (_ paneID: String, _ bytes: Data, _ fileName: String) -> (any ImageUploading)?
 
   /// Every snapshot request, refused ones included.
   public private(set) var snapshotCount = 0
@@ -58,7 +65,8 @@ public actor FakeControl: HerdrControl {
     attacher: (any PaneAttacher)? = nil,
     unsupported: Set<PaneActionKind> = [],
     canStartTerminal: Bool = false,
-    startFailure: AppError? = nil
+    startFailure: AppError? = nil,
+    imageUploads: ImageUploads? = nil
   ) {
     script = []
     self.tree = tree
@@ -69,6 +77,7 @@ public actor FakeControl: HerdrControl {
     self.unsupported = unsupported
     self.canStartTerminal = canStartTerminal
     self.startFailure = startFailure
+    self.imageUploads = imageUploads
   }
 
   /// A session that changes as it is polled, for exercising live updates.
@@ -82,6 +91,7 @@ public actor FakeControl: HerdrControl {
     unsupported = []
     canStartTerminal = false
     startFailure = nil
+    imageUploads = nil
   }
 
   /// A fake that fails, for exercising the error surfaces without a broken host.
@@ -111,6 +121,12 @@ public actor FakeControl: HerdrControl {
 
   public nonisolated func paneAttacher(for paneID: String) -> (any PaneAttacher)? {
     CorePaneID.isCore(paneID) ? attacher : nil
+  }
+
+  public nonisolated func imageUploader(
+    forPane id: String, bytes: Data, fileName: String
+  ) -> (any ImageUploading)? {
+    imageUploads?(id, bytes, fileName)
   }
 
   public nonisolated func canPerform(_ kind: PaneActionKind, on paneID: String) -> Bool {

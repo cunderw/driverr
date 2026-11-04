@@ -48,6 +48,13 @@ public enum PaneAttachmentPhase: Equatable, Sendable {
   }
 }
 
+/// Where a pane's attachment is sent: the SSH host's inbox, or a machine a herdr-core added,
+/// by the name the core gives it. The row's sentences name the place.
+public enum PaneAttachmentPlace: Equatable, Sendable {
+  case host
+  case machine(String)
+}
+
 /// The row's strings.
 public enum PaneAttachmentCopy {
   /// The Attach control's accessibility label. The control itself is a glyph.
@@ -61,6 +68,15 @@ public enum PaneAttachmentCopy {
   /// Once the host has it. Not the path, a `~/.driverr/inbox/` UUID that tells a reader
   /// nothing.
   public static let uploaded = "Sent to the host"
+
+  /// ``uploaded``, naming the machine for a pane on one.
+  public static func uploaded(at place: PaneAttachmentPlace) -> String {
+    switch place {
+    case .host: uploaded
+    case .machine(let name): "Sent to \(name)"
+    }
+  }
+
   /// Once the path is in the pane. "the prompt", because it went into the agent's input on
   /// the host, not into Driverr's field.
   public static let handedOver = "Added to the pane’s prompt"
@@ -102,6 +118,47 @@ public enum PaneAttachmentFailureCopy {
   /// reader does not upload it again and leave two copies.
   public static let handOffFailed =
     "The host has the image, but the pane could not be told where it is."
+
+  /// ``handOffFailed``, naming the machine that has the image.
+  public static func handOffFailed(at place: PaneAttachmentPlace) -> String {
+    switch place {
+    case .host: handOffFailed
+    case .machine(let name): "The image is on \(name), but the pane could not be told where it is."
+    }
+  }
+
+  /// One upload failure at a place. A dropped channel and a short write are the SSH inbox
+  /// command's alone, so they keep the host's sentence wherever they come from.
+  public static func sentence(for failure: ImageUploadFailure, at place: PaneAttachmentPlace)
+    -> String
+  {
+    guard case .machine(let name) = place else { return sentence(for: failure) }
+    switch failure {
+    case .channelDropped, .sizeMismatch:
+      return sentence(for: failure)
+    case .commandFailed:
+      return "Driverr could not save the image on \(name). Check its disk space and permissions."
+    case .noHostPath:
+      return "The image was saved on \(name), but Driverr was not told where."
+    case .stalled:
+      return "Nothing came back from \(name), so the upload was stopped. Try again."
+    }
+  }
+
+  /// Any error at a place. For a machine, anything but an upload failure or a refusal is the
+  /// one fallback: the core's own words name its terminal, not what to do.
+  public static func sentence(for error: any Error, at place: PaneAttachmentPlace) -> String {
+    guard case .machine(let name) = place else { return sentence(for: error) }
+    if let failure = error as? ImageUploadFailure { return sentence(for: failure, at: place) }
+    switch error as? MachineImageRefusal {
+    case .unsupported?:
+      return "Driverr can't send images to \(name)."
+    case .tooLarge(let limit)?:
+      return "The image is over the \(PaneAttachmentCopy.size(limit)) limit for \(name)."
+    case nil:
+      return "The image could not be sent to \(name)."
+    }
+  }
 
   public static func sentence(for failure: ImageUploadFailure) -> String {
     switch failure {

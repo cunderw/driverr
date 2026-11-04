@@ -63,7 +63,9 @@ struct PaneComposerModelTests {
   private func composer(
     _ control: (any HerdrControl)?,
     pane: Pane? = nil,
-    makeUpload: @escaping @MainActor (Data, String) -> (any ImageUploading)? = { _, _ in nil },
+    makeUpload: @escaping @MainActor (String, Data, String) -> (any ImageUploading)? = {
+      _, _, _ in nil
+    },
     onSent: @escaping @MainActor (String, PaneComposerState.Attempt) -> Void = { _, _ in },
     sendDeadline: Duration = .seconds(12),
     now: @escaping @MainActor () -> Date = Date.init
@@ -631,7 +633,7 @@ extension PaneComposerModelTests {
   func handsTheUploadedPathToThePane() async throws {
     let control = FakeControl()
     let path = "/home/carson/.driverr/inbox/8f1c2d.png"
-    let model = composer(control, makeUpload: { _, _ in GatedUpload(hostPath: path) })
+    let model = composer(control, makeUpload: { _, _, _ in GatedUpload(hostPath: path) })
 
     model.attachment.attach(try Self.pngBytes())
     await waitFor("the hand-off") { model.attachment.phase == .handedOver }
@@ -639,6 +641,33 @@ extension PaneComposerModelTests {
     #expect(await control.sent == [.text(paneID: "w1:p2", text: path)])
     // Driverr's own field is untouched: the path went to the agent's input box on the host.
     #expect(model.text.isEmpty)
+  }
+
+  /// The pane id is what picks the machine the bytes go to (#68), so the upload must be asked
+  /// for with the composer's own pane, and the row must name where the bytes went.
+  @Test("the upload is asked for with the composer's own pane, and the row names its place")
+  func asksForTheUploadWithItsOwnPane() async throws {
+    let control = FakeControl()
+    let machinePane = Pane(
+      id: "core:box/t7", tabID: "core:box/tab", workspaceID: "core:box/workspace",
+      title: "claude", agent: Agent(name: "Claude", kind: "claude", status: .blocked),
+      terminalID: "box/t7")
+    var asked: [String] = []
+    let model = composer(
+      control, pane: machinePane,
+      makeUpload: { paneID, _, _ in
+        asked.append(paneID)
+        return GatedUpload(hostPath: "/home/carson/.local/state/hc/files/t7/a.png")
+      })
+
+    #expect(model.attachment.place == .machine("box"))
+    #expect(composer(control).attachment.place == .host)
+    let corePane = Pane(id: "core:t3", tabID: "core:tab", workspaceID: "core:ws", title: "zsh")
+    #expect(composer(control, pane: corePane).attachment.place == .host)
+
+    model.attachment.attach(try Self.pngBytes())
+    await waitFor("the hand-off") { model.attachment.phase == .handedOver }
+    #expect(asked == ["core:box/t7"])
   }
 
   /// The path goes to the composer that staged the image, and to no other pane.
@@ -655,7 +684,7 @@ extension PaneComposerModelTests {
     let control = FakeControl()
     let path = "/home/carson/.driverr/inbox/staged.png"
     let upload = GatedUpload(hostPath: path, holdsOpen: true)
-    let staged = composer(control, makeUpload: { _, _ in upload })
+    let staged = composer(control, makeUpload: { _, _, _ in upload })
     let elsewhere = composer(
       control,
       pane: Pane(id: "w2:p7", tabID: "w2:t1", workspaceID: "w2", title: "schema sync"))
@@ -683,7 +712,7 @@ extension PaneComposerModelTests {
   func aReplyRetiresTheRow() async throws {
     let control = FakeControl()
     let model = composer(
-      control, makeUpload: { _, _ in GatedUpload(hostPath: "/home/c/.driverr/inbox/a.png") })
+      control, makeUpload: { _, _, _ in GatedUpload(hostPath: "/home/c/.driverr/inbox/a.png") })
 
     model.attachment.attach(try Self.pngBytes())
     await waitFor("the hand-off") { model.attachment.phase == .handedOver }
@@ -706,7 +735,7 @@ extension PaneComposerModelTests {
     let control = FakeControl()
     let path = "/home/carson/.driverr/inbox/inflight.png"
     let upload = GatedUpload(hostPath: path, holdsOpen: true)
-    let model = composer(control, makeUpload: { _, _ in upload })
+    let model = composer(control, makeUpload: { _, _, _ in upload })
 
     model.attachment.attach(try Self.pngBytes())
     await waitFor("the upload to start") { model.attachment.phase?.isUploading == true }
@@ -733,7 +762,7 @@ extension PaneComposerModelTests {
   func aKeyPressLeavesTheRowAlone() async throws {
     let control = FakeControl()
     let model = composer(
-      control, makeUpload: { _, _ in GatedUpload(hostPath: "/home/c/.driverr/inbox/a.png") })
+      control, makeUpload: { _, _, _ in GatedUpload(hostPath: "/home/c/.driverr/inbox/a.png") })
 
     model.attachment.attach(try Self.pngBytes())
     await waitFor("the hand-off") { model.attachment.phase == .handedOver }

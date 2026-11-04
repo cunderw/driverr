@@ -119,6 +119,21 @@ actor CoreConnection {
       in: await exchange(method, params: params, handler: nil, deadline: deadline), as: answer)
   }
 
+  /// `call`, with a refusal handed back as the core's error rather than thrown, so a caller
+  /// can branch on its `kind`. A call with no answer still throws as `call` does.
+  func callKeepingRefusal<Params: Encodable & Sendable, Answer: Decodable & Sendable>(
+    _ method: String,
+    params: Params,
+    as answer: Answer.Type = Answer.self,
+    deadline: Duration? = nil
+  ) async throws -> Result<Answer, CoreRPCError> {
+    let message = try await exchange(method, params: params, handler: nil, deadline: deadline)
+    guard let response = try? JSONDecoder().decode(CoreResponse<Answer>.self, from: message)
+    else { throw AppError.herdrResponseUnreadable }
+    if let result = response.result { return .success(result) }
+    return .failure(response.error ?? CoreRPCError(code: nil, message: nil, data: nil))
+  }
+
   /// Calls a method that answers with a stream channel, and hands the stream to `handler`.
   ///
   /// **`handler` is installed inside reply routing, not after this returns.** The stream's

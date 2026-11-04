@@ -13,7 +13,10 @@ final class FakeCoreStream: HerdrStream, @unchecked Sendable {
   /// What the fake does with a call, by method.
   enum Reply {
     case result(String)
+    /// A refusal whose sentence is its kind, as the schema's error list writes one.
     case error(String)
+    /// A refusal as a core writes one: a sentence, and the stable `kind` under `data`.
+    case refused(kind: String, message: String, code: Int = -32000)
     /// Never answers, for the deadline tests.
     case silent
     /// Answers after `delay`, by which time the caller may have gone.
@@ -263,7 +266,11 @@ final class FakeCoreStream: HerdrStream, @unchecked Sendable {
     case .result(let json):
       respond(#"{"id":\#(id),"jsonrpc":"2.0","result":\#(json)}"#)
     case .error(let message):
-      respond(#"{"id":\#(id),"jsonrpc":"2.0","error":{"code":-32000,"message":"\#(message)"}}"#)
+      answer(id: id, reply: .refused(kind: message, message: message))
+    case .refused(let kind, let message, let code):
+      respond(
+        #"{"id":\#(id),"jsonrpc":"2.0","error":{"code":\#(code),"message":"\#(message)","#
+          + #""data":{"hint":"","kind":"\#(kind)"}}}"#)
     case .silent:
       break
     case .after(let frames, let json):

@@ -61,6 +61,15 @@ public protocol HerdrControl: Sendable {
   /// transcript reader is the caller. See `PaneTranscriptCache`.
   func commandRunner(forPane id: String) -> CommandRunner?
 
+  /// Puts an image beside this pane, on the computer it runs on, when that is not the one
+  /// Driverr connected to.
+  ///
+  /// `nil`, the default, means the SSH host's own inbox serves this pane. Only a core can
+  /// reach a machine it added, so only a core answers, and only for a pane on one. A pane on a
+  /// machine with no uploader gets a refusal, never the host's inbox, whose path names a file
+  /// that machine does not have. See `ConnectionModel.makeImageUpload(forPane:bytes:fileName:)`.
+  func imageUploader(forPane id: String, bytes: Data, fileName: String) -> (any ImageUploading)?
+
   /// Types literal text into a pane, as if typed at the keyboard. Needs no PTY.
   ///
   /// **A trailing newline stays literal and does not submit.** Use `submitText` to send.
@@ -156,6 +165,9 @@ extension HerdrControl {
   public func bound(toSocketPath path: String?) -> any HerdrControl { self }
   public func paneAttacher(for paneID: String) -> (any PaneAttacher)? { nil }
   public func commandRunner(forPane id: String) -> CommandRunner? { nil }
+  public func imageUploader(forPane id: String, bytes: Data, fileName: String)
+    -> (any ImageUploading)?
+  { nil }
   public func canPerform(_ kind: PaneActionKind, on paneID: String) -> Bool { true }
   public func canRename(_ target: RenameTarget) -> Bool { true }
   public var canStartTerminal: Bool { false }

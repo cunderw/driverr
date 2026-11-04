@@ -87,6 +87,22 @@ struct CoreReadResult: Decodable, Sendable {
   let text: String
 }
 
+/// `terminal.put` of a file beside a terminal, on its machine. The name is kept, so `.png`
+/// stays `.png`, and `data` is base64 of at most `CoreControl.putByteLimit` raw bytes. It types
+/// nothing: the caller pastes the path.
+struct CorePutParams: Encodable, Sendable {
+  /// `machine/t7` for a terminal on a machine this core added.
+  let terminal: String
+  let name: String
+  let data: String
+}
+
+/// What `terminal.put` answers. `path` is as the terminal's machine sees it.
+struct CorePutResult: Decodable, Sendable {
+  let path: String
+  let bytes: Int
+}
+
 /// `terminal.get` and `terminal.kill`, which take nothing else Driverr needs.
 struct CoreTerminalParams: Encodable, Sendable {
   let terminal: String
@@ -213,8 +229,22 @@ struct CoreResponse<Result: Decodable & Sendable>: Decodable, Sendable {
   let error: CoreRPCError?
 }
 
-struct CoreRPCError: Decodable, Sendable {
+/// A refusal. `message` is the core's sentence and `data.kind` its stable word for it,
+/// `not_found` or `machine_unknown`, which is what to branch on. `code` is JSON-RPC's:
+/// -32601 for a method the core does not have.
+struct CoreRPCError: Decodable, Error, Sendable {
+  struct Details: Decodable, Sendable {
+    let kind: String?
+  }
+
+  let code: Int?
   let message: String?
+  let data: Details?
+
+  var kind: String? { data?.kind }
+
+  /// JSON-RPC's code for a method the core does not have.
+  static let methodNotFound = -32601
 }
 
 /// Only `generation` is required, so a core of a later generation still decodes far enough
