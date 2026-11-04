@@ -1035,6 +1035,11 @@ struct TerminalSceneModelTests {
     await tuiAgentQuits(scene, control)
 
     observerSession.send(text: "\u{1b}[I")
+    await waitUntil("the report arrives") { scene.writesFromObservers == 1 }
+    // Anything the report queued has run by now.
+    await scene.settle()
+    #expect(await tuiControls(transport).isEmpty, "a focus report took the desk's size")
+
     observerSession.send(text: "k")
     await waitUntilSignalled("the controller") { await !tuiControls(transport).isEmpty }
     #expect(await tuiControls(transport).count == 1)
@@ -1043,6 +1048,51 @@ struct TerminalSceneModelTests {
     await waitUntil("the controller paints") { scene.currentRole == .controller }
     await waitUntilSignalled("the key") { !inputTexts(await transport.streamLog).isEmpty }
     #expect(inputTexts(await transport.streamLog).joined() == "k")
+  }
+
+  /// The controller a key opened sends the phone's size. Once the agent is back and only its
+  /// chat is read, the desk gets its size back.
+  @Test("a TUI pane typed into after its agent quit is watched again when the agent comes back")
+  func aTUIControllerIsDemotedWhenItsAgentReturns() async throws {
+    let (scene, control, transport) = await watchedTUIAgentScene()
+    let observerSession = try #require(scene.currentSession)
+    await tuiAgentQuits(scene, control)
+    observerSession.send(text: "k")
+    await waitUntilSignalled("the controller") { await !tuiControls(transport).isEmpty }
+    await transport.emitOnStreams(Self.frame("live\r\n"))
+    await waitUntil("the controller paints") { scene.currentRole == .controller }
+
+    await control.update(
+      to: Self.tuiTree(agent: Agent(name: "Claude", kind: "claude", status: .working)))
+    await scene.model.session?.refresh()
+    scene.treeChanged()
+    await scene.settle()
+
+    #expect(scene.surface == .chat)
+    #expect(scene.currentRole == .observer, "the desk is held at the phone's size")
+    #expect(await transport.streamLog.contains { $0.contains("terminal.release") })
+  }
+
+  /// A plain herdr shell held from the phone, where an agent then starts. The scene turns to
+  /// the chat, and the pane is only being read.
+  @Test("a herdr shell pane held from the phone is watched once an agent starts in it")
+  func aHerdrShellControllerIsDemotedWhenAnAgentStarts() async throws {
+    let control = FakeControl(tree: Self.tuiTree(agent: nil))
+    let (scene, transport) = await makeScene(
+      surface: nil, herdr: control, responder: Self.everythingPaints)
+    scene.start()
+    await scene.settle()
+    await waitUntil("the controller paints") { scene.currentRole == .controller }
+
+    await control.update(
+      to: Self.tuiTree(agent: Agent(name: "Claude", kind: "claude", status: .working)))
+    await scene.model.session?.refresh()
+    scene.treeChanged()
+    await scene.settle()
+
+    #expect(scene.surface == .chat)
+    #expect(scene.currentRole == .observer)
+    #expect(await transport.streamLog.contains { $0.contains("terminal.release") })
   }
 
   @Test("a shell that never comes ends in a sentence and a Retry")

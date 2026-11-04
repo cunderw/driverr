@@ -134,6 +134,9 @@ final class TerminalSceneModel {
   /// Keystrokes typed at a pane whose controller is not up yet. herdr drops an observer's
   /// input silently, and the promotion gap is when someone who just chose the pane types.
   private var held: [TerminalTarget: [UInt8]] = [:]
+  /// How many writes typed at an observer have reached `accept`. Nothing else shows that a
+  /// write which was dropped, or only held, has arrived, so a test waits on this.
+  private(set) var writesFromObservers = 0
   /// Panes whose first keystroke has queued a controller open that has not run yet. See
   /// `openForTyping(_:)`.
   private var typingOpens: Set<TerminalTarget> = []
@@ -1588,6 +1591,7 @@ final class TerminalSceneModel {
   /// observer, which cannot be promoted in place. The first keystroke there opens the
   /// controller, and the keys typed meanwhile are held for it. See `openForTyping(_:)`.
   private func accept(_ data: Data, from target: TerminalTarget) {
+    writesFromObservers += 1
     if held[target]?.isEmpty ?? true, let controller = controllerSession(for: target) {
       controller.send(ArraySlice(data))
       return
