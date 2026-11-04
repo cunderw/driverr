@@ -213,7 +213,9 @@ public final class TerminalSession {
   }
 
   /// SwiftTerm's two focus reports, whole. Anything else a program asked for goes out.
-  private static func isFocusReport(_ bytes: ArraySlice<UInt8>) -> Bool {
+  ///
+  /// Public because the app's scene drops them too, from an observer with no focus channel.
+  public nonisolated static func isFocusReport(_ bytes: some Sequence<UInt8>) -> Bool {
     bytes.elementsEqual([0x1B, 0x5B, 0x49]) || bytes.elementsEqual([0x1B, 0x5B, 0x4F])
   }
 

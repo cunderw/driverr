@@ -134,6 +134,9 @@ final class TerminalSceneModel {
   /// Keystrokes typed at a pane whose controller is not up yet. herdr drops an observer's
   /// input silently, and the promotion gap is when someone who just chose the pane types.
   private var held: [TerminalTarget: [UInt8]] = [:]
+  /// How many writes typed at an observer have reached `accept`. Nothing else shows that a
+  /// write which was dropped, or only held, has arrived, so a test waits on this.
+  private(set) var writesFromObservers = 0
   private var nextEntryID = 0
   /// The size to open the next stream at: the phone's real size. The desk reflow is
   /// accepted for the one pane being typed into.
@@ -1580,11 +1583,64 @@ final class TerminalSceneModel {
   /// Once anything is held, later bytes join it rather than overtake it. `install` makes the
   /// controller findable before `flushHeld` runs, and a keystroke arriving in that gap
   /// would otherwise reach herdr ahead of earlier ones.
+  ///
+  /// A herdr pane whose agent quit under its chat is left on its terminal with only an
+  /// observer, which cannot be promoted in place. The first keystroke there opens the
+  /// controller, and the keys typed meanwhile are held for it. See `openForTyping(_:)`.
   private func accept(_ data: Data, from target: TerminalTarget) {
+    writesFromObservers += 1
     if held[target]?.isEmpty ?? true, let controller = controllerSession(for: target) {
       controller.send(ArraySlice(data))
-    } else {
-      held[target, default: []].append(contentsOf: data)
+      return
+    }
+    if isTypingOnAnObserver(target) {
+      // A paint can leave focus reporting on, and the emulator reports focus when the
+      // keyboard comes up. That is not typing: it must not take the desk's size, and held, it
+      // would be typed at the program once the controller opened.
+      if TerminalSession.isFocusReport(data) { return }
+      openForTyping(target)
+    }
+    held[target, default: []].append(contentsOf: data)
+  }
+
+  /// Whether `target` is a herdr pane showing its terminal through an observer, with no
+  /// controller opening and nothing said about it.
+  ///
+  /// Also true in an ordinary switch's promotion gap, before that switch's open has run, and
+  /// for every key typed before the first key's open has run. Each of those queues an open,
+  /// and the first to run is the only one that opens anything: the rest find a controller in
+  /// `pending` or on screen, or a notice, and `openController`'s own guards do the rest.
+  private func isTypingOnAnObserver(_ target: TerminalTarget) -> Bool {
+    guard case .pane(let id) = target, !CorePaneID.isCore(id), notices[target] == nil,
+      pending[target] == nil, surface(for: target) == .terminal,
+      let watched = entry(for: target), watched.role == .observer,
+      case .observer(let observer) = watched.attachment, !(observer is any PromotableObserver)
+    else { return false }
+    return true
+  }
+
+  /// Opens the controller for a herdr pane typed at through its observer.
+  ///
+  /// **On the first key, not when the agent quits.** A controller sends the phone's size and
+  /// reflows the pane on the desk, and an agent exiting while someone only watches must not do
+  /// that. A core pane needs none of this: its observer is promoted in place
+  /// (`promoteObserverLeftOnItsTerminal`).
+  ///
+  /// The open is the one a switch makes, so the observer's frame stays up until the
+  /// controller paints, the held keys go out behind it, and a refusal or a failure shows the
+  /// usual notice with Take over or Retry.
+  ///
+  /// Nothing marks an open as asked for, so nothing can be left marked by an open that never
+  /// returns. See `isTypingOnAnObserver(_:)` for why a repeat opens nothing.
+  private func openForTyping(_ target: TerminalTarget) {
+    guard let watched = entry(for: target) else { return }
+    enqueue(on: target) { [weak self] in
+      guard let self else { return }
+      // Rechecked, because an agent can start, or an open fail, while this waits its turn.
+      guard !isClosed, notices[target] == nil, entry(for: target)?.id == watched.id,
+        entry(for: target)?.role == .observer, surface(for: target) == .terminal
+      else { return }
+      await openController(for: target, takeover: false)
     }
   }
 
@@ -1672,15 +1728,17 @@ final class TerminalSceneModel {
     demoteViewerLeftBehindItsChat()
   }
 
-  /// Watches a core pane again if an agent has started in it, so the chat is on screen.
+  /// Watches a pane again if an agent has started in it, so the chat is on screen.
   ///
-  /// `surface(for:)` turned to `.chat` with nobody asking, and a viewer that has typed would go
-  /// on holding the terminal's size while only the conversation is read. Only a core pane,
-  /// which is the only place a promotion leaves one. `show(_:)` covers the segment.
+  /// `surface(for:)` turned to `.chat` with nobody asking, and a controller would go on
+  /// holding the terminal's size while only the conversation is read. Any pane: a core
+  /// promotion leaves a typing viewer, a herdr pane typed at after its agent quit leaves a
+  /// controller (`openForTyping(_:)`), and so does a plain herdr shell the phone held when an
+  /// agent started in it. A pane the user put on Terminal stays there, because its remembered
+  /// surface keeps `surface(for:)` at `.terminal`. `show(_:)` covers the segment.
   private func demoteViewerLeftBehindItsChat() {
     let target = current
-    guard case .pane(let id) = target, CorePaneID.isCore(id), surface(for: target) == .chat,
-      entry(for: target)?.role == .controller
+    guard surface(for: target) == .chat, entry(for: target)?.role == .controller
     else { return }
     enqueue(on: target) { [weak self] in await self?.openSurface(for: target) }
   }
@@ -1692,6 +1750,9 @@ final class TerminalSceneModel {
   /// Only the current pane: a warm one opens when it is chosen, and a host can lose every
   /// agent at once. A notice stops this asking again on every tree, and Retry opens the pane
   /// as any open does.
+  ///
+  /// Only a core pane's observer is promotable. A herdr pane's opens a controller on the
+  /// first keystroke instead; see `openForTyping(_:)`.
   private func promoteObserverLeftOnItsTerminal() {
     let target = current
     guard notices[target] == nil, surface(for: target) == .terminal,
