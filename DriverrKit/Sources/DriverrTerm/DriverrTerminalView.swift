@@ -464,6 +464,10 @@
     }
 
     /// The alternate screen came or went, and with it the emulator's scrollback.
+    ///
+    /// Also called from `feedKeepingScrollGeometry(_:)` after a feed that cut the buffer out
+    /// from under the scroll view, such as `clear`'s `ESC[3J`. The screen has not changed
+    /// then, and `alternateScreenChanged` re-reports the one already current.
     override public func bufferActivated(source: Terminal) {
       super.bufferActivated(source: source)
       applyDragRoute()
