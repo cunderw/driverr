@@ -894,6 +894,55 @@ struct TranscriptReadTests {
     _ = try await TranscriptReader(run: host.runner).read(file(size: 600_000_000), turns: 20)
     #expect(windows(await host.commands).contains { $0 > TranscriptReader.machineByteBudget })
   }
+
+  /// For twenty turns the third rung is the first at the budget. Its record bound filled, so
+  /// the rung above, with four times the records in the same bytes, can still gain. That rung
+  /// comes back short of its bound, and the climb ends there.
+  @Test("a page at the budget that its record bound stopped climbs on records")
+  func recordBoundAtTheBudgetClimbs() async throws {
+    let host = RecordBoundHost(budget: TranscriptReader.machineByteBudget)
+    let transcript = try await TranscriptReader(run: host.runner, machine: "box")
+      .read(file(size: 600_000_000), turns: 20)
+
+    // One window per page. A command reads its window three times, after a one-byte check.
+    let pages = await host.commands.map(RecordBoundHost.window(of:))
+    let budget = TranscriptReader.machineByteBudget
+    #expect(pages == [120 * 4096, 480 * 4096, budget, budget])
+    #expect(transcript.window.stoppedShort)
+  }
+}
+
+/// A file that fills a page's record bound exactly the first time the window is at `budget`,
+/// and answers every other rung with one record. Every record is unreadable, so no rung gains
+/// a turn: only the record count can say whether the bound stopped the page.
+actor RecordBoundHost {
+  private let budget: Int
+  private var filledOnce = false
+  private(set) var commands: [String] = []
+
+  init(budget: Int) {
+    self.budget = budget
+  }
+
+  func answer(_ command: String) -> CommandResult {
+    commands.append(command)
+    let records = command.matches(of: /tail -n (\d+)/).compactMap { Int($0.output.1) }.max() ?? 1
+    let fills = Self.window(of: command) == budget && !filledOnce
+    if fills { filledOnce = true }
+    let body = Array(repeating: "{not a record", count: fills ? records : 1)
+      .joined(separator: "\n") + "\n"
+    return FakeHost.output(HostFixture.read(size: 600_000_000, body: body))
+  }
+
+  nonisolated var runner: CommandRunner {
+    { command in await self.answer(command) }
+  }
+
+  /// The page's window: the largest `tail -c`, because the first is the one-byte check for a
+  /// partial last record.
+  static func window(of command: String) -> Int {
+    command.matches(of: /tail -c (\d+)/).compactMap { Int($0.output.1) }.max() ?? 0
+  }
 }
 
 /// A file so dense that the byte window never reaches its front. Each rung answers with
