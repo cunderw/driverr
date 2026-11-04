@@ -125,7 +125,8 @@
 
       // Attach before start, so bytes buffered at open time reach the emulator in order.
       session.attach(
-        { [weak view] bytes in view?.feed(byteArray: bytes) },
+        // Through the entry point that repairs the scroll view after `clear`.
+        { [weak view] bytes in view?.feedKeepingScrollGeometry(bytes) },
         // The pane sheet reads a warm pane's thumbnail from this view's grid.
         visibleText: { [weak view] in view?.visibleText() ?? "" }
       )
@@ -417,7 +418,56 @@
       applyDragRoute()
     }
 
+    /// Feeds the far side's bytes to the emulator, then puts the scroll view back on the
+    /// buffer if the bytes cut the buffer out from under it. The session's sink calls this,
+    /// never `feed(byteArray:)` directly.
+    func feedKeepingScrollGeometry(_ bytes: ArraySlice<UInt8>) {
+      let heldBefore = scrollViewRowsExist()
+      feed(byteArray: bytes)
+      // SwiftTerm's `ESC[3J` (erase scrollback, which `clear` sends) trims the buffer's
+      // lines and moves `yDisp`, and tells the view nothing. Nothing else in `clear` scrolls,
+      // so `updateScroller` never runs. The scroll view keeps the old content height and
+      // offset and draws blank rows where the old bottom was (#29). `bufferActivated` is the
+      // public way to make SwiftTerm recompute both.
+      //
+      // The test is whether the scroll view's last row still exists, not whether `yDisp`
+      // fell. A chunk that starts with no scrollback, scrolls past a screen and then clears
+      // ends at `yDisp` 0 where it began. And at the scrollback cap, a reader scrolled back
+      // sees `yDisp` fall by one per new line while the view's rows all still exist; a
+      // resync there would move them to the bottom.
+      //
+      // Only a break this feed made counts. A font change resizes the grid and corrects the
+      // scroll view one main-queue hop later, so the claim can already be past the buffer
+      // when bytes arrive. That is not a clear, and it fixes itself.
+      guard heldBefore == true, scrollViewRowsExist() == false else { return }
+      scrollGeometryResyncs += 1
+      bufferActivated(source: getTerminal())
+    }
+
+    /// How many times `feedKeepingScrollGeometry(_:)` has put the scroll view back on the
+    /// buffer. For tests.
+    private(set) var scrollGeometryResyncs = 0
+
+    /// Whether the last row the scroll view's content height claims is still in the buffer,
+    /// or `nil` while the view has no size to measure by.
+    ///
+    /// The buffer's line count is not public. A row's existence is, counted from the lines
+    /// trimmed off the top.
+    private func scrollViewRowsExist() -> Bool? {
+      let terminal = getTerminal()
+      let cellHeight = getOptimalFrameSize().height / CGFloat(max(terminal.rows, 1))
+      guard !bounds.isEmpty, cellHeight > 0 else { return nil }
+      let claimed = Int((contentSize.height / cellHeight).rounded())
+      guard claimed > 0 else { return true }
+      let lastRow = terminal.buffer.totalLinesTrimmed + claimed - 1
+      return terminal.getScrollInvariantLine(row: lastRow) != nil
+    }
+
     /// The alternate screen came or went, and with it the emulator's scrollback.
+    ///
+    /// Also called from `feedKeepingScrollGeometry(_:)` after a feed that cut the buffer out
+    /// from under the scroll view, such as `clear`'s `ESC[3J`. The screen has not changed
+    /// then, and `alternateScreenChanged` re-reports the one already current.
     override public func bufferActivated(source: Terminal) {
       super.bufferActivated(source: source)
       applyDragRoute()
