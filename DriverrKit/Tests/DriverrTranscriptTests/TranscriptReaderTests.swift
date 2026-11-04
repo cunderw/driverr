@@ -282,15 +282,70 @@ struct TranscriptResolverTests {
     )
   }
 
-  /// The reader lists the SSH host's files, so anything past this reads the wrong machine.
-  @Test("an agent on an added machine is refused before any file is listed")
+  /// The SSH host's reader lists that host's files, so anything past this reads the wrong
+  /// machine. A real `kind`, as the mapper now reports one for an added machine.
+  @Test("the SSH host's reader refuses an agent on an added machine before any round trip")
   func addedMachine() async throws {
     let host = FakeHost()
-    let pane = HostFixture.pane(
-      agent: Agent(name: "Claude", kind: "unknown", status: .working, machine: "box"))
+    let pane = boxPane()
     let resolution = try await TranscriptReader(run: host.runner).resolve(for: pane)
     #expect(resolution == .absent(.agentOnAddedMachine(agent: "Claude", machine: "box")))
     #expect(await host.commands.isEmpty)
+    #expect(try await TranscriptReader(run: host.runner).probeReportedSession(for: pane) == nil)
+    #expect(await host.commands.isEmpty)
+  }
+
+  private func boxPane() -> Pane {
+    HostFixture.pane(
+      agent: Agent(
+        name: "Claude", kind: "claude", status: .working,
+        session: AgentSession(agent: "claude", kind: "id", value: "abc"), machine: "box"))
+  }
+
+  @Test("a reader bound to the pane's machine reads it like any other")
+  func boundToTheMachine() async throws {
+    let host = FakeHost(
+      responses: [
+        "date +%s": FakeHost.output(
+          HostFixture.listing(
+            now: 1_000_000, directory: HostFixture.projectDirectory,
+            files: [("999000", 100, "abc.jsonl")]))
+      ]
+    )
+    let resolution = try await TranscriptReader(run: host.runner, machine: "box")
+      .resolve(for: boxPane())
+    #expect(resolution.source?.file.name == "abc.jsonl")
+    #expect(await !host.commands.isEmpty)
+  }
+
+  /// The machine is out of reach far more often than a host is, and the notice says why.
+  @Test(
+    "a machine that cannot answer the listing gives the notice, not an error",
+    arguments: [
+      Result<CommandResult, AppError>.failure(.herdrCommandFailed(reason: "unavailable")),
+      .failure(.channelFailed(reason: "gone")),
+      .success(CommandResult(standardOutput: "", standardError: "sh: no", exitStatus: 127)),
+    ])
+  func machineDoesNotAnswer(answer: Result<CommandResult, AppError>) async throws {
+    let reader = TranscriptReader(run: { _ in try answer.get() }, machine: "box")
+    let resolution = try await reader.resolve(for: boxPane())
+    #expect(resolution == .absent(.agentOnAddedMachine(agent: "Claude", machine: "box")))
+  }
+
+  @Test("the SSH host's own reader still throws when the host cannot answer")
+  func hostDoesNotAnswer() async throws {
+    let reader = TranscriptReader(run: { _ in throw AppError.channelFailed(reason: "gone") })
+    await #expect(throws: AppError.channelFailed(reason: "gone")) {
+      try await reader.resolve(for: HostFixture.pane())
+    }
+  }
+
+  @Test("a cancellation on a machine's reader is not taken for the machine being away")
+  func cancellationOnAMachine() async throws {
+    let reader = TranscriptReader(run: { _ in throw AppError.cancelled }, machine: "box")
+    await #expect(throws: AppError.cancelled) {
+      try await reader.resolve(for: boxPane())
+    }
   }
 
   @Test("a session reference of a kind this build does not understand falls back to the directory")

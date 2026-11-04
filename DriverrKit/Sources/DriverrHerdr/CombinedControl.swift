@@ -20,6 +20,15 @@ public enum CorePaneID {
   public static func isCore(_ id: String) -> Bool {
     id.hasPrefix(prefix)
   }
+
+  /// The `box` in `core:box/t7`: the machine the core added that this terminal is on, or `nil`
+  /// for one on the core's own computer and for any id that is not the core's.
+  public static func machine(of id: String) -> String? {
+    guard isCore(id) else { return nil }
+    let address = address(of: id)
+    guard let slash = address.firstIndex(of: "/"), slash > address.startIndex else { return nil }
+    return String(address[..<slash])
+  }
 }
 
 /// A host running both the TUI and a core, as one `HerdrControl`.
@@ -240,6 +249,10 @@ public struct CombinedControl: HerdrControl {
 
   public func paneAttacher(for paneID: String) -> (any PaneAttacher)? {
     side(for: paneID).paneAttacher(for: paneID)
+  }
+
+  public func commandRunner(forPane id: String) -> CommandRunner? {
+    side(for: id).commandRunner(forPane: id)
   }
 
   public func sendText(paneID: String, text: String) async throws {

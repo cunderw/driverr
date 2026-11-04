@@ -11,13 +11,22 @@ import Foundation
 /// tests answer from a dictionary.
 public struct TranscriptReader: Sendable {
   private let run: CommandRunner
+  /// The machine a herdr-core added that `run` reaches, or `nil` for the computer Driverr
+  /// connected to. A pane on an added machine is read only by a reader bound to it. See
+  /// `resolve`.
+  public let machine: String?
   /// The device's clock, injected for tests. Read once per resolve and stamped onto the
   /// source as "when I asked". File ages are always the host's own subtraction; see
   /// `TranscriptSource.readAt`.
   private let now: @Sendable () -> Date
 
-  public init(run: @escaping CommandRunner, now: @escaping @Sendable () -> Date = Date.init) {
+  public init(
+    run: @escaping CommandRunner,
+    machine: String? = nil,
+    now: @escaping @Sendable () -> Date = Date.init
+  ) {
     self.run = run
+    self.machine = machine
     self.now = now
   }
 
@@ -44,13 +53,36 @@ public struct TranscriptReader: Sendable {
   ///
   /// **A `pick` sits between tiers 1 and 2.** A person's answer to an earlier ambiguity
   /// beats the heuristic but not herdr's exact report. See `TranscriptPick`.
+  ///
+  /// **An agent on another machine than this reader's is refused before any round trip**,
+  /// because the lookup would read the wrong computer's files for the same directory. A
+  /// reader bound to an added machine that does not answer gives the same refusal rather than
+  /// an error, because the machine being out of reach is the ordinary case there, and the
+  /// notice says what to do about it. Cancellation still throws.
   public func resolve(for pane: Pane, pick: TranscriptPick? = nil) async throws
     -> TranscriptResolution
   {
     guard let agent = pane.agent else { return .absent(.paneHasNoAgent) }
-    if let machine = agent.machine {
+    if let elsewhere = agent.machine, elsewhere != machine {
+      return .absent(.agentOnAddedMachine(agent: agent.name, machine: elsewhere))
+    }
+    guard let machine else { return try await resolveHere(for: pane, agent: agent, pick: pick) }
+    do {
+      return try await resolveHere(for: pane, agent: agent, pick: pick)
+    } catch {
+      // `execute` folds every error that is not an `AppError` into `channelFailed`, so a
+      // cancellation is told by the task, not by the error.
+      if Task.isCancelled || error is CancellationError || error as? AppError == .cancelled {
+        throw error
+      }
       return .absent(.agentOnAddedMachine(agent: agent.name, machine: machine))
     }
+  }
+
+  /// `resolve`, past the refusals that need no round trip.
+  private func resolveHere(for pane: Pane, agent: Agent, pick: TranscriptPick?) async throws
+    -> TranscriptResolution
+  {
     guard let kind = self.agent(of: agent) else {
       return .absent(.agentNotSupported(agent: agent.name))
     }
@@ -318,13 +350,15 @@ public struct TranscriptReader: Sendable {
   /// future name, which costs far less per tick than re-listing the directory.
   ///
   /// `nil` for anything but a Claude pane with a reported id and a directory, and for a file
-  /// that is not there yet. A Codex rollout's name is not derived from its id.
+  /// that is not there yet. Also `nil` for a pane on an added machine this reader does not
+  /// reach, as `resolve` refuses it. A Codex rollout's name is not derived from its id.
   ///
   /// Also `nil`, with no round trip, for an id `resolve` could never match: one containing
   /// `/`, or with whitespace at either end. The probe would answer, the re-resolve would
   /// still say missing, and the caller would re-list the directory on every tick.
   public func probeReportedSession(for pane: Pane) async throws -> TranscriptStamp? {
-    guard let agent = pane.agent, self.agent(of: agent) == .claude,
+    guard let agent = pane.agent, agent.machine == nil || agent.machine == machine,
+      self.agent(of: agent) == .claude,
       let reported = agent.session?.identifier,
       !reported.contains("/"), reported == trimmed(reported),
       let workingDirectory = nonEmpty(pane.directory)

@@ -77,7 +77,9 @@ let package = Package(
     // that protocol and for `HerdrStream`, and DriverrHerdr knows nothing of it:
     // `CombinedControl` holds two `any HerdrControl`.
     .target(name: "DriverrHC", dependencies: ["DriverrCore", "DriverrHerdr"]),
-    .testTarget(name: "DriverrHCTests", dependencies: ["DriverrHC"]),
+    // DriverrTranscript only in the tests, to drive the real reader over a fake core's
+    // `machine.exec`. The modules themselves still meet only in the app target.
+    .testTarget(name: "DriverrHCTests", dependencies: ["DriverrHC", "DriverrTranscript"]),
     // No dependency on DriverrHerdr either, and that is the point: a Claude session file
     // is not a herdr wire type, so nothing here may reach for one. It shares only the
     // `CommandRunner` closure, which lives in DriverrCore precisely so both modules can

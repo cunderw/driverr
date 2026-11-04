@@ -181,8 +181,9 @@ public enum TranscriptAbsence: Hashable, Sendable {
   /// Never fall back to the newest file here. It is not this session's, so it is someone
   /// else's conversation or an older one.
   case reportedSessionMissing(sessionID: String, directory: String)
-  /// The agent runs on a machine a herdr-core added, and session files are read only on the
-  /// computer Driverr connected to. A lookup here would read that computer's files.
+  /// The agent runs on a machine a herdr-core added, and its session files cannot be read
+  /// there: the host has no core to reach it through, or the machine did not answer. Never a
+  /// lookup on the computer Driverr connected to, which would read that computer's files.
   case agentOnAddedMachine(agent: String, machine: String)
   /// A tapped spawn line whose link no sub-agent file carries. The meta file may not be
   /// written yet, or Claude Code left the link unresolved, which happens occasionally.

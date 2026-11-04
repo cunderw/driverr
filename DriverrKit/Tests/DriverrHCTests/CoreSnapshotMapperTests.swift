@@ -186,9 +186,9 @@ struct CoreSnapshotMapperTests {
         == "claude-helper")
   }
 
-  /// `TranscriptReader` lists the SSH host's files, so a real `kind` here would show the
-  /// host's conversation for the same directory on the other machine.
-  @Test("an agent on an added machine keeps its name and picks no reader")
+  /// The app reads it through a reader bound to that machine, which `agent.machine` names.
+  /// The SSH host's reader still refuses it. See `TranscriptReader.resolve`.
+  @Test("an agent on an added machine keeps its name and its kind, and says which machine")
   func machineAgent() throws {
     let json = #"""
       {"terminals":[{"address":"box/t1","cwd":"/srv",
@@ -197,7 +197,8 @@ struct CoreSnapshotMapperTests {
     let tree = CoreSnapshotMapper.tree(from: try decoded(json))
     let agent = try #require(tree.allPanes.only?.agent)
     #expect(agent.name == "Claude")
-    #expect(agent.kind == "unknown")
+    #expect(agent.kind == "claude")
+    #expect(agent.machine == "box")
     #expect(agent.status == .working)
   }
 

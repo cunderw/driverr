@@ -58,7 +58,8 @@ public struct Agent: Hashable, Sendable {
   /// `blocked`, and for a word this build does not know.
   public let blockedKind: AgentBlockedKind?
   /// The machine a herdr-core added that this runs on, or `nil` for the connected computer.
-  /// Driverr reads session files only on the computer it connected to.
+  /// Its session files are read on that machine, through the core, and never on the
+  /// connected computer, which may hold another conversation for the same directory.
   public let machine: String?
 
   public init(

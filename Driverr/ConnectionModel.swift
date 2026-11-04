@@ -572,6 +572,15 @@ final class ConnectionModel {
         // `takeOver(from:)`.
         let carriedTranscripts = PaneTranscriptCache(
           reader: environment.makeTranscriptReader(transport),
+          // A pane on a machine the core added is read there, through this connection's core.
+          // By the pane's id, not its agent, because a model keeps the reader it was made
+          // with, and a shell that starts Claude later is still on that machine.
+          machineReader: { [control] pane in
+            guard let machine = CorePaneID.machine(of: pane.id),
+              let run = control.commandRunner(forPane: pane.id)
+            else { return nil }
+            return TranscriptReader(run: run, machine: machine)
+          },
           // A new turn is evidence for the composer's `Sent` notice. See
           // `PaneTranscriptModel.onAdvanced`.
           onAdvanced: { [weak self] paneID in

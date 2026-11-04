@@ -105,12 +105,18 @@ actor CoreConnection {
   /// Calls run side by side, and each fails on its own deadline. A reply that arrives after
   /// that finds no pending call and is dropped. A deadline does not end the connection,
   /// because one slow method says nothing about the next.
+  ///
+  /// `deadline` replaces the connection's for this call alone, for a method that is slow by
+  /// design: `machine.exec` waits for a program on another machine. See
+  /// `CoreControl.commandRunner(forPane:)`.
   func call<Params: Encodable & Sendable, Answer: Decodable & Sendable>(
     _ method: String,
     params: Params,
-    as answer: Answer.Type = Answer.self
+    as answer: Answer.Type = Answer.self,
+    deadline: Duration? = nil
   ) async throws -> Answer {
-    try Self.answer(in: await exchange(method, params: params, handler: nil), as: answer)
+    try Self.answer(
+      in: await exchange(method, params: params, handler: nil, deadline: deadline), as: answer)
   }
 
   /// Calls a method that answers with a stream channel, and hands the stream to `handler`.
@@ -172,7 +178,8 @@ actor CoreConnection {
   private func exchange<Params: Encodable & Sendable>(
     _ method: String,
     params: Params,
-    handler: ChannelHandler?
+    handler: ChannelHandler?,
+    deadline: Duration? = nil
   ) async throws -> Data {
     guard isOpen else { throw Self.endedFailure }
 
@@ -182,12 +189,12 @@ actor CoreConnection {
     let frame = CoreFrame(channel: 0, kind: .data, payload: try JSONEncoder().encode(request))
 
     return try await withCheckedThrowingContinuation { continuation in
-      let deadline = Task { [callDeadline] in
-        try? await Task.sleep(for: callDeadline)
+      let expiry = Task { [limit = deadline ?? callDeadline] in
+        try? await Task.sleep(for: limit)
         guard !Task.isCancelled else { return }
         self.expire(id, method: method)
       }
-      pending[id] = PendingCall(continuation: continuation, deadline: deadline, handler: handler)
+      pending[id] = PendingCall(continuation: continuation, deadline: expiry, handler: handler)
       send(frame.encoded) { connection, error in
         connection.settle(id, with: .failure(Self.sendFailure(error)))
       }
