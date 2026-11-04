@@ -14,8 +14,9 @@ let package = Package(
   ],
   dependencies: [
     .package(url: "https://github.com/apple/swift-nio-ssh.git", from: "0.15.0"),
-    // **A fork, temporarily. Delete it when migueldeicaza/SwiftTerm#659 merges and an
-    // upstream tag refuses kitty graphics local media by default.** Upstream's
+    // **A fork, temporarily. Delete it when migueldeicaza/SwiftTerm#659 merges, an
+    // upstream tag refuses kitty graphics local media by default, and upstream lowers an
+    // empty buffer's capacity on a shrink.** Upstream's
     // `TerminalView.hasText` answers from `textInputStorage` — cleared on every Enter,
     // and never holding what the far side echoed — so it reads `false` at an ordinary
     // shell prompt. iOS reads `hasText` to decide whether the delete key has anything to
@@ -32,16 +33,23 @@ let package = Package(
     // and no tag has it yet. `KittyGraphicsLocalMediaTests` holds the rule, so a pin that
     // loses it fails the kit tier.
     //
-    // The fork is upstream **v1.18.0** plus those two commits, so the delta from upstream is
-    // one function and one `switch`. Pinned by revision rather than a version range on
-    // purpose: it makes no version claim it would have to keep, and it cannot drift if
-    // someone runs `swift package update`.
+    // The fork also lowers an empty buffer's line capacity when the grid shrinks. Upstream
+    // lowers it only when the buffer holds lines, and the alternate buffer is empty while
+    // inactive, so after the keyboard shrank the grid the next alternate screen grew back to
+    // the old row count as `less` scrolled its first screen in, and drew low (#73). Not
+    // submitted upstream. `TerminalAlternateScreenGeometryTests` holds the rule in the app's
+    // hosted tier.
     //
-    // When the upstream pull request merges and a tag carries both changes, put this back to
+    // The fork is upstream **v1.18.0** plus those three commits, so the delta from upstream
+    // is one function, one `switch` and one branch. Pinned by revision rather than a version
+    // range on purpose: it makes no version claim it would have to keep, and it cannot drift
+    // if someone runs `swift package update`.
+    //
+    // When an upstream tag carries all three changes, put this back to
     // `.package(url: "https://github.com/migueldeicaza/SwiftTerm.git", from: …)`.
     .package(
       url: "https://github.com/cunderw/SwiftTerm.git",
-      revision: "96771c0ea228df36583daf71c1e17698e41efb67"
+      revision: "645635cb246f47b5a10cae7462e4a3b3745eb829"
     ),
   ],
   targets: [

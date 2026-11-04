@@ -26,16 +26,18 @@ resolves it. This file does not say whether the app links it.
 | [swift-collections](https://github.com/apple/swift-collections) | 1.6.0 | `a0cb0954ecb2` | Apache-2.0 with Runtime Library Exception | [LICENSE.txt](https://raw.githubusercontent.com/apple/swift-collections/a0cb0954ecb21e4e31b0070e6ed5674e8556685a/LICENSE.txt) |
 | [swift-system](https://github.com/apple/swift-system) | 1.8.0 | `704705c5c511` | Apache-2.0 with Runtime Library Exception | [LICENSE.txt](https://raw.githubusercontent.com/apple/swift-system/704705c5c51156ede21172a38654d522ce487074/LICENSE.txt) |
 | [swift-argument-parser](https://github.com/apple/swift-argument-parser) | 1.8.2 | `6a52f3251125` | Apache-2.0 with Runtime Library Exception | [LICENSE.txt](https://raw.githubusercontent.com/apple/swift-argument-parser/6a52f3251125d74daf04fcbd5e6f08a75d074382/LICENSE.txt) |
-| [SwiftTerm](https://github.com/cunderw/SwiftTerm), a fork of [migueldeicaza/SwiftTerm](https://github.com/migueldeicaza/SwiftTerm) | none. Pinned by revision. It is upstream v1.18.0 plus two commits | `96771c0ea228` | MIT | [LICENSE](https://raw.githubusercontent.com/cunderw/SwiftTerm/96771c0ea228df36583daf71c1e17698e41efb67/LICENSE) |
+| [SwiftTerm](https://github.com/cunderw/SwiftTerm), a fork of [migueldeicaza/SwiftTerm](https://github.com/migueldeicaza/SwiftTerm) | none. Pinned by revision. It is upstream v1.18.0 plus three commits | `645635cb246f` | MIT | [LICENSE](https://raw.githubusercontent.com/cunderw/SwiftTerm/645635cb246f47b5a10cae7462e4a3b3745eb829/LICENSE) |
 
-SwiftTerm is pinned to the `cunderw/SwiftTerm` fork because of two changes. The fork's commit
+SwiftTerm is pinned to the `cunderw/SwiftTerm` fork because of three changes. The fork's commit
 `f56f0f0f7f69` has the upstream `v1.18.0` commit `7691f85b222a` as its only parent and changes
 one file. That change is open upstream as
 [migueldeicaza/SwiftTerm#659](https://github.com/migueldeicaza/SwiftTerm/pull/659). The fork's
 commit `96771c0ea228` has `f56f0f0f7f69` as its only parent and changes one source file and
 one test file. It refuses the kitty graphics media that name a file or a shared memory object
 on the device. Upstream's `main` branch refuses them by default, and no upstream tag has that
-yet.
+yet. The fork's commit `645635cb246f` has `96771c0ea228` as its only parent and changes one
+source file and two test files. It lowers an empty buffer's line capacity when the terminal's
+rows shrink, which upstream does only for a buffer that holds lines.
 
 ### Apache License 2.0
 
@@ -481,7 +483,7 @@ This product contains derivations of various scripts from Swift OpenAPI Generato
 
 ### SwiftTerm: MIT License
 
-The text below is `LICENSE` of `cunderw/SwiftTerm` at `96771c0ea228`. It names four
+The text below is `LICENSE` of `cunderw/SwiftTerm` at `645635cb246f`. It names four
 copyright holders, which are the four first lines.
 
 ```text
