@@ -2774,19 +2774,19 @@ struct TerminalSceneModelTests {
   @Test("a controller opening over an ended core observer swaps at once")
   func anEndedCoreObserverIsNotKeptOnScreen() async throws {
     let attacher = FakeCoreAttacher()
-    let ticks = Ticks()
     let agent = FakeControl.seededTree.pane(id: "w1:p1")?.agent
-    let (scene, _) = await coreScene(
-      attacher, surface: .chat, agent: agent, wait: { await ticks.wait($0) })
+    let (scene, _) = await coreScene(attacher, surface: .chat, agent: agent)
     let observer = try await opened(scene, attacher)
     // A warm view is laid out behind the chat, so it has already measured.
     try #require(scene.currentSession).resize(to: Self.measured)
 
-    observer.end(.lost)
-    await waitUntil("the wait for a shell") { ticks.asked.count == 1 }
-    try #require(scene.currentRole == .ended)
+    // An end with no reattach and no wait for a shell, so `settle()` has nothing parked.
+    observer.end(.serverShuttingDown)
+    await waitUntil("the entry ending") { scene.currentRole == .ended }
+    await scene.settle()
 
     scene.show(.terminal)
+    scene.retryOpen()
     await scene.settle()
 
     #expect(attacher.log == ["observe t7", "open t7"])
@@ -2798,13 +2798,12 @@ struct TerminalSceneModelTests {
   @Test("a controller opening over an ended core controller waits for its first frame")
   func anEndedCoreControllerIsKeptOnScreen() async throws {
     let attacher = FakeCoreAttacher()
-    let ticks = Ticks()
-    let (scene, _) = await coreScene(attacher, wait: { await ticks.wait($0) })
+    let (scene, _) = await coreScene(attacher)
     let first = try await opened(scene, attacher)
 
-    first.end(.lost)
-    await waitUntil("the wait for a shell") { ticks.asked.count == 1 }
-    try #require(scene.currentRole == .ended)
+    first.end(.serverShuttingDown)
+    await waitUntil("the entry ending") { scene.currentRole == .ended }
+    await scene.settle()
 
     scene.retryOpen()
     await scene.settle()
