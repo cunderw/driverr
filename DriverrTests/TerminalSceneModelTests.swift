@@ -2717,6 +2717,48 @@ struct TerminalSceneModelTests {
     )
   }
 
+  /// #45. A core observer's bytes arrive at the terminal's width, not the phone's, so the
+  /// hidden view behind the chat holds a garbled grid. Its tile is read from the core instead.
+  /// `TerminalSessionTests.aNarrowerGridDoesNotHoldTheProgramsRows` shows the garbling.
+  @Test("a core pane on the chat surface has no rows to read here, and a core controller does")
+  func aCoreObserverIsNotReadForAThumbnail() async throws {
+    let attacher = FakeCoreAttacher()
+    let agent = FakeControl.seededTree.pane(id: "w1:p1")?.agent
+    let (scene, _) = await coreScene(attacher, surface: .chat, agent: agent)
+    _ = try await opened(scene, attacher)
+    try #require(scene.currentRole == .observer)
+
+    // Stands in for `DriverrTerminalView.makeUIView`, as in the test above.
+    let observed = try #require(scene.session(for: .pane(id: "core:t7")))
+    observed.attach({ _ in }, visibleText: { "garbled\nrows" })
+    #expect(
+      scene.visibleLines(for: .pane(id: "core:t7"), last: 6) == nil,
+      "a core observer's grid is not the program's, so the tile asks the core"
+    )
+
+    // A controller sizes the terminal to this grid, so its rows are the program's.
+    try #require(scene.currentSession).resize(to: Self.measured)
+    scene.show(.terminal)
+    await scene.settle()
+    try #require(scene.currentRole == .controller)
+    let controlled = try #require(scene.session(for: .pane(id: "core:t7")))
+    controlled.attach({ _ in }, visibleText: { "$ ls" })
+    #expect(scene.visibleLines(for: .pane(id: "core:t7"), last: 6) == ["$ ls"])
+  }
+
+  /// herdr draws each observer at the observer's own size, so a herdr observer stays warm.
+  @Test("a herdr pane on the chat surface still reads its rows from its observer")
+  func aHerdrObserverIsReadForAThumbnail() async throws {
+    let (scene, _) = await makeScene(surface: .chat, responder: Self.observersOnly)
+    scene.start()
+    await scene.settle()
+    try #require(scene.role(for: .pane(id: "w1:p1")) == .observer)
+
+    let session = try #require(scene.session(for: .pane(id: "w1:p1")))
+    session.attach({ _ in }, visibleText: { "> five lines" })
+    #expect(scene.visibleLines(for: .pane(id: "w1:p1"), last: 6) == ["> five lines"])
+  }
+
   // MARK: - The sheets the screen presents
 
   // The pane sheet's and Settings' flags live on this model, not the screen's `@State`, so
