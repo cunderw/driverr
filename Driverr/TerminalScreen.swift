@@ -263,6 +263,14 @@ struct TerminalScreen: View {
         keyboardTop = nil
       }
       .overlay(alignment: .topLeading) { keyboardMetricsReadout }
+      #if DEBUG
+        .overlay(alignment: .topTrailing) {
+          if SurfaceTapProbe.isEnabled { SurfaceTapReadout() }
+        }
+        .onChange(of: probeState, initial: true) { _, new in
+          SurfaceTapProbe.shared.state = new
+        }
+      #endif
       // Hardware key commands, behind the content because nothing here is seen or touched.
       .background { keyCommands }
       // The rest, in the Pane menu. See `PaneCommands`.
@@ -270,6 +278,17 @@ struct TerminalScreen: View {
   }
 
   private var settings: TerminalSettings { settingsModel.settings }
+
+  #if DEBUG
+  /// #40 instrument: the current target, the surface shown, and what memory holds for it.
+  private var probeState: String {
+    let id = scene.currentPane?.id ?? "-"
+    let remembered = scene.currentPane.flatMap { model.surfaces.surface(for: $0.id) }
+    return "cur=\(id) surface=\(surface) mem=\(remembered.map { "\($0)" } ?? "nil")"
+      + " chat=\(isShowingChat) seg=\(showsSurfaceSegment && !isComposerCollapsed)"
+      + " kb=\(keyboardTop.map { "\(Int($0))" } ?? "nil")"
+  }
+  #endif
 
   @ViewBuilder
   private var content: some View {
@@ -296,6 +315,11 @@ struct TerminalScreen: View {
         // against the screen's edge, and the card sat the home indicator's height under the
         // keys. A bar in the safe area rises with the keyboard.
         paneSurfaces
+          #if DEBUG
+            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: {
+              SurfaceTapProbe.shared.surfacesFrame = $0
+            }
+          #endif
           // A floor the chrome cannot push through. The surfaces are the one flexible child,
           // so they absorb every banner. In landscape with the keyboard up, enough bands would
           // squeeze them to zero height, which nothing recovers. With a floor the chrome
@@ -648,7 +672,12 @@ struct TerminalScreen: View {
         "Surface",
         selection: Binding(
           get: { surface },
-          set: { scene.show($0) }
+          set: {
+            #if DEBUG
+              SurfaceTapProbe.shared.noteSet($0)
+            #endif
+            scene.show($0)
+          }
         )
       ) {
         // Identifiers on the segments, never on the `Picker`, which would overwrite them.
@@ -670,6 +699,11 @@ struct TerminalScreen: View {
       // bar and the content. The `Divider` separates the band from the conversation.
       .background(Color(.systemGroupedBackground))
       .overlay(alignment: .bottom) { Divider() }
+      #if DEBUG
+        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: {
+          SurfaceTapProbe.shared.segmentFrame = $0
+        }
+      #endif
     }
   }
 

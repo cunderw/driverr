@@ -537,12 +537,25 @@ final class TerminalSceneModel {
   /// keep the pane locked and reflowed on the desk while someone only reads.
   func show(_ surface: PaneSurface) {
     let target = current
-    guard self.surface(for: target) != surface else { return }
+    guard self.surface(for: target) != surface else {
+      #if DEBUG
+        SurfaceTapProbe.shared.noteShow(surface, "same(\(target))")
+      #endif
+      return
+    }
     // Remembered on the connection, so it outlives this scene.
     if case .pane(let id) = target { model.surfaces.remember(surface, for: id) }
     // Before `start()` nothing is open, and a scene never shown must take nothing on the
     // host. `start()` opens whatever this recorded.
-    guard warm.current != nil else { return }
+    guard warm.current != nil else {
+      #if DEBUG
+        SurfaceTapProbe.shared.noteShow(surface, "noWarm(\(target))")
+      #endif
+      return
+    }
+    #if DEBUG
+      SurfaceTapProbe.shared.noteShow(surface, "enqueued(\(target))")
+    #endif
     enqueue(on: target) { [weak self] in await self?.openSurface(for: target) }
   }
 
@@ -1775,6 +1788,9 @@ final class TerminalSceneModel {
     let target = current
     guard surface(for: target) == .chat, entry(for: target)?.role == .controller
     else { return }
+    #if DEBUG
+      SurfaceTapProbe.shared.demoteFires += 1
+    #endif
     enqueue(on: target) { [weak self] in await self?.openSurface(for: target) }
   }
 

@@ -31,6 +31,12 @@ final class PaneSurfaceMemory {
   /// Drops every pane that is no longer in the session, so a pane id herdr reuses does not
   /// inherit a closed pane's choice. The poll's diff calls this.
   func forgetEverythingExcept(_ liveIDs: Set<String>) {
+    #if DEBUG
+      let dropped = surfaces.keys.filter { !liveIDs.contains($0) }
+      if !dropped.isEmpty {
+        SurfaceTapProbe.shared.wipes = "\(dropped.sorted())@\(SurfaceTapProbe.stamp())"
+      }
+    #endif
     surfaces = surfaces.filter { liveIDs.contains($0.key) }
   }
 }

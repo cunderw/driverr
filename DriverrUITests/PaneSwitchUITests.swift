@@ -162,7 +162,18 @@ final class PaneSwitchUITests: XCTestCase {
   /// An agent pane opens on its chat, so a test that wants the terminal asks for it. Every
   /// caller is on an agent pane, so a missing segment fails.
   private func showTerminal(_ app: XCUIApplication) {
-    require(app, "pane.surface.terminal", "Expected the Terminal segment on an agent pane").tap()
+    let segment = require(app, "pane.surface.terminal", "Expected the Terminal segment on an agent pane")
+    // #40 instrument: where the tap goes, before and after.
+    // Nothing is queried before the tap, so the instrument does not delay it.
+    print("#40 TAP \(Date())")
+    segment.tap()
+    let probe = element(app, "debug.surfaceTap")
+    print(
+      "#40 AFTER \(Date()) term=\(segment.frame) sel=\(segment.isSelected)"
+        + " probe=\(probe.exists ? probe.label : "absent")")
+    Thread.sleep(forTimeInterval: 1)
+    print(
+      "#40 AFTER+1s \(Date()) sel=\(segment.isSelected) probe=\(probe.exists ? probe.label : "absent")")
   }
 
   /// Every tile carrying `identifier`, in the sheet's own order.
