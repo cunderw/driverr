@@ -47,6 +47,9 @@ final class TerminalSceneModel {
     var role: Role
     fileprivate var attachment: Attachment
     fileprivate var pump: Task<Void, Never>?
+    /// The role an `.ended` entry had when its stream ended, because its grid is still that
+    /// role's. See `holdsACoreObserversGrid(_:)`.
+    fileprivate(set) var endedFrom: Role?
   }
 
   /// How a target's bytes are being got, and therefore how to let go of it.
@@ -371,8 +374,15 @@ final class TerminalSceneModel {
   /// The free half of the pane sheet's thumbnails: every warm entry keeps a laid-out
   /// terminal view, so the picture already exists. `nil`, not empty, because a cold pane's
   /// tile comes from a batched `pane read` instead.
+  ///
+  /// **A core pane reads warm only from a controller.** A core observer's grid is garbled,
+  /// live or ended; see `holdsACoreObserversGrid(_:)`, which says why this rule is stricter
+  /// than the screen's. `nil` sends the tile to the batched read, which on a core is the
+  /// core's own screen. A core controller sizes the terminal to this grid.
   func visibleLines(for target: TerminalTarget, last count: Int) -> [String]? {
-    entry(for: target)?.session.visibleLines(last: count)
+    guard let entry = entry(for: target) else { return nil }
+    if Self.isCorePane(target), entry.role != .controller { return nil }
+    return entry.session.visibleLines(last: count)
   }
 
   // MARK: - What the screen presents
@@ -1036,12 +1046,35 @@ final class TerminalSceneModel {
   /// frame. `switchingToAnObservedPaneSwapsOnTheFirstFrame` and
   /// `aReattachKeepsTheLastFrameUntilTheNewOnePaints` cover the two cases.
   ///
-  /// **Not a core observer.** Its bytes arrive at the terminal's width, not the phone's, so
-  /// what it shows is garbled and blank for one round trip beats keeping it up.
+  /// **Not a core observer's grid, live or ended.** See `holdsACoreObserversGrid(_:)`: what
+  /// it shows is garbled, and blank for one round trip beats keeping it up. An ended core
+  /// controller's frame is at this grid's width, so it is kept like any other.
   private func keepsPaintingUntilPromoted(_ target: TerminalTarget) -> Bool {
-    guard let role = entry(for: target)?.role else { return false }
-    if role == .observer, case .pane(let id) = target, CorePaneID.isCore(id) { return false }
-    return role == .observer || role == .ended
+    guard let entry = entry(for: target) else { return false }
+    if holdsACoreObserversGrid(entry) { return false }
+    return entry.role == .observer || entry.role == .ended
+  }
+
+  /// Whether `entry`'s grid was fed by a core observer, live or since ended.
+  ///
+  /// A core forwards the program's own bytes at the terminal's width and never resizes the
+  /// terminal for an observer, so the grid, laid out at this view's size, holds wrapped and
+  /// overlapping rows (#45). Two rules read it, and differ on purpose:
+  ///
+  /// - `keepsPaintingUntilPromoted(_:)` will not keep such a grid on screen. It keeps an ended
+  ///   core controller's frame, because that frame is at this grid's width and the
+  ///   alternative is a blank view.
+  /// - `visibleLines(for:last:)` is stricter: a core pane reads warm only from a controller.
+  ///   The tile has a cheap alternative, the core's own screen, and an ended controller's
+  ///   frame is stale while the program goes on drawing.
+  private func holdsACoreObserversGrid(_ entry: Entry) -> Bool {
+    guard Self.isCorePane(entry.target) else { return false }
+    return entry.role == .observer || (entry.role == .ended && entry.endedFrom == .observer)
+  }
+
+  private static func isCorePane(_ target: TerminalTarget) -> Bool {
+    guard case .pane(let id) = target else { return false }
+    return CorePaneID.isCore(id)
   }
 
   /// herdr's first frame on a controller stream: the attach token is ours.
@@ -1159,6 +1192,8 @@ final class TerminalSceneModel {
     if let index = entries.firstIndex(where: { $0.target == target }),
       entries[index].role == .controller || entries[index].role == .observer
     {
+      // Kept, because the grid it leaves on screen is still the old role's.
+      entries[index].endedFrom = entries[index].role
       entries[index].role = .ended
     }
   }

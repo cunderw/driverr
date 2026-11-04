@@ -8,6 +8,9 @@ import os
 ///
 /// - Warm: the current pane and its observers have a live emulator in the view
 ///   hierarchy, so their lines come from `TerminalSession.visibleLines(last:)` at no cost.
+///   A core pane is warm only through a controller, because an observer's grid there is
+///   not the program's. See
+///   `TerminalSceneModel.visibleLines(for:last:)`.
 /// - Cold: everything else is one batched `readPanes` per tick while the sheet is open.
 ///   One exec channel for the whole grid, not one per tile.
 ///

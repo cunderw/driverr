@@ -2717,6 +2717,114 @@ struct TerminalSceneModelTests {
     )
   }
 
+  /// #45. A core observer's bytes arrive at the terminal's width, not the phone's, so the
+  /// hidden view behind the chat holds a garbled grid. Its tile is read from the core instead.
+  /// `TerminalSessionTests.aNarrowerGridDoesNotHoldTheProgramsRows` shows the garbling.
+  @Test("a core pane on the chat surface has no rows to read here, and a core controller does")
+  func aCoreObserverIsNotReadForAThumbnail() async throws {
+    let attacher = FakeCoreAttacher()
+    let agent = FakeControl.seededTree.pane(id: "w1:p1")?.agent
+    let (scene, _) = await coreScene(attacher, surface: .chat, agent: agent)
+    _ = try await opened(scene, attacher)
+    try #require(scene.currentRole == .observer)
+
+    // Stands in for `DriverrTerminalView.makeUIView`, as in the test above.
+    let observed = try #require(scene.session(for: .pane(id: "core:t7")))
+    observed.attach({ _ in }, visibleText: { "garbled\nrows" })
+    #expect(
+      scene.visibleLines(for: .pane(id: "core:t7"), last: 6) == nil,
+      "a core observer's grid is not the program's, so the tile asks the core"
+    )
+
+    // A controller sizes the terminal to this grid, so its rows are the program's.
+    try #require(scene.currentSession).resize(to: Self.measured)
+    scene.show(.terminal)
+    await scene.settle()
+    try #require(scene.currentRole == .controller)
+    let controlled = try #require(scene.session(for: .pane(id: "core:t7")))
+    controlled.attach({ _ in }, visibleText: { "$ ls" })
+    #expect(scene.visibleLines(for: .pane(id: "core:t7"), last: 6) == ["$ ls"])
+  }
+
+  /// A core observer that ends keeps its grid as `.ended`, through the wait for a new shell
+  /// and through a reattach. That grid is still at the terminal's width.
+  @Test("a core observer whose stream ended still has no rows to read here")
+  func anEndedCoreObserverIsNotReadForAThumbnail() async throws {
+    let attacher = FakeCoreAttacher()
+    let ticks = Ticks()
+    let agent = FakeControl.seededTree.pane(id: "w1:p1")?.agent
+    let (scene, _) = await coreScene(
+      attacher, surface: .chat, agent: agent, wait: { await ticks.wait($0) })
+    let observer = try await opened(scene, attacher)
+    try #require(scene.currentRole == .observer)
+    let observed = try #require(scene.session(for: .pane(id: "core:t7")))
+    observed.attach({ _ in }, visibleText: { "garbled\nrows" })
+
+    // Parked on its first tick, so the entry stays `.ended`.
+    observer.end(.lost)
+    await waitUntil("the wait for a shell") { ticks.asked.count == 1 }
+    try #require(scene.currentRole == .ended)
+
+    #expect(scene.visibleLines(for: .pane(id: "core:t7"), last: 6) == nil)
+  }
+
+  /// The visible half of the rule above. An ended former core observer's frame is as garbled
+  /// as the live observer's, so a controller replaces it at once, as `aCoreObserverPromotesAtOnce`
+  /// has a live one replaced, rather than keeping it up until the first frame.
+  @Test("a controller opening over an ended core observer swaps at once")
+  func anEndedCoreObserverIsNotKeptOnScreen() async throws {
+    let attacher = FakeCoreAttacher()
+    let agent = FakeControl.seededTree.pane(id: "w1:p1")?.agent
+    let (scene, _) = await coreScene(attacher, surface: .chat, agent: agent)
+    let observer = try await opened(scene, attacher)
+    // A warm view is laid out behind the chat, so it has already measured.
+    try #require(scene.currentSession).resize(to: Self.measured)
+
+    // An end with no reattach and no wait for a shell, so `settle()` has nothing parked.
+    observer.end(.serverShuttingDown)
+    await waitUntil("the entry ending") { scene.currentRole == .ended }
+    await scene.settle()
+
+    scene.show(.terminal)
+    scene.retryOpen()
+    await scene.settle()
+
+    #expect(attacher.log == ["observe t7", "open t7"])
+    #expect(scene.currentRole == .controller, "installed, not pending behind the old frame")
+  }
+
+  /// A core controller that ended kept a frame at this grid's width, so it is kept on screen
+  /// until the new controller paints, as any ended frame is.
+  @Test("a controller opening over an ended core controller waits for its first frame")
+  func anEndedCoreControllerIsKeptOnScreen() async throws {
+    let attacher = FakeCoreAttacher()
+    let (scene, _) = await coreScene(attacher)
+    let first = try await opened(scene, attacher)
+
+    first.end(.serverShuttingDown)
+    await waitUntil("the entry ending") { scene.currentRole == .ended }
+    await scene.settle()
+
+    scene.retryOpen()
+    await scene.settle()
+
+    #expect(attacher.log == ["open t7", "open t7"])
+    #expect(scene.currentRole == .ended, "pending behind the last frame until it paints")
+  }
+
+  /// herdr draws each observer at the observer's own size, so a herdr observer stays warm.
+  @Test("a herdr pane on the chat surface still reads its rows from its observer")
+  func aHerdrObserverIsReadForAThumbnail() async throws {
+    let (scene, _) = await makeScene(surface: .chat, responder: Self.observersOnly)
+    scene.start()
+    await scene.settle()
+    try #require(scene.role(for: .pane(id: "w1:p1")) == .observer)
+
+    let session = try #require(scene.session(for: .pane(id: "w1:p1")))
+    session.attach({ _ in }, visibleText: { "> five lines" })
+    #expect(scene.visibleLines(for: .pane(id: "w1:p1"), last: 6) == ["> five lines"])
+  }
+
   // MARK: - The sheets the screen presents
 
   // The pane sheet's and Settings' flags live on this model, not the screen's `@State`, so
