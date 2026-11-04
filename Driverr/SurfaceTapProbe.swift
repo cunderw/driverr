@@ -49,7 +49,7 @@ final class SurfaceTapProbe {
 
   func noteTouch(_ text: String) {
     touches.append("\(text)@\(Self.stamp())")
-    if touches.count > 6 { touches.removeFirst(touches.count - 6) }
+    if touches.count > 10 { touches.removeFirst(touches.count - 10) }
   }
 
   var summary: String {
@@ -100,26 +100,63 @@ private struct TouchTap: UIViewRepresentable {
   }
 
   final class Recorder: UIGestureRecognizer {
+    /// Records each touch's hit view as it begins, and how a touch on the segment ends, then
+    /// fails. It never recognizes, so it cancels and delays nothing.
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
       for touch in touches {
         let point = touch.location(in: nil)
         var names: [String] = []
-        var seg = false
         var view = touch.view
-        while let current = view, names.count < 4 {
+        while let current = view, names.count < 3 {
           names.append(String(describing: type(of: current)))
           view = current.superview
         }
-        view = touch.view
-        while let current = view {
-          if current is UISegmentedControl { seg = true; break }
-          view = current.superview
-        }
-        let text = "\(Int(point.x)),\(Int(point.y)) seg=\(seg) \(names.joined(separator: "<"))"
+        let control = Self.segmentedControl(above: touch.view)
+        if let control { ValueChangeLog.shared.watch(control) }
+        let text = "began \(Int(point.x)),\(Int(point.y)) seg=\(control != nil) \(names.joined(separator: "<"))"
         SurfaceTapProbe.shared.noteTouch(text)
+      }
+    }
+
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) {
+      finish(touches, "ended")
+    }
+
+    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) {
+      finish(touches, "CANCELLED")
+    }
+
+    private func finish(_ touches: Set<UITouch>, _ phase: String) {
+      for touch in touches where Self.segmentedControl(above: touch.view) != nil {
+        SurfaceTapProbe.shared.noteTouch("\(phase) seg")
       }
       state = .failed
     }
+
+    static func segmentedControl(above view: UIView?) -> UISegmentedControl? {
+      var view = view
+      while let current = view {
+        if let control = current as? UISegmentedControl { return control }
+        view = current.superview
+      }
+      return nil
+    }
+  }
+}
+
+/// Logs every `.valueChanged` a watched segmented control sends, before SwiftUI's binding.
+@MainActor
+private final class ValueChangeLog: NSObject {
+  static let shared = ValueChangeLog()
+  private var watched: Set<ObjectIdentifier> = []
+
+  func watch(_ control: UISegmentedControl) {
+    guard watched.insert(ObjectIdentifier(control)).inserted else { return }
+    control.addTarget(self, action: #selector(changed(_:)), for: .valueChanged)
+  }
+
+  @objc private func changed(_ control: UISegmentedControl) {
+    SurfaceTapProbe.shared.noteTouch("valueChanged=\(control.selectedSegmentIndex)")
   }
 }
 #endif
