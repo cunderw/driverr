@@ -826,9 +826,13 @@ struct TerminalSessionTests {
     statusLine("  INSERT | drover-testing", "ctx:68.7k  5h:22%  wk:15%"),
   ]
 
-  /// What a thumbnail should hold: the program's last six rows, as `visibleText` trims them.
-  private static var secondFrameRows: [String] {
-    secondFrame.map { String($0.reversed().drop(while: { $0 == " " }).reversed()) }
+  /// What a thumbnail should hold: the program's last six rows. Trailing spaces are dropped on
+  /// both sides of the comparison, because a space the program wrote is a cell that
+  /// `translateToString(trimRight:)` keeps, and the tile draws nothing for it either way.
+  private static var secondFrameRows: [String] { secondFrame.map(withoutTrailingSpaces) }
+
+  private static func withoutTrailingSpaces(_ line: String) -> String {
+    String(line.reversed().drop(while: { $0 == " " }).reversed())
   }
 
   private func thumbnailAfterTwoFrames(columns: Int) async -> [String]? {
@@ -842,13 +846,14 @@ struct TerminalSessionTests {
     feed.emit(Self.agentFrame(Self.secondFrame, erasingLinesOf: Self.firstFrame))
     await waitUntil { renderer.screen.contains("ctx:68.7k") }
     // `PaneThumbnailModel.lineCount`, which lives in the app target.
-    return session.visibleLines(last: 6)
+    return session.visibleLines(last: 6)?.map(Self.withoutTrailingSpaces)
   }
 
   /// The control for the test below: the same bytes into a grid as wide as the program's.
   @Test("an agent's redraw reads back as its own rows in a grid as wide as its terminal")
   func agentRedrawAtTheTerminalsWidth() async {
-    #expect(await thumbnailAfterTwoFrames(columns: Self.programColumns) == Self.secondFrameRows)
+    let lines = await thumbnailAfterTwoFrames(columns: Self.programColumns)
+    #expect(lines == Self.secondFrameRows)
   }
 
   /// #45. On Chat the current core pane holds an observer, and the pane sheet reads its tile
