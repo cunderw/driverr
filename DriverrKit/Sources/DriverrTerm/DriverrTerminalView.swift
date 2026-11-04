@@ -125,7 +125,7 @@
 
       // Attach before start, so bytes buffered at open time reach the emulator in order.
       session.attach(
-        { [weak view] bytes in view?.feed(byteArray: bytes) },
+        { [weak view] bytes in view?.feedKeepingScrollGeometry(bytes) },
         // The pane sheet reads a warm pane's thumbnail from this view's grid.
         visibleText: { [weak view] in view?.visibleText() ?? "" }
       )
@@ -415,6 +415,12 @@
     /// PTY on a host running herdr would not scroll. A drag goes by `applyDragRoute()`.
     override public func mouseModeChanged(source: Terminal) {
       applyDragRoute()
+    }
+
+    /// Feeds the far side's bytes to the emulator. The session's sink calls this, never
+    /// `feed(byteArray:)` directly.
+    func feedKeepingScrollGeometry(_ bytes: ArraySlice<UInt8>) {
+      feed(byteArray: bytes)
     }
 
     /// The alternate screen came or went, and with it the emulator's scrollback.

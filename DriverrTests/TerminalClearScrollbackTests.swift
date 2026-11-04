@@ -112,7 +112,7 @@ struct TerminalClearScrollbackTests {
     defer { withExtendedLifetime(window) {} }
     let view = try #require(Self.terminal(in: window))
 
-    view.feed(text: Self.lines(0..<200, prefix: "before"))
+    view.feedKeepingScrollGeometry(ArraySlice(Self.lines(0..<200, prefix: "before").utf8))
     window.layoutIfNeeded()
     let before = Geometry(view)
     print("issue29 before clear: \(before)")
@@ -124,8 +124,8 @@ struct TerminalClearScrollbackTests {
     #expect(beforeColours > 1, "the probe sees drawn text before clear")
 
     // What `clear` sends, then a short command's output.
-    view.feed(text: "\u{1b}[3J\u{1b}[H\u{1b}[2J")
-    view.feed(text: "short\r\n")
+    view.feedKeepingScrollGeometry(ArraySlice("\u{1b}[3J\u{1b}[H\u{1b}[2J".utf8))
+    view.feedKeepingScrollGeometry(ArraySlice("short\r\n".utf8))
     window.layoutIfNeeded()
     let afterShort = Geometry(view)
     print("issue29 after clear + short: \(afterShort)")
@@ -138,7 +138,8 @@ struct TerminalClearScrollbackTests {
     #expect(shortColours > 1, "the short output is drawn at the top of the view")
 
     // Output past the first screen scrolls the buffer.
-    view.feed(text: Self.lines(0..<(afterShort.rows + 10), prefix: "after"))
+    view.feedKeepingScrollGeometry(
+      ArraySlice(Self.lines(0..<(afterShort.rows + 10), prefix: "after").utf8))
     window.layoutIfNeeded()
     let afterLong = Geometry(view)
     print("issue29 after clear + long: \(afterLong)")
