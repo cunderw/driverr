@@ -97,6 +97,7 @@ struct TerminalScrollGeometryResyncTests {
     print("issue29 one chunk: \(after)")
     #expect(after.yDisp == 0)
     #expect(after.followsBuffer, "\(after)")
+    #expect(view.scrollGeometryResyncs == 1)
   }
 
   @Test("bytes from the session reach the view through the entry point")
@@ -150,5 +151,79 @@ struct TerminalScrollGeometryResyncTests {
     print("issue29 through the session: \(after)")
     #expect(after.yDisp == 0)
     #expect(after.followsBuffer, "\(after)")
+    #expect(view.scrollGeometryResyncs == 1)
+  }
+
+  /// Hosts a terminal with no session traffic, for tests that feed the view directly.
+  private static func hostedView() throws -> (
+    UIWindow, DriverrTerminalUIView, AsyncThrowingStream<Data, any Error>.Continuation
+  ) {
+    let (stream, continuation) = AsyncThrowingStream<Data, any Error>.makeStream()
+    let session = TerminalSession(
+      feed: TerminalFeed(output: stream, send: { _ in }, resize: { _ in }, close: {}))
+    let window = HostedProbe.window(
+      DriverrTerminalView(session: session, wantsKeyboardFocus: false))
+    return (window, try #require(Self.terminal(in: window)), continuation)
+  }
+
+  @Test("a reader scrolled back at the scrollback cap stays where they are as output arrives")
+  func readerAtTheCapStays() throws {
+    let (window, view, continuation) = try Self.hostedView()
+    defer {
+      continuation.finish()
+      withExtendedLifetime(window) {}
+    }
+    let terminal = view.getTerminal()
+    let cap = terminal.options.scrollback
+    view.feedKeepingScrollGeometry(
+      Self.bytes(Self.lines(0..<(cap + terminal.rows + 50), prefix: "fill")))
+    window.layoutIfNeeded()
+    // Past the cap, every new line trims one off the top.
+    let bottom = terminal.buffer.yDisp
+    try #require(terminal.buffer.totalLinesTrimmed > 0, "the fill reached the scrollback cap")
+
+    view.scrollUp(lines: 100)
+    let reading = terminal.buffer.yDisp
+    try #require(reading == bottom - 100)
+    let trimmedBefore = terminal.buffer.totalLinesTrimmed
+
+    // One chunk, so the entry point judges ten trims at once.
+    view.feedKeepingScrollGeometry(Self.bytes(Self.lines(0..<10, prefix: "more")))
+    window.layoutIfNeeded()
+    print(
+      "issue29 cap: bottom \(bottom) reading \(reading) now \(terminal.buffer.yDisp) "
+        + "trimmed \(trimmedBefore) -> \(terminal.buffer.totalLinesTrimmed)")
+    #expect(terminal.buffer.totalLinesTrimmed == trimmedBefore + 10)
+    // SwiftTerm keeps the reader's text still: the lines they read moved up ten rows.
+    #expect(terminal.buffer.yDisp == reading - 10, "the reader was not moved to the bottom")
+    #expect(view.scrollGeometryResyncs == 0)
+  }
+
+  @Test("a resize or a font change between chunks does not count as a clear")
+  func resizeIsNotAClear() throws {
+    let (window, view, continuation) = try Self.hostedView()
+    defer {
+      continuation.finish()
+      withExtendedLifetime(window) {}
+    }
+    let terminal = view.getTerminal()
+    view.feedKeepingScrollGeometry(Self.bytes(Self.lines(0..<200, prefix: "a")))
+    window.layoutIfNeeded()
+    let rowsBefore = terminal.rows
+
+    // Shorter, then a rotation, each followed by output.
+    window.frame = CGRect(origin: .zero, size: CGSize(width: 402, height: 600))
+    window.layoutIfNeeded()
+    view.feedKeepingScrollGeometry(Self.bytes(Self.lines(0..<20, prefix: "b")))
+    window.frame = CGRect(origin: .zero, size: CGSize(width: 874, height: 402))
+    window.layoutIfNeeded()
+    view.feedKeepingScrollGeometry(Self.bytes(Self.lines(0..<20, prefix: "c")))
+    try #require(terminal.rows != rowsBefore, "the resize reached the grid")
+
+    // A smaller font regrids at once and corrects the scroll view one main-queue hop later.
+    // These bytes land inside that hop.
+    view.font = UIFont.monospacedSystemFont(ofSize: 9, weight: .regular)
+    view.feedKeepingScrollGeometry(Self.bytes(Self.lines(0..<5, prefix: "d")))
+    #expect(view.scrollGeometryResyncs == 0)
   }
 }
