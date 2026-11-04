@@ -827,7 +827,8 @@ struct TerminalSceneModelTests {
   func aPromotionRefusedByTheEnd() async throws {
     let attacher = FakeCoreAttacher()
     // The promotion is held at the gate below, and the app's step deadline would answer it
-    // "herdr did not answer." over the close if the machine is slow to get there.
+    // "herdr did not answer." over the close if the machine is slow to get there. 120 s is past
+    // the suite's one-minute limit, so it cannot fire.
     var (scene, control, observer) = try await watchedAgentScene(
       attacher, stepDeadline: .seconds(120))
     observer.gatePromotion()
