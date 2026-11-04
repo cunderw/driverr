@@ -27,13 +27,47 @@ struct CoreDocGetResult<Value: Decodable & Sendable>: Decodable, Sendable {
   let value: Value?
 }
 
-/// `file.read` of one whole file. `path` must be absolute: the core expands no `~`.
+/// `file.read` of one whole file.
+///
+/// Here, `path` must be absolute: the core expands no `~`. With `on`, the file is on that
+/// machine, and a relative `path` starts at that machine's home.
 struct CoreFileReadParams: Encodable, Sendable {
   let path: String
+  /// The machine, for a file on one this core added. `nil` is this core's own.
+  var on: String?
 }
 
 struct CoreFileReadResult: Decodable, Sendable {
   let text: String
+}
+
+/// `machine.exec` of a shell line on a machine this core added, run by that machine's `sh -c`.
+///
+/// `timeout` is the core's own, in seconds: the program and everything it started end there,
+/// so nothing is left running on the machine once the call has given up.
+struct CoreExecParams: Encodable, Sendable {
+  let line: String
+  let on: String
+  let timeout: Double
+}
+
+/// What `machine.exec` answers. A nonzero exit and a timeout are results here, not errors.
+///
+/// `stdout` and `stderr` are base64, and kept only up to 8 MB and 1 MB: past that `truncated`
+/// is set and the program still ran to its end.
+struct CoreExecResult: Decodable, Sendable {
+  let stdout: String
+  let stderr: String
+  /// `nil` when a signal ended it.
+  let code: Int?
+  let signal: Int?
+  let timedOut: Bool
+  let truncated: Bool
+
+  private enum CodingKeys: String, CodingKey {
+    case stdout, stderr, code, signal, truncated
+    case timedOut = "timed_out"
+  }
 }
 
 /// `terminal.read`, which opens no channel, so it is no viewer and takes no size.

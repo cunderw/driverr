@@ -178,9 +178,10 @@ enum CoreSnapshotMapper {
     )
   }
 
-  /// Whether this terminal's pane is Claude on this core. Asks `agent(of:sessions:)`, so a
-  /// shell or an added machine is never read for.
-  static func isLocalClaude(_ terminal: CoreTerminal) -> Bool {
+  /// Whether this terminal's pane is Claude, on this core or on a machine it added. Asks
+  /// `agent(of:sessions:)`, so a shell is never read for. Where its record is read depends on
+  /// `CoreTerminal.machine`; see `CoreSessionFiles`.
+  static func isClaude(_ terminal: CoreTerminal) -> Bool {
     agent(of: terminal, sessions: [:])?.kind == TranscriptAgent.claude.rawValue
   }
 
@@ -194,9 +195,10 @@ enum CoreSnapshotMapper {
   /// `sessions` only ever holds Claude's. Codex keeps no file that names a process's session,
   /// so its panes take the reader's directory match.
   ///
-  /// A terminal on a machine the core added is `unknown` whatever it runs, keeps its name, and
-  /// says which machine. The reader lists the SSH host's files, so a real `kind` there would
-  /// show this host's conversation for the same directory on the other machine.
+  /// A terminal on a machine the core added keeps its real `kind` and says which machine. The
+  /// app reads it through a reader bound to that machine, and the SSH host's reader refuses
+  /// it, so this host's conversation for the same directory is never shown for it. See
+  /// `TranscriptReader.resolve`.
   private static func agent(of terminal: CoreTerminal, sessions: [String: String]) -> Agent? {
     guard let report = terminal.status else { return nil }
     let status = AgentStatus(wireValue: report.state ?? "")
@@ -205,7 +207,7 @@ enum CoreSnapshotMapper {
     let foreground = terminal.foreground?.argv?.first.map(commandName)
     let program = (reported ?? foreground).flatMap { programs[$0.lowercased()] }
     let machine = terminal.machine
-    let kind = machine == nil ? program?.kind ?? reported?.lowercased() : nil
+    let kind = program?.kind ?? reported?.lowercased()
     return Agent(
       name: program?.name ?? reported ?? "Agent",
       kind: kind ?? "unknown",

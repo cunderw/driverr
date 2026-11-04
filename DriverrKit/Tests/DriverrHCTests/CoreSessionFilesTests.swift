@@ -101,7 +101,7 @@ struct CoreSessionFilesTests {
 
   /// `.key` files sit beside the records, so anything broader than one exact name would read
   /// a stranger's.
-  @Test("only a local Claude is read for, and only its one exact file")
+  @Test("only a Claude is read for, and only its one exact file")
   func oneExactFile() async throws {
     let shell = #"{"address":"t3","foreground":{"argv":["zsh"],"pid":103}}"#
     let quietClaude = #"{"address":"t4","foreground":{"argv":["claude"],"pid":104}}"#
@@ -110,14 +110,40 @@ struct CoreSessionFilesTests {
       "status":{"app":"codex","state":"idle"}}
       """#
     let noPID = #"{"address":"t6","status":{"app":"claude-code","state":"idle"}}"#
-    let elsewhere = #"""
-      {"address":"box/t1","foreground":{"argv":["claude"],"pid":106},
-      "status":{"app":"claude-code","state":"idle"}}
-      """#
-    let stream = stream(claude("t1", pid: 101), shell, quietClaude, codex, noPID, elsewhere)
+    let stream = stream(claude("t1", pid: 101), shell, quietClaude, codex, noPID)
     stream.files = [path(101): record(pid: 101, id: "first")]
     _ = try await control(stream).snapshot()
     #expect(stream.readPaths == [path(101)])
+  }
+
+  /// The machine's own record, because its pid means nothing in this host's
+  /// `~/.claude/sessions`. A relative path, because `file.read` with `on` starts at that
+  /// machine's home, and this host's `home` is not that machine's.
+  @Test("a Claude on an added machine is read on that machine, from its home")
+  func addedMachine() async throws {
+    let stream = stream(claude("t1", pid: 101), claude("box/t1", pid: 106))
+    stream.files = [
+      path(101): record(pid: 101, id: "here"),
+      ".claude/sessions/106.json": record(pid: 106, id: "there"),
+    ]
+    let tree = try await control(stream).snapshot()
+
+    #expect(sessions(tree) == ["core:t1": "here", "core:box/t1": "there"])
+    #expect(Set(stream.readPaths) == [path(101), ".claude/sessions/106.json"])
+    let ons = try stream.params(of: "file.read").map {
+      ($0["path"] as? String, $0["on"] as? String)
+    }
+    #expect(ons.contains { $0 == (path(101), nil) })
+    #expect(ons.contains { $0 == (".claude/sessions/106.json", "box") })
+  }
+
+  @Test("a Claude on an added machine is read for even with no home here")
+  func addedMachineWithNoHome() async throws {
+    let stream = stream(claude("t1", pid: 101), claude("box/t1", pid: 106))
+    stream.files = [".claude/sessions/106.json": record(pid: 106, id: "there")]
+    let tree = try await control(stream, home: nil).snapshot()
+    #expect(sessions(tree) == ["core:t1": nil, "core:box/t1": "there"])
+    #expect(stream.readPaths == [".claude/sessions/106.json"])
   }
 
   @Test("the record of a status with no app is read too")

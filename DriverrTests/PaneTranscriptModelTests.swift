@@ -661,6 +661,77 @@ struct PaneTranscriptModelTests {
     )
   }
 
+  private func machinePane() -> Pane {
+    Pane(
+      id: "core:box/t7",
+      tabID: "core:box/tab",
+      workspaceID: "core:box/workspace",
+      title: "claude",
+      agent: Agent(name: "Claude", kind: "claude", status: .working, machine: "box"),
+      terminalID: "box/t7",
+      directory: "/Users/x/Dev/driverr"
+    )
+  }
+
+  /// The host's reader for anything it is not handed a machine's for, by pane id.
+  private func cache(
+    host hostCommands: Counter,
+    machine machineCommands: Counter
+  ) -> PaneTranscriptCache {
+    PaneTranscriptCache(
+      reader: TranscriptReader(run: host(onCommand: { _ in hostCommands.bump() })),
+      machineReader: { [self] pane in
+        guard pane.id == "core:box/t7" else { return nil }
+        return TranscriptReader(
+          run: host(onCommand: { _ in machineCommands.bump() }), machine: "box")
+      }
+    )
+  }
+
+  /// The host's reader would refuse it, and anything else would read the host's files.
+  @Test("a pane on an added machine is read by that machine's reader, never the host's")
+  func aMachinePaneIsReadThere() async {
+    let hostCommands = Counter()
+    let machineCommands = Counter()
+    let cache = cache(host: hostCommands, machine: machineCommands)
+
+    let model = cache.model(for: machinePane())
+    model.loadIfNeeded()
+    await settled(model)
+
+    guard case .ready = model.state else {
+      Issue.record("Expected the machine's transcript, got \(model.state)")
+      return
+    }
+    #expect(machineCommands.value > 0)
+    #expect(hostCommands.value == 0)
+
+    let local = cache.model(for: pane())
+    local.loadIfNeeded()
+    await settled(local)
+    #expect(hostCommands.value > 0)
+  }
+
+  /// A reconnect rebuilds the cache, and a carried model must not fall back to the host's
+  /// reader, which would refuse it.
+  @Test("a carried machine pane is relinked to the new link's machine reader")
+  func aCarriedMachinePaneKeepsItsMachine() async {
+    let old = cache(host: Counter(), machine: Counter())
+    let model = old.model(for: machinePane())
+    model.loadIfNeeded()
+    await settled(model)
+
+    let hostCommands = Counter()
+    let machineCommands = Counter()
+    let new = cache(host: hostCommands, machine: machineCommands)
+    new.takeOver(from: old)
+    await settled(model)
+
+    #expect(new.existingModel(for: "core:box/t7") === model)
+    #expect(machineCommands.value > 0)
+    #expect(hostCommands.value == 0)
+  }
+
   @Test("a model nobody made yet is not invented by asking whether one exists")
   func existingModelDoesNotCreate() {
     let cache = PaneTranscriptCache(reader: TranscriptReader(run: host()))

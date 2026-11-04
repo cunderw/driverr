@@ -10,6 +10,9 @@ import DriverrTranscript
 @MainActor
 final class PaneTranscriptCache {
   private let reader: TranscriptReader
+  /// The reader for a pane on a machine a herdr-core added, or `nil` for `reader`'s. The SSH
+  /// host's reader refuses such a pane, so with no core to reach it the chat says why.
+  private let machineReader: @MainActor (Pane) -> TranscriptReader?
   /// Told a pane id whenever a re-read finds a new turn. See
   /// `PaneTranscriptModel.onAdvanced`.
   private let onAdvanced: @MainActor (String) -> Void
@@ -17,10 +20,17 @@ final class PaneTranscriptCache {
 
   init(
     reader: TranscriptReader,
+    machineReader: @escaping @MainActor (Pane) -> TranscriptReader? = { _ in nil },
     onAdvanced: @escaping @MainActor (String) -> Void = { _ in }
   ) {
     self.reader = reader
+    self.machineReader = machineReader
     self.onAdvanced = onAdvanced
+  }
+
+  /// The reader that reaches the computer this pane is on.
+  private func reader(for pane: Pane) -> TranscriptReader {
+    machineReader(pane) ?? reader
   }
 
   /// This pane's transcript model, made on first ask.
@@ -33,7 +43,7 @@ final class PaneTranscriptCache {
     // wrong because a view can hold an old `Pane`: a Needs-you row under the pushed pane
     // screen wrote a replaced session back, and the next re-read opened the old file.
     if let existing = models[pane.id] { return existing }
-    let model = PaneTranscriptModel(pane: pane, reader: reader)
+    let model = PaneTranscriptModel(pane: pane, reader: reader(for: pane))
     model.onAdvanced = onAdvanced
     models[pane.id] = model
     return model
@@ -56,7 +66,7 @@ final class PaneTranscriptCache {
       // Re-hooked, because the hook is built per connection and the old one would notify
       // the previous link's composer.
       model.onAdvanced = onAdvanced
-      model.relink(to: reader)
+      model.relink(to: reader(for: model.pane))
       models[id] = model
     }
     previous.models.removeAll()

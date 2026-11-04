@@ -370,6 +370,34 @@ struct CoreConnectionTests {
     #expect(answer == Echo(value: 7))
   }
 
+  /// `machine.exec` waits for a program on another machine. The calls beside it keep the
+  /// connection's deadline, which `callDeadline` and `lateReply` hold.
+  @Test("a call's own deadline replaces the connection's, for that call alone")
+  func ownDeadline() async throws {
+    let stream = FakeCoreStream()
+    stream.replies = [
+      "slow": .late(#"{"value":1}"#, delay: .milliseconds(150)),
+      "never": .silent,
+    ]
+    let connection = await connected(stream, deadline: brief)
+    let answer = try await connection.call(
+      "slow", params: CoreNoParams(), as: Echo.self, deadline: patient)
+    #expect(answer == Echo(value: 1))
+    let beside = await failure {
+      try await connection.call("never", params: CoreNoParams(), as: Echo.self)
+    }
+    #expect(beside == .herdrCommandFailed(reason: "herdr-core did not answer never."))
+
+    let quiet = FakeCoreStream()
+    quiet.replies = ["never": .silent]
+    let patientConnection = await connected(quiet)
+    let short = await failure {
+      try await patientConnection.call(
+        "never", params: CoreNoParams(), as: Echo.self, deadline: brief)
+    }
+    #expect(short == .herdrCommandFailed(reason: "herdr-core did not answer never."))
+  }
+
   @Test("a reply to a call that has already timed out is dropped")
   func lateReply() async throws {
     let stream = FakeCoreStream()

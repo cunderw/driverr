@@ -30,7 +30,8 @@ public struct CoreControl: HerdrControl {
   /// Where the core was found. `herdr-core` or `hc`; the two are one program.
   public let binaryPath: String
   /// The host's `$HOME`, which `file.read` needs because it expands no `~`. `nil` reads no
-  /// session files, and a Claude terminal then falls to the reader's directory match.
+  /// session files on this core, and a Claude terminal here then falls to the reader's
+  /// directory match. A machine the core added needs none: its reads start at its own home.
   public let home: String?
   let link: CoreLink
   private let feed: CoreEventFeed
@@ -73,6 +74,69 @@ public struct CoreControl: HerdrControl {
   }
 
   public func paneAttacher(for paneID: String) -> (any PaneAttacher)? { self }
+
+  /// How long a command on an added machine may run, as the core's own `timeout`, which ends
+  /// it there. The reader's commands are a listing or a bounded tail, so reaching this is a
+  /// machine that is not answering, not a slow command.
+  static let execTimeout: Duration = .seconds(20)
+  /// The call's deadline: the core's timeout and time for it to say so. The connection's own
+  /// 5 s would give up on a machine reached over a slow link while it is still answering.
+  static let execCallDeadline: Duration = .seconds(25)
+
+  /// `machine.exec` on the machine this pane is on, or `nil` for a pane on this core, which the
+  /// SSH host's own exec channel reaches.
+  ///
+  /// Through the core, because the machine is the core's to reach: Driverr holds no link to
+  /// it, and it may not be reachable from anywhere else.
+  public func commandRunner(forPane id: String) -> CommandRunner? {
+    guard let machine = CorePaneID.machine(of: id) else { return nil }
+    let link = link
+    return { line in try await Self.exec(line, on: machine, over: link) }
+  }
+
+  private static func exec(
+    _ line: String,
+    on machine: String,
+    over link: CoreLink
+  ) async throws -> CommandResult {
+    let (connection, handshake) = await link.established()
+    guard let connection else { throw failure(for: handshake) }
+    let answer = try await connection.call(
+      "machine.exec",
+      params: CoreExecParams(
+        line: line, on: machine, timeout: Double(execTimeout.components.seconds)),
+      as: CoreExecResult.self,
+      deadline: execCallDeadline
+    )
+    return try commandResult(of: answer, on: machine)
+  }
+
+  /// The core's answer as the SSH exec channel gives one.
+  ///
+  /// **A cut answer throws.** A timeout keeps what came so far and `truncated` keeps the first
+  /// 8 MB, and either would parse as a well-formed page that ends early. A signal is `128 + n`,
+  /// as a shell reports one.
+  static func commandResult(of answer: CoreExecResult, on machine: String) throws
+    -> CommandResult
+  {
+    guard !answer.timedOut else {
+      throw AppError.herdrCommandFailed(reason: "\(machine) did not finish the command in time.")
+    }
+    guard !answer.truncated else {
+      throw AppError.herdrCommandFailed(
+        reason: "\(machine) answered with more than herdr-core passes on.")
+    }
+    guard let output = Data(base64Encoded: answer.stdout),
+      let errors = Data(base64Encoded: answer.stderr),
+      // Neither is a program that did not end, which an answer cannot describe.
+      let status = answer.code ?? answer.signal.map({ 128 + $0 })
+    else { throw AppError.herdrResponseUnreadable }
+    return CommandResult(
+      standardOutput: String(decoding: output, as: UTF8.self),
+      standardError: String(decoding: errors, as: UTF8.self),
+      exitStatus: status
+    )
+  }
 
   public func sendText(paneID: String, text: String) async throws {
     try await typing(into: paneID) { type, _ in try await type(Data(text.utf8)) }

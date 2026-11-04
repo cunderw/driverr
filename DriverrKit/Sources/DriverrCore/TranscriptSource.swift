@@ -181,9 +181,15 @@ public enum TranscriptAbsence: Hashable, Sendable {
   /// Never fall back to the newest file here. It is not this session's, so it is someone
   /// else's conversation or an older one.
   case reportedSessionMissing(sessionID: String, directory: String)
-  /// The agent runs on a machine a herdr-core added, and session files are read only on the
-  /// computer Driverr connected to. A lookup here would read that computer's files.
+  /// The agent runs on a machine a herdr-core added, and the machine did not answer the
+  /// reader the core runs there. Worth a retry: a machine is out of reach far more often than
+  /// a host. See `TranscriptReader.resolve`.
   case agentOnAddedMachine(agent: String, machine: String)
+  /// The agent runs on a machine a herdr-core added, and the reader asked reaches only the
+  /// computer Driverr connected to. Refused before any round trip, because a lookup would read
+  /// that computer's files. Every shipping control gives such a pane its machine's reader, so
+  /// this is the answer for a control with no way to the machine.
+  case noRouteToMachine(agent: String, machine: String)
   /// A tapped spawn line whose link no sub-agent file carries. The meta file may not be
   /// written yet, or Claude Code left the link unresolved, which happens occasionally.
   case subagentFileNotFound

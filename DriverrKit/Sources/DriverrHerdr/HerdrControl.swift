@@ -53,6 +53,14 @@ public protocol HerdrControl: Sendable {
   /// connection to open a pane on.
   func paneAttacher(for paneID: String) -> (any PaneAttacher)?
 
+  /// Runs a shell command on the computer this pane is on, when that is not the one Driverr
+  /// connected to.
+  ///
+  /// `nil`, the default, means the SSH host's own exec channel serves this pane. Only a core
+  /// can reach a machine it added, so only a core answers, and only for a pane on one. The
+  /// transcript reader is the caller. See `PaneTranscriptCache`.
+  func commandRunner(forPane id: String) -> CommandRunner?
+
   /// Types literal text into a pane, as if typed at the keyboard. Needs no PTY.
   ///
   /// **A trailing newline stays literal and does not submit.** Use `submitText` to send.
@@ -147,6 +155,7 @@ extension HerdrControl {
   public func changedSnapshot() async throws -> SessionTree { try await snapshot() }
   public func bound(toSocketPath path: String?) -> any HerdrControl { self }
   public func paneAttacher(for paneID: String) -> (any PaneAttacher)? { nil }
+  public func commandRunner(forPane id: String) -> CommandRunner? { nil }
   public func canPerform(_ kind: PaneActionKind, on paneID: String) -> Bool { true }
   public func canRename(_ target: RenameTarget) -> Bool { true }
   public var canStartTerminal: Bool { false }

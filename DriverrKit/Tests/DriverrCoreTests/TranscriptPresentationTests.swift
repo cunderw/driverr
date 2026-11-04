@@ -1328,16 +1328,34 @@ struct TranscriptPresentationTests {
         + "left the directory the agent started in, use Show the Screen.")
   }
 
-  /// The screen is the one thing a core can read there, so it is the way out.
-  @Test("an agent on an added machine says where it is, and offers its screen")
+  /// A fault, so a retry, and the screen beside it, which is a separate call to the core.
+  @Test("an added machine that did not answer says so, and offers a retry and its screen")
   func anAgentOnAnAddedMachine() {
     let notice = TranscriptNotice(
       absence: .agentOnAddedMachine(agent: "Claude", machine: "box"), agentStatus: .working)
+    #expect(notice.title == "Driverr couldn't reach box")
+    #expect(
+      notice.message
+        == "Claude's conversation is on box, which didn't answer. Retry, or use "
+        + "\(TranscriptNotice.showScreenTitle).")
+    #expect(notice.symbolName == "exclamationmark.triangle")
+    #expect(notice.offersScreen)
+    #expect(notice.offersRetry)
+    #expect(!notice.offersFilePicker)
+  }
+
+  /// No round trip was made, so "didn't answer" would be false here. The screen is the one
+  /// thing a core can read there, so it is the way out.
+  @Test("an agent no reader can reach says where it is, and offers its screen and no retry")
+  func anAgentWithNoRouteToItsMachine() {
+    let notice = TranscriptNotice(
+      absence: .noRouteToMachine(agent: "Claude", machine: "box"), agentStatus: .working)
     #expect(notice.title == "Claude is running on box")
     #expect(
       notice.message
         == "Driverr reads conversations on the computer it connected to, and this terminal is "
         + "on box.")
+    #expect(notice.symbolName == "desktopcomputer")
     #expect(notice.offersScreen)
     #expect(!notice.offersRetry)
     #expect(!notice.offersFilePicker)
@@ -1345,9 +1363,13 @@ struct TranscriptPresentationTests {
 
   /// `true` would draw the captured screen in its place, with nothing to say why there is no
   /// chat. The screen is behind its button.
-  @Test("an added machine is not an agent Driverr can never read")
-  func anAddedMachineKeepsItsNotice() {
-    let absence = TranscriptAbsence.agentOnAddedMachine(agent: "Claude", machine: "box")
+  @Test(
+    "an added machine is not an agent Driverr can never read",
+    arguments: [
+      TranscriptAbsence.agentOnAddedMachine(agent: "Claude", machine: "box"),
+      .noRouteToMachine(agent: "Claude", machine: "box"),
+    ])
+  func anAddedMachineKeepsItsNotice(absence: TranscriptAbsence) {
     #expect(!absence.isUnreadableAgentKind)
     #expect(!TranscriptResolution.absent(absence).isUnreadableAgentKind)
   }

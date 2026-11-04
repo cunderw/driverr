@@ -44,6 +44,8 @@ final class FakeCoreStream: HerdrStream, @unchecked Sendable {
 
   /// What `file.read` answers, by path. A path with no entry is a file that is not there.
   var files: [String: Reply] = [:]
+  /// What `machine.exec` answers, from its `line` and `on`, in place of `replies` once set.
+  var exec: (@Sendable (_ line: String, _ on: String?) async -> Reply)?
   /// What `terminal.read` answers, by terminal, in place of `replies` once it has an entry. A
   /// terminal with no entry is one the core does not have.
   var screens: [String: Reply] = [:]
@@ -119,6 +121,10 @@ final class FakeCoreStream: HerdrStream, @unchecked Sendable {
         let path = try required(params?["path"] as? String)
         lock.withLock { askedPaths.append(path) }
         answer(id: id, reply: files[path] ?? .error("no file \(path)"))
+      } else if method == "machine.exec", let exec {
+        let params = object?["params"] as? [String: Any]
+        let line = try required(params?["line"] as? String)
+        answer(id: id, reply: await exec(line, params?["on"] as? String))
       } else if method == "terminal.read", !screens.isEmpty {
         let params = object?["params"] as? [String: Any]
         let terminal = try required(params?["terminal"] as? String)
@@ -300,6 +306,24 @@ final class FakeCoreStream: HerdrStream, @unchecked Sendable {
   /// test can spell an escape.
   static func screenRead(_ text: String) -> String {
     #"{"complete":true,"how":"screen","text":"\#(text)"}"#
+  }
+
+  /// What `machine.exec` answers, with both streams in base64, as the schema of core 0.1.17
+  /// has it.
+  static func executed(
+    stdout: String = "",
+    stderr: String = "",
+    code: Int? = 0,
+    signal: Int? = nil,
+    timedOut: Bool = false,
+    truncated: Bool = false
+  ) -> String {
+    let out = Data(stdout.utf8).base64EncodedString()
+    let err = Data(stderr.utf8).base64EncodedString()
+    let code = code.map(String.init) ?? "null"
+    let signal = signal.map(String.init) ?? "null"
+    return #"{"code":\#(code),"ms":4,"signal":\#(signal),"stderr":"\#(err)","#
+      + #""stdout":"\#(out)","timed_out":\#(timedOut),"truncated":\#(truncated)}"#
   }
 
   /// Where `subscribed` says events arrive.

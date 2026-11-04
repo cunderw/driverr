@@ -282,15 +282,70 @@ struct TranscriptResolverTests {
     )
   }
 
-  /// The reader lists the SSH host's files, so anything past this reads the wrong machine.
-  @Test("an agent on an added machine is refused before any file is listed")
+  /// The SSH host's reader lists that host's files, so anything past this reads the wrong
+  /// machine. A real `kind`, as the mapper now reports one for an added machine.
+  @Test("the SSH host's reader refuses an agent on an added machine before any round trip")
   func addedMachine() async throws {
     let host = FakeHost()
-    let pane = HostFixture.pane(
-      agent: Agent(name: "Claude", kind: "unknown", status: .working, machine: "box"))
+    let pane = boxPane()
     let resolution = try await TranscriptReader(run: host.runner).resolve(for: pane)
-    #expect(resolution == .absent(.agentOnAddedMachine(agent: "Claude", machine: "box")))
+    #expect(resolution == .absent(.noRouteToMachine(agent: "Claude", machine: "box")))
     #expect(await host.commands.isEmpty)
+    #expect(try await TranscriptReader(run: host.runner).probeReportedSession(for: pane) == nil)
+    #expect(await host.commands.isEmpty)
+  }
+
+  private func boxPane() -> Pane {
+    HostFixture.pane(
+      agent: Agent(
+        name: "Claude", kind: "claude", status: .working,
+        session: AgentSession(agent: "claude", kind: "id", value: "abc"), machine: "box"))
+  }
+
+  @Test("a reader bound to the pane's machine reads it like any other")
+  func boundToTheMachine() async throws {
+    let host = FakeHost(
+      responses: [
+        "date +%s": FakeHost.output(
+          HostFixture.listing(
+            now: 1_000_000, directory: HostFixture.projectDirectory,
+            files: [("999000", 100, "abc.jsonl")]))
+      ]
+    )
+    let resolution = try await TranscriptReader(run: host.runner, machine: "box")
+      .resolve(for: boxPane())
+    #expect(resolution.source?.file.name == "abc.jsonl")
+    #expect(await !host.commands.isEmpty)
+  }
+
+  /// The machine is out of reach far more often than a host is, and the notice says why.
+  @Test(
+    "a machine that cannot answer the listing gives the notice, not an error",
+    arguments: [
+      Result<CommandResult, AppError>.failure(.herdrCommandFailed(reason: "unavailable")),
+      .failure(.channelFailed(reason: "gone")),
+      .success(CommandResult(standardOutput: "", standardError: "sh: no", exitStatus: 127)),
+    ])
+  func machineDoesNotAnswer(answer: Result<CommandResult, AppError>) async throws {
+    let reader = TranscriptReader(run: { _ in try answer.get() }, machine: "box")
+    let resolution = try await reader.resolve(for: boxPane())
+    #expect(resolution == .absent(.agentOnAddedMachine(agent: "Claude", machine: "box")))
+  }
+
+  @Test("the SSH host's own reader still throws when the host cannot answer")
+  func hostDoesNotAnswer() async throws {
+    let reader = TranscriptReader(run: { _ in throw AppError.channelFailed(reason: "gone") })
+    await #expect(throws: AppError.channelFailed(reason: "gone")) {
+      try await reader.resolve(for: HostFixture.pane())
+    }
+  }
+
+  @Test("a cancellation on a machine's reader is not taken for the machine being away")
+  func cancellationOnAMachine() async throws {
+    let reader = TranscriptReader(run: { _ in throw AppError.cancelled }, machine: "box")
+    await #expect(throws: AppError.cancelled) {
+      try await reader.resolve(for: boxPane())
+    }
   }
 
   @Test("a session reference of a kind this build does not understand falls back to the directory")
@@ -796,6 +851,97 @@ struct TranscriptReadTests {
     let transcript = try await TranscriptReader(run: host.runner).read(file(size: 80), turns: 20)
     #expect(transcript.window.reachesStartOfFile)
     #expect(transcript.window.stoppedShort == false)
+  }
+
+  // MARK: - On an added machine
+
+  private func windows(_ commands: [String]) -> [Int] {
+    commands.flatMap { command in
+      command.matches(of: /tail -c (\d+)/).compactMap { Int($0.output.1) }
+    }
+  }
+
+  @Test("a budget caps every rung's window and leaves its records alone")
+  func ladderUnderABudget() {
+    let budget = TranscriptReader.machineByteBudget
+    let capped = TranscriptReader.ladder(forTurns: 6, byteBudget: budget)
+    #expect(capped.allSatisfy { $0.bytes <= budget })
+    #expect(capped.map(\.records) == TranscriptReader.ladder(forTurns: 6).map(\.records))
+    #expect(
+      TranscriptReader.ladder(forTurns: 6, byteBudget: nil) == TranscriptReader.ladder(forTurns: 6))
+  }
+
+  /// `machine.exec` keeps 8 MB of output and the runner refuses a cut answer, so a window past
+  /// the budget would fail the page, and Retry the same way.
+  @Test(
+    "a machine-bound reader never reads past its budget, and a page cut by it stops short",
+    arguments: [6, 20, 400])
+  func machineReaderStaysInBudget(turns: Int) async throws {
+    let host = DenseHost(turnsPerRung: [1, 2, 3, 4, 5, 6], fileSizeInBytes: 600_000_000)
+    let transcript = try await TranscriptReader(run: host.runner, machine: "box")
+      .read(file(size: 600_000_000), turns: turns)
+
+    let windows = windows(await host.commands)
+    #expect(!windows.isEmpty)
+    #expect(windows.allSatisfy { $0 <= TranscriptReader.machineByteBudget })
+    #expect(transcript.window.reachesStartOfFile == false)
+    #expect(transcript.window.stoppedShort)
+  }
+
+  @Test("the SSH host's reader keeps its whole ladder")
+  func hostReaderHasNoBudget() async throws {
+    let host = DenseHost(turnsPerRung: [1, 2, 3, 4, 5, 6], fileSizeInBytes: 600_000_000)
+    _ = try await TranscriptReader(run: host.runner).read(file(size: 600_000_000), turns: 20)
+    #expect(windows(await host.commands).contains { $0 > TranscriptReader.machineByteBudget })
+  }
+
+  /// For twenty turns the third rung is the first at the budget. Its record bound filled, so
+  /// the rung above, with four times the records in the same bytes, can still gain. That rung
+  /// comes back short of its bound, and the climb ends there.
+  @Test("a page at the budget that its record bound stopped climbs on records")
+  func recordBoundAtTheBudgetClimbs() async throws {
+    let host = RecordBoundHost(budget: TranscriptReader.machineByteBudget)
+    let transcript = try await TranscriptReader(run: host.runner, machine: "box")
+      .read(file(size: 600_000_000), turns: 20)
+
+    // One window per page. A command reads its window three times, after a one-byte check.
+    let pages = await host.commands.map(RecordBoundHost.window(of:))
+    let budget = TranscriptReader.machineByteBudget
+    #expect(pages == [120 * 4096, 480 * 4096, budget, budget])
+    #expect(transcript.window.stoppedShort)
+  }
+}
+
+/// A file that fills a page's record bound exactly the first time the window is at `budget`,
+/// and answers every other rung with one record. Every record is unreadable, so no rung gains
+/// a turn: only the record count can say whether the bound stopped the page.
+actor RecordBoundHost {
+  private let budget: Int
+  private var filledOnce = false
+  private(set) var commands: [String] = []
+
+  init(budget: Int) {
+    self.budget = budget
+  }
+
+  func answer(_ command: String) -> CommandResult {
+    commands.append(command)
+    let records = command.matches(of: /tail -n (\d+)/).compactMap { Int($0.output.1) }.max() ?? 1
+    let fills = Self.window(of: command) == budget && !filledOnce
+    if fills { filledOnce = true }
+    let body = Array(repeating: "{not a record", count: fills ? records : 1)
+      .joined(separator: "\n") + "\n"
+    return FakeHost.output(HostFixture.read(size: 600_000_000, body: body))
+  }
+
+  nonisolated var runner: CommandRunner {
+    { command in await self.answer(command) }
+  }
+
+  /// The page's window: the largest `tail -c`, because the first is the one-byte check for a
+  /// partial last record.
+  static func window(of command: String) -> Int {
+    command.matches(of: /tail -c (\d+)/).compactMap { Int($0.output.1) }.max() ?? 0
   }
 }
 
