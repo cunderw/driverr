@@ -214,7 +214,7 @@ struct CoreMachineExecTests {
     let stream = machine(Self.host)
     let reader = TranscriptReader(run: try runner(stream), machine: "box")
     let resolution = try await reader.resolve(for: claudePane(machine: "nas"))
-    #expect(resolution == .absent(.agentOnAddedMachine(agent: "Claude", machine: "nas")))
+    #expect(resolution == .absent(.noRouteToMachine(agent: "Claude", machine: "nas")))
     #expect(try await reader.probeReportedSession(for: claudePane(machine: "nas")) == nil)
     #expect(stream.calls(of: "machine.exec") == 0)
   }

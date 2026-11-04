@@ -289,7 +289,7 @@ struct TranscriptResolverTests {
     let host = FakeHost()
     let pane = boxPane()
     let resolution = try await TranscriptReader(run: host.runner).resolve(for: pane)
-    #expect(resolution == .absent(.agentOnAddedMachine(agent: "Claude", machine: "box")))
+    #expect(resolution == .absent(.noRouteToMachine(agent: "Claude", machine: "box")))
     #expect(await host.commands.isEmpty)
     #expect(try await TranscriptReader(run: host.runner).probeReportedSession(for: pane) == nil)
     #expect(await host.commands.isEmpty)
@@ -851,6 +851,48 @@ struct TranscriptReadTests {
     let transcript = try await TranscriptReader(run: host.runner).read(file(size: 80), turns: 20)
     #expect(transcript.window.reachesStartOfFile)
     #expect(transcript.window.stoppedShort == false)
+  }
+
+  // MARK: - On an added machine
+
+  private func windows(_ commands: [String]) -> [Int] {
+    commands.flatMap { command in
+      command.matches(of: /tail -c (\d+)/).compactMap { Int($0.output.1) }
+    }
+  }
+
+  @Test("a budget caps every rung's window and leaves its records alone")
+  func ladderUnderABudget() {
+    let budget = TranscriptReader.machineByteBudget
+    let capped = TranscriptReader.ladder(forTurns: 6, byteBudget: budget)
+    #expect(capped.allSatisfy { $0.bytes <= budget })
+    #expect(capped.map(\.records) == TranscriptReader.ladder(forTurns: 6).map(\.records))
+    #expect(
+      TranscriptReader.ladder(forTurns: 6, byteBudget: nil) == TranscriptReader.ladder(forTurns: 6))
+  }
+
+  /// `machine.exec` keeps 8 MB of output and the runner refuses a cut answer, so a window past
+  /// the budget would fail the page, and Retry the same way.
+  @Test(
+    "a machine-bound reader never reads past its budget, and a page cut by it stops short",
+    arguments: [6, 20, 400])
+  func machineReaderStaysInBudget(turns: Int) async throws {
+    let host = DenseHost(turnsPerRung: [1, 2, 3, 4, 5, 6], fileSizeInBytes: 600_000_000)
+    let transcript = try await TranscriptReader(run: host.runner, machine: "box")
+      .read(file(size: 600_000_000), turns: turns)
+
+    let windows = windows(await host.commands)
+    #expect(!windows.isEmpty)
+    #expect(windows.allSatisfy { $0 <= TranscriptReader.machineByteBudget })
+    #expect(transcript.window.reachesStartOfFile == false)
+    #expect(transcript.window.stoppedShort)
+  }
+
+  @Test("the SSH host's reader keeps its whole ladder")
+  func hostReaderHasNoBudget() async throws {
+    let host = DenseHost(turnsPerRung: [1, 2, 3, 4, 5, 6], fileSizeInBytes: 600_000_000)
+    _ = try await TranscriptReader(run: host.runner).read(file(size: 600_000_000), turns: 20)
+    #expect(windows(await host.commands).contains { $0 > TranscriptReader.machineByteBudget })
   }
 }
 

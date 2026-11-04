@@ -364,6 +364,18 @@ public struct TranscriptNotice: Equatable, Sendable {
         symbolName: "text.bubble"
       )
     case .agentOnAddedMachine(let agent, let machine):
+      // A fault, so it offers a retry: the machine can be back by the next tap. The screen is a
+      // separate call, `terminal.read` on this core, so it is still offered. Whether the core
+      // answers it while the machine is down is not measured yet.
+      self.init(
+        title: "Driverr couldn't reach \(machine)",
+        message:
+          "\(agent)'s conversation is on \(machine), which didn't answer. Retry, or use "
+          + "\(Self.showScreenTitle).",
+        offersRetry: true,
+        symbolName: "exclamationmark.triangle"
+      )
+    case .noRouteToMachine(let agent, let machine):
       // `Show the Screen` works here: a core reads a terminal on its added machine for us, where
       // the session file is out of reach. No retry, because the answer cannot change.
       self.init(

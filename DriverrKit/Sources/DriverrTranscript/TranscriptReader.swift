@@ -55,16 +55,16 @@ public struct TranscriptReader: Sendable {
   /// beats the heuristic but not herdr's exact report. See `TranscriptPick`.
   ///
   /// **An agent on another machine than this reader's is refused before any round trip**,
-  /// because the lookup would read the wrong computer's files for the same directory. A
-  /// reader bound to an added machine that does not answer gives the same refusal rather than
-  /// an error, because the machine being out of reach is the ordinary case there, and the
-  /// notice says what to do about it. Cancellation still throws.
+  /// as `noRouteToMachine`, because the lookup would read the wrong computer's files for the
+  /// same directory. A reader bound to an added machine that does not answer gives
+  /// `agentOnAddedMachine` rather than an error, because the machine being out of reach is the
+  /// ordinary case there, and that notice offers a retry. Cancellation still throws.
   public func resolve(for pane: Pane, pick: TranscriptPick? = nil) async throws
     -> TranscriptResolution
   {
     guard let agent = pane.agent else { return .absent(.paneHasNoAgent) }
     if let elsewhere = agent.machine, elsewhere != machine {
-      return .absent(.agentOnAddedMachine(agent: agent.name, machine: elsewhere))
+      return .absent(.noRouteToMachine(agent: agent.name, machine: elsewhere))
     }
     guard let machine else { return try await resolveHere(for: pane, agent: agent, pick: pick) }
     do {
@@ -762,12 +762,18 @@ public struct TranscriptReader: Sendable {
     -> Transcript
   {
     let wanted = max(1, wanted)
+    let budget = machine == nil ? nil : Self.machineByteBudget
     var transcript = Transcript.empty
     var turnsOnThePreviousRung = -1
-    for (rung, attempt) in Self.ladder(forTurns: wanted).enumerated() {
+    for (rung, attempt) in Self.ladder(forTurns: wanted, byteBudget: budget).enumerated() {
       transcript = try await page(file, bytes: attempt.bytes, records: attempt.records)
       if transcript.turns.count >= wanted { return transcript }
       if transcript.window.reachesStartOfFile { return transcript }
+      // A window at the budget that the record bound did not stop: every rung above it reads
+      // the same bytes, so it can only come back the same.
+      if let budget, attempt.bytes >= budget, transcript.window.records < attempt.records {
+        break
+      }
       // Only the reserve is conditional. The base rungs are climbed whatever they return.
       if rung + 1 >= Self.baseRungs, transcript.turns.count <= turnsOnThePreviousRung {
         break
@@ -803,13 +809,26 @@ public struct TranscriptReader: Sendable {
   ///
   /// Each rung is four times the last. Four base rungs reach about 16 MB for a six-turn ask;
   /// the two reserve rungs reach about 250 MB, past any real session file.
-  static func ladder(forTurns turns: Int) -> [Attempt] {
+  ///
+  /// `byteBudget` caps every rung's window. A rung's records only grow under it, which still
+  /// gains turns while the record bound is what stops a page.
+  static func ladder(forTurns turns: Int, byteBudget: Int? = nil) -> [Attempt] {
     let records = max(60, turns * 6)
     return (0..<allRungs).map { step in
       let factor = 1 << (2 * step)
-      return Attempt(bytes: records * 4096 * factor, records: records * factor)
+      let bytes = records * 4096 * factor
+      return Attempt(bytes: byteBudget.map { min(bytes, $0) } ?? bytes, records: records * factor)
     }
   }
+
+  /// The most a reader bound to an added machine reads off the end of a file in one page.
+  ///
+  /// `machine.exec` keeps 8 MB of a command's output and flags the rest as cut, which the
+  /// runner refuses. A page prints at most its window, then result and task lines read from
+  /// that window again, about 1% of it, so half the cap leaves room for both. A file whose
+  /// last 4 MB holds too few turns, a run of large `Write`s, comes back short and says so,
+  /// rather than failing on every retry.
+  static let machineByteBudget = 4 * 1024 * 1024
 
   /// One rung of the ladder, against whichever agent's file this is.
   ///
