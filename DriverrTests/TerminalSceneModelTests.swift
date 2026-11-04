@@ -855,6 +855,47 @@ struct TerminalSceneModelTests {
     await waitUntil("the close") { scene.notice == .closed }
   }
 
+  /// A step that outlives `stepDeadline` writes "herdr did not answer." on its target, and its
+  /// own completion clears that notice again. Neither may touch a pane that has since closed:
+  /// the user would read that herdr did not answer about a pane that is gone, and then nothing.
+  @Test("a step that times out after the pane closed leaves the closed banner")
+  func aStepTimeoutKeepsTheClosedBanner() async throws {
+    let attacher = FakeCoreAttacher()
+    // Short, so the test is quick, and long enough that the close below lands before it fires.
+    // Were the deadline to fire first, the close would write over its notice and this would
+    // pass without exercising the timeout, so do not shorten it to the 50 ms other tests use.
+    let (scene, control, observer) = try await watchedAgentScene(
+      attacher, stepDeadline: .seconds(2))
+    observer.gatePromotion()
+    observer.refusePromotion()
+    await control.update(to: tree(withCorePane: "core:t7"))
+    await scene.model.session?.refresh()
+    scene.treeChanged()
+    await waitUntilSignalled("the promotion") { observer.promotionCount == 1 }
+    // The premise. A deadline that fired already would make the close overwrite its notice
+    // and let every check below pass on a broken tree.
+    #expect(scene.notice == nil, "the deadline fired before the close; raise stepDeadline")
+
+    observer.end()
+    await waitUntil("the close") { scene.notice == .closed }
+
+    // The gate is still shut, so the chain can only move on by abandoning the promotion: this
+    // returns once the deadline has fired and written whatever it writes.
+    await scene.settle()
+    #expect(scene.notice == .closed, "the step's timeout wrote over the closed banner")
+
+    // The abandoned step finishes now. At head the notice is already `.closed`, so the wait
+    // below returns at once and the last check runs before the abandoned promotion lands. That
+    // half fails only on a tree that spawns the cleanup task, which clears the notice once the
+    // step ends. Nothing observable remains to wait on at head. The step's own late refusal
+    // leaving `.closed` alone is covered by `aPromotionRefusedByTheEnd`.
+    let noAnswer = TerminalSceneModel.Notice.failed(
+      .herdrCommandFailed(reason: PaneComposerCopy.noAnswer))
+    observer.openPromotionGate()
+    await waitUntil("the abandoned step's cleanup") { scene.notice != noAnswer }
+    #expect(scene.notice == .closed, "the abandoned step's cleanup cleared the pane's banner")
+  }
+
   /// The chat is what is on screen again, so a controller behind it would hold the size for
   /// nothing.
   @Test("a promoted pane whose agent comes back is watched again")

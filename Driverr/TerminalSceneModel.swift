@@ -1774,6 +1774,10 @@ final class TerminalSceneModel {
   /// it with a Retry, because an abandoned step is a tap that did nothing. For example, a
   /// hung demote in `reconcile` means `openSurface(for:)` never runs, and the new target
   /// would paint nothing and say nothing.
+  ///
+  /// A pane that has closed keeps its banner over a step that timed out. `sessionEnded`
+  /// wrote `.closed`, which is the truer message, and the cleanup below would otherwise clear
+  /// the timeout notice and take the banner with it.
   private func enqueue(
     on target: TerminalTarget? = nil,
     _ operation: @escaping @MainActor () async -> Void
@@ -1799,6 +1803,8 @@ final class TerminalSceneModel {
       let target = target()
       let (finishedInTime, running) = await Self.bounded(operation, by: stepDeadline)
       guard !finishedInTime, let target, let self, !self.isClosed else { return }
+      // Before the cleanup task below exists, so a closed pane spawns none.
+      guard self.notices[target] != .closed else { return }
       self.notices[target] = .failed(.herdrCommandFailed(reason: PaneComposerCopy.noAnswer))
       // **The notice is true only until the step finishes.** An abandoned step can still
       // succeed by several paths, and its own completion covers them all. Cleared only if
