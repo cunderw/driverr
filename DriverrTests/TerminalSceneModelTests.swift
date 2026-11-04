@@ -884,8 +884,11 @@ struct TerminalSceneModelTests {
     await scene.settle()
     #expect(scene.notice == .closed, "the step's timeout wrote over the closed banner")
 
-    // The abandoned step finishes now. Its cleanup clears the notice only while it still reads
-    // "did not answer", so wait for that to change, then check what is left.
+    // The abandoned step finishes now. At head the notice is already `.closed`, so the wait
+    // below returns at once and the last check runs before the abandoned promotion lands. That
+    // half fails only on a tree that spawns the cleanup task, which clears the notice once the
+    // step ends. Nothing observable remains to wait on at head. The step's own late refusal
+    // leaving `.closed` alone is covered by `aPromotionRefusedByTheEnd`.
     let noAnswer = TerminalSceneModel.Notice.failed(
       .herdrCommandFailed(reason: PaneComposerCopy.noAnswer))
     observer.openPromotionGate()
