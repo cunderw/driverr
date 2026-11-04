@@ -70,6 +70,15 @@ struct TerminalScrollGeometryResyncTests {
     }
   }
 
+  /// Whether the last row the scroll view's content height claims is in the buffer.
+  private static func lastClaimedRowExists(_ view: DriverrTerminalUIView) -> Bool {
+    let terminal = view.getTerminal()
+    let cellHeight = view.getOptimalFrameSize().height / CGFloat(max(terminal.rows, 1))
+    let claimed = Int((view.contentSize.height / cellHeight).rounded())
+    return terminal.getScrollInvariantLine(row: terminal.buffer.totalLinesTrimmed + claimed - 1)
+      != nil
+  }
+
   /// Bytes the session has handed its sink, counted on the main actor.
   @MainActor
   final class Consumed {
@@ -220,10 +229,14 @@ struct TerminalScrollGeometryResyncTests {
     view.feedKeepingScrollGeometry(Self.bytes(Self.lines(0..<20, prefix: "c")))
     try #require(terminal.rows != rowsBefore, "the resize reached the grid")
 
-    // A smaller font regrids at once and corrects the scroll view one main-queue hop later.
-    // These bytes land inside that hop.
+    // A smaller font regrids at once and corrects the scroll view one main-queue hop later,
+    // so until then the scroll view claims rows past the buffer. Bytes that do not scroll,
+    // such as an echoed keystroke, land inside that hop and leave the claim as it was.
     view.font = UIFont.monospacedSystemFont(ofSize: 9, weight: .regular)
-    view.feedKeepingScrollGeometry(Self.bytes(Self.lines(0..<5, prefix: "d")))
+    try #require(
+      !Self.lastClaimedRowExists(view),
+      "the font change left the scroll view claiming rows past the buffer")
+    view.feedKeepingScrollGeometry(Self.bytes("x"))
     #expect(view.scrollGeometryResyncs == 0)
   }
 }
