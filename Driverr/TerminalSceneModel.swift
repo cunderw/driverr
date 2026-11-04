@@ -371,8 +371,15 @@ final class TerminalSceneModel {
   /// The free half of the pane sheet's thumbnails: every warm entry keeps a laid-out
   /// terminal view, so the picture already exists. `nil`, not empty, because a cold pane's
   /// tile comes from a batched `pane read` instead.
+  ///
+  /// **Not a core observer.** Its bytes arrive at the terminal's width, not the phone's, so
+  /// its grid is garbled (#45), the reason `keepsPaintingUntilPromoted(_:)` will not keep it
+  /// on screen. `nil` sends its tile to the batched read, which on a core is the core's own
+  /// screen. A core controller sizes the terminal to this grid, so it stays warm.
   func visibleLines(for target: TerminalTarget, last count: Int) -> [String]? {
-    entry(for: target)?.session.visibleLines(last: count)
+    guard let entry = entry(for: target) else { return nil }
+    if entry.role == .observer, case .pane(let id) = target, CorePaneID.isCore(id) { return nil }
+    return entry.session.visibleLines(last: count)
   }
 
   // MARK: - What the screen presents

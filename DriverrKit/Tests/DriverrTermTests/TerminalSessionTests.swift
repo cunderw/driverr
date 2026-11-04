@@ -835,7 +835,8 @@ struct TerminalSessionTests {
     String(line.reversed().drop(while: { $0 == " " }).reversed())
   }
 
-  private func thumbnailAfterTwoFrames(columns: Int) async -> [String]? {
+  /// The thumbnail's rows, and the whole screen, after two frames into a grid `columns` wide.
+  private func afterTwoFrames(columns: Int) async -> (thumbnail: [String]?, screen: String) {
     let feed = TestFeed(raw: true)
     let renderer = HeadlessRenderer(columns: columns, rows: 20)
     let session = TerminalSession(feed: feed.feed)
@@ -846,27 +847,36 @@ struct TerminalSessionTests {
     feed.emit(Self.agentFrame(Self.secondFrame, erasingLinesOf: Self.firstFrame))
     await waitUntil { renderer.screen.contains("ctx:68.7k") }
     // `PaneThumbnailModel.lineCount`, which lives in the app target.
-    return session.visibleLines(last: 6)?.map(Self.withoutTrailingSpaces)
+    return (session.visibleLines(last: 6)?.map(Self.withoutTrailingSpaces), renderer.screen)
   }
 
-  /// The control for the test below: the same bytes into a grid as wide as the program's.
+  /// The control for the test below: the same bytes into a grid as wide as the program's are
+  /// the program's own rows, and nothing of the erased frame is left.
   @Test("an agent's redraw reads back as its own rows in a grid as wide as its terminal")
   func agentRedrawAtTheTerminalsWidth() async {
-    let lines = await thumbnailAfterTwoFrames(columns: Self.programColumns)
-    #expect(lines == Self.secondFrameRows)
+    let (thumbnail, screen) = await afterTwoFrames(columns: Self.programColumns)
+    #expect(thumbnail == Self.secondFrameRows)
+    #expect(!screen.contains("Five lines"), "the erase covered the first frame")
   }
 
-  /// #45. On Chat the current core pane holds an observer, and the pane sheet reads its tile
-  /// from that observer's hidden view. A core forwards the program's own bytes at the
-  /// terminal's width and never resizes the terminal for an observer, so the view's grid is
-  /// the phone's and the program's lines wrap and overwrite each other in it.
+  /// #45: why `TerminalSceneModel.visibleLines(for:last:)` does not read a core observer.
   ///
-  /// Fails while a thumbnail reads a core observer's grid. Measured on the kit tier with a raw
-  /// feed in place of `CoreAttachment`; the live core repro is still to come.
-  @Test("a core observer's thumbnail is the program's rows when its terminal is wider than the grid")
-  func coreObserverThumbnailInANarrowerGrid() async {
-    let lines = await thumbnailAfterTwoFrames(columns: Self.phoneColumns)
-    #expect(lines == Self.secondFrameRows)
+  /// On Chat a core pane holds an observer, whose view is laid out at the phone's grid behind
+  /// the chat. A core forwards the program's own bytes at the terminal's width and never
+  /// resizes the terminal for an observer. So the program's lines wrap in that grid, its
+  /// erase counts lines at its own width and falls short, and the last frame's rows stay above
+  /// the new one. Read as a tile, that grid was the overlapped text in the issue.
+  ///
+  /// A raw feed stands in for `CoreAttachment`, whose bytes are the program's.
+  @Test("a grid narrower than the program's terminal does not hold the program's rows")
+  func aNarrowerGridDoesNotHoldTheProgramsRows() async throws {
+    let (thumbnail, screen) = await afterTwoFrames(columns: Self.phoneColumns)
+    let rows = try #require(thumbnail)
+    #expect(rows.count == 6, "a full tile of rows, just not the program's")
+    #expect(rows != Self.secondFrameRows)
+    let status = Self.secondFrameRows[Self.secondFrameRows.count - 1]
+    #expect(!rows.contains(status), "the status row is split across two rows")
+    #expect(screen.contains("Five lines"), "the erase fell short of the first frame")
   }
 
   /// A tap on a PTY is a press and then a release, and the far side must hear them in order.
