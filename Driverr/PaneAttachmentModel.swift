@@ -3,14 +3,15 @@ import Foundation
 import Observation
 import UIKit
 
-/// The one image a pane's composer holds, from Photos until the host has it.
+/// The one image a pane's composer holds, from Photos until the pane's computer has it.
 ///
 /// One at a time, per pane. `PaneComposerModel` holds it and is cached per pane
 /// (`PaneComposerCache`), so an attachment survives a switch to the Terminal surface, as a
 /// half-typed reply does.
 ///
-/// The pane is reached through one closure. The upload puts bytes in the host's inbox, and
-/// `handOff` types the returned path into the pane with no newline, so a question can follow.
+/// The pane is reached through one closure. The upload puts bytes in the host's inbox, or
+/// beside the pane on a machine a herdr-core added, and `handOff` types the returned path into
+/// the pane with no newline, so a question can follow. `place` says which, for the sentences.
 ///
 /// The downscale runs detached. This type is `@MainActor`, so a plain `Task` would decode a
 /// 12 megapixel HEIC on the thread drawing the composer.
@@ -24,11 +25,15 @@ final class PaneAttachmentModel {
   /// What the row draws. Built from the prepared bytes, so it shows what is sent.
   private(set) var thumbnail: UIImage?
 
-  /// The prepared PNG's size, which is what the row reports and what the host will receive.
+  /// The prepared PNG's size, which is what the row reports and what the pane's computer
+  /// will receive.
   private(set) var byteCount = 0
 
   /// Whether there is anything to show.
   var isAttached: Bool { phase != nil }
+
+  /// Where the upload goes, which the row's sentences name.
+  let place: PaneAttachmentPlace
 
   /// Builds the upload for a payload and a file name, or `nil` when the link is down.
   ///
@@ -36,10 +41,11 @@ final class PaneAttachmentModel {
   /// is on screen and a captured coordinator would outlive it.
   @ObservationIgnored private let makeUpload: @MainActor (Data, String) -> (any ImageUploading)?
 
-  /// Hands the finished host path to the pane.
+  /// Hands the finished path to the pane.
   ///
   /// Takes only the path, so this type never learns what a pane is and tests need no herdr.
-  /// A throw is a real outcome: the bytes are already on the host, so the failure says so.
+  /// A throw is a real outcome: the bytes have already landed, on the host or the pane's
+  /// machine, so the failure says so.
   /// See `PaneAttachmentFailureCopy.handOffFailed`.
   @ObservationIgnored private let handOff: @MainActor (String) async throws -> Void
 
@@ -51,17 +57,19 @@ final class PaneAttachmentModel {
   /// progress event in flight at Remove still lands afterwards.
   @ObservationIgnored private var generation = 0
 
-  /// The file's name on the host: a fresh UUID, because the inbox is shared and
+  /// The file's name where it lands: a fresh UUID, because the host's inbox is shared and
   /// `IMG_0042.png` from two phones would be one file.
   @ObservationIgnored private let makeFileName: @Sendable () -> String
 
   init(
+    place: PaneAttachmentPlace = .host,
     makeUpload: @escaping @MainActor (Data, String) -> (any ImageUploading)?,
     handOff: @escaping @MainActor (String) async throws -> Void = { _ in },
     makeFileName: @escaping @Sendable () -> String = {
       UUID().uuidString.lowercased() + ".png"
     }
   ) {
+    self.place = place
     self.makeUpload = makeUpload
     self.handOff = handOff
     self.makeFileName = makeFileName
@@ -111,7 +119,12 @@ final class PaneAttachmentModel {
 
   private func send(_ bytes: Data, run: Int) async {
     guard let uploader = makeUpload(bytes, makeFileName()) else {
-      settle(run, .failed(PaneAttachmentFailureCopy.sentence(for: AppError.notConnected(host: "this host"))))
+      // The host's sentence wherever the pane is: no link reaches a machine either.
+      settle(
+        run,
+        .failed(
+          PaneAttachmentFailureCopy.sentence(
+            for: AppError.notConnected(host: "this host"), at: .host)))
       return
     }
 
@@ -139,7 +152,7 @@ final class PaneAttachmentModel {
       watch.cancel()
     } catch {
       watch.cancel()
-      settle(run, .failed(PaneAttachmentFailureCopy.sentence(for: error)))
+      settle(run, .failed(PaneAttachmentFailureCopy.sentence(for: error, at: place)))
     }
   }
 
@@ -154,9 +167,9 @@ final class PaneAttachmentModel {
     } catch is CancellationError {
       return
     } catch {
-      // Not the error's own text: what matters is that the image is already on the host, so
-      // picking it again sends it twice.
-      settle(run, .failed(PaneAttachmentFailureCopy.handOffFailed))
+      // Not the error's own text: what matters is that the image has already landed, on the
+      // host or the pane's machine, so picking it again sends it twice.
+      settle(run, .failed(PaneAttachmentFailureCopy.handOffFailed(at: place)))
       return
     }
     settle(run, .handedOver)

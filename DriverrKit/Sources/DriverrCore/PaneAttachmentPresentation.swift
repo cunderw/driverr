@@ -10,12 +10,14 @@ public enum PaneAttachmentPhase: Equatable, Sendable {
   case ready
   /// On the wire, with the count so far.
   case uploading(ImageUploadProgress)
-  /// The host has the file, at this path read off its stdout. Next comes ``handedOver``.
+  /// The file has landed, at this path as the computer the pane runs on sees it: the SSH
+  /// host's, read off the inbox command's stdout, or a machine's, as its core answered.
+  /// Next comes ``handedOver``.
   case uploaded(hostPath: String)
   /// The path has been typed into the pane, with no newline.
   ///
   /// Its own phase rather than clearing the row, because the path lands in the agent's input
-  /// on the host, where Driverr's field shows nothing. A vanishing row would look like one
+  /// in the pane, where Driverr's field shows nothing. A vanishing row would look like one
   /// that gave up. Carries no path, because nothing reads it. Cleared by the next successful
   /// reply from this composer, and by Remove.
   case handedOver
@@ -40,12 +42,19 @@ public enum PaneAttachmentPhase: Equatable, Sendable {
     }
   }
 
-  /// The finished host path, or `nil`. It drives the hand-off, so `.handedOver` returns `nil`
+  /// The finished path, as the pane's computer sees it, or `nil`. It drives the hand-off, so `.handedOver` returns `nil`
   /// and cannot drive a second one.
   public var hostPath: String? {
     if case .uploaded(let path) = self { return path }
     return nil
   }
+}
+
+/// Where a pane's attachment is sent: the SSH host's inbox, or a machine a herdr-core added,
+/// by the name the core gives it. The row's sentences name the place.
+public enum PaneAttachmentPlace: Equatable, Sendable {
+  case host
+  case machine(String)
 }
 
 /// The row's strings.
@@ -58,12 +67,33 @@ public enum PaneAttachmentCopy {
   public static let imageLabel = "Image"
   /// While the picked bytes are being read down to PNG.
   public static let preparing = "Preparing…"
-  /// Once the host has it. Not the path, a `~/.driverr/inbox/` UUID that tells a reader
-  /// nothing.
+  /// Once the host has it, for a pane on the SSH host. Not the path, a UUID file name that
+  /// tells a reader nothing. ``uploaded(at:)`` names the place.
   public static let uploaded = "Sent to the host"
-  /// Once the path is in the pane. "the prompt", because it went into the agent's input on
-  /// the host, not into Driverr's field.
+
+  /// ``uploaded``, naming the machine for a pane on one.
+  public static func uploaded(at place: PaneAttachmentPlace) -> String {
+    switch place {
+    case .host: uploaded
+    case .machine(let name): "Sent to \(name)"
+    }
+  }
+
+  /// Once the path is in the pane. "the prompt", because it went into the agent's input in
+  /// the pane, not into Driverr's field.
   public static let handedOver = "Added to the pane’s prompt"
+
+  /// While the bytes are on the wire. A host's upload reports `sent of total`. A machine's is
+  /// one `terminal.put` that says nothing until it is done, so it has no count to show, and
+  /// a `0 bytes of` would sit there for the whole put.
+  public static func uploading(_ progress: ImageUploadProgress, at place: PaneAttachmentPlace)
+    -> String
+  {
+    switch place {
+    case .host: self.progress(progress)
+    case .machine(let name): "Sending to \(name)…"
+    }
+  }
 
   /// `sent of total`. "of", because VoiceOver reads a slash as "slash" and this is also the
   /// row's accessibility value.
@@ -102,6 +132,47 @@ public enum PaneAttachmentFailureCopy {
   /// reader does not upload it again and leave two copies.
   public static let handOffFailed =
     "The host has the image, but the pane could not be told where it is."
+
+  /// ``handOffFailed``, naming the machine that has the image.
+  public static func handOffFailed(at place: PaneAttachmentPlace) -> String {
+    switch place {
+    case .host: handOffFailed
+    case .machine(let name): "The image is on \(name), but the pane could not be told where it is."
+    }
+  }
+
+  /// One upload failure at a place. A dropped channel and a short write are the SSH inbox
+  /// command's alone, so they keep the host's sentence wherever they come from.
+  public static func sentence(for failure: ImageUploadFailure, at place: PaneAttachmentPlace)
+    -> String
+  {
+    guard case .machine(let name) = place else { return sentence(for: failure) }
+    switch failure {
+    case .channelDropped, .sizeMismatch:
+      return sentence(for: failure)
+    case .commandFailed:
+      return "Driverr could not save the image on \(name). Check its disk space and permissions."
+    case .noHostPath:
+      return "The image was saved on \(name), but Driverr was not told where."
+    case .stalled:
+      return "Nothing came back from \(name), so the upload was stopped. Try again."
+    }
+  }
+
+  /// Any error at a place. For a machine, anything but an upload failure or a refusal is the
+  /// one fallback: the core's own words name its terminal, not what to do.
+  public static func sentence(for error: any Error, at place: PaneAttachmentPlace) -> String {
+    guard case .machine(let name) = place else { return sentence(for: error) }
+    if let failure = error as? ImageUploadFailure { return sentence(for: failure, at: place) }
+    switch error as? MachineImageRefusal {
+    case .unsupported?:
+      return "Driverr can't send images to \(name)."
+    case .tooLarge(let limit)?:
+      return "The image is over the \(PaneAttachmentCopy.size(limit)) limit for \(name)."
+    case nil:
+      return "The image could not be sent to \(name)."
+    }
+  }
 
   public static func sentence(for failure: ImageUploadFailure) -> String {
     switch failure {

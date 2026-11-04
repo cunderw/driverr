@@ -57,3 +57,15 @@ public enum ImageUploadFailure: Error, Sendable, Hashable {
   /// only have failed to print the path.
   case stalled
 }
+
+/// Why an image for a pane on a machine a herdr-core added was not sent at all.
+///
+/// Apart from ``ImageUploadFailure``, whose cases describe the SSH host's inbox command. Both
+/// of these are known before anything lands, and only for a machine.
+public enum MachineImageRefusal: Error, Sendable, Hashable {
+  /// Nothing Driverr has can put a file on that machine: the control offers no way, or the
+  /// core there does not know the call.
+  case unsupported
+  /// More bytes than the core takes in one call. `limit` is the core's, in bytes.
+  case tooLarge(limit: Int)
+}

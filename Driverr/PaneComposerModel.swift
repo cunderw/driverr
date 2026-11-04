@@ -68,7 +68,9 @@ final class PaneComposerModel: Identifiable {
   init(
     pane: Pane,
     control: @escaping @MainActor () -> (any HerdrControl)?,
-    makeUpload: @escaping @MainActor (Data, String) -> (any ImageUploading)? = { _, _ in nil },
+    makeUpload: @escaping @MainActor (String, Data, String) -> (any ImageUploading)? = {
+      _, _, _ in nil
+    },
     onSent: @escaping @MainActor (String, PaneComposerState.Attempt) -> Void = { _, _ in },
     sendDeadline: Duration = PaneComposerCopy.sendDeadline,
     ageTick: Duration = .seconds(1),
@@ -79,7 +81,10 @@ final class PaneComposerModel: Identifiable {
     self.pane = pane
     self.control = control
     attachment = PaneAttachmentModel(
-      makeUpload: makeUpload,
+      place: CorePaneID.machine(of: paneID).map(PaneAttachmentPlace.machine) ?? .host,
+      // Bound to this pane here, so the attachment never learns what a pane is. The id picks
+      // the machine the bytes go to. See `ConnectionModel.makeImageUpload(forPane:bytes:fileName:)`.
+      makeUpload: { bytes, fileName in makeUpload(paneID, bytes, fileName) },
       // `sendText`, never `submitText`: a CR would submit the bare path as the whole
       // question. The path waits in the agent's input box for the reader's reply.
       //

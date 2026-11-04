@@ -111,6 +111,66 @@ public struct CoreControl: HerdrControl {
     return try commandResult(of: answer, on: machine)
   }
 
+  /// The most raw bytes one `terminal.put` takes, as the core's own `put::MAX_BYTES` has it.
+  public static let putByteLimit = 8 << 20
+
+  /// A put's deadline: `execCallDeadline`, and 10 s for every MiB, started or not. The bytes go
+  /// as base64 in one message, over the SSH link and then the core's own link to the machine,
+  /// and no answer comes until both have carried all of it.
+  static func putCallDeadline(forBytes count: Int) -> Duration {
+    let mebibytes = (count + (1 << 20) - 1) >> 20
+    return execCallDeadline + .seconds(10 * mebibytes)
+  }
+
+  /// `terminal.put` beside this pane, on the machine it is on, or `nil` for a pane on this
+  /// core, which the SSH host's own inbox reaches.
+  ///
+  /// Through the core for `commandRunner(forPane:)`'s reason. The answered path is the
+  /// machine's, so it is the one the agent there can open.
+  public func imageUploader(forPane id: String, bytes: Data, fileName: String)
+    -> (any ImageUploading)?
+  {
+    guard let machine = CorePaneID.machine(of: id) else { return nil }
+    return CoreImageUpload(
+      terminal: CorePaneID.address(of: id), machine: machine, bytes: bytes, fileName: fileName,
+      link: link)
+  }
+
+  /// What a put's answer means for the composer.
+  ///
+  /// | answer | thrown |
+  /// |---|---|
+  /// | a path | nothing: it is the outcome |
+  /// | an empty path | `ImageUploadFailure.noHostPath` |
+  /// | -32601, or `unknown_method` | `MachineImageRefusal.unsupported`: the core there is older |
+  /// | `internal` | `ImageUploadFailure.commandFailed`: the file could not be written there |
+  /// | `not_found`, `finished`, `machine_unknown`, or anything else | `AppError`, in the core's words |
+  static func putOutcome(of reply: Result<CorePutResult, CoreRPCError>) throws
+    -> ImageUploadOutcome
+  {
+    switch reply {
+    case .success(let put):
+      guard !put.path.isEmpty else { throw ImageUploadFailure.noHostPath }
+      return ImageUploadOutcome(hostPath: put.path, bytesSent: put.bytes)
+    case .failure(let refusal):
+      if refusal.code == CoreRPCError.methodNotFound || refusal.kind == "unknown_method" {
+        throw MachineImageRefusal.unsupported
+      }
+      switch refusal.kind {
+      case "internal":
+        // The core reports no exit status for a write it could not make. 1, as a shell's
+        // would be.
+        throw ImageUploadFailure.commandFailed(
+          exitStatus: 1, standardError: refusal.message ?? "")
+      default:
+        // `not_found` and `finished` are a pane that has gone, `machine_unknown` a machine the
+        // core no longer has. Each is said once, in the core's words, and none is retried.
+        throw AppError.herdrCommandFailed(
+          reason: refusal.message ?? refusal.kind ?? "herdr-core refused the request.")
+      }
+    }
+  }
+
   /// The core's answer as the SSH exec channel gives one.
   ///
   /// **A cut answer throws.** A timeout keeps what came so far and `truncated` keeps the first
@@ -482,5 +542,60 @@ private final class CoreStreamRace: @unchecked Sendable {
     }
     settled?.resume(returning: stream)
     return settled != nil
+  }
+}
+
+/// One image, put beside a terminal on a machine the core added, in one `terminal.put`.
+///
+/// **One call, so progress is all or nothing.** The bytes go in one message and the core says
+/// nothing until it has written them, so the stream reports the total once, on success.
+struct CoreImageUpload: ImageUploading {
+  let progress: AsyncStream<ImageUploadProgress>
+  private let signal: AsyncStream<ImageUploadProgress>.Continuation
+  /// `box/t7`, as the core names it.
+  let terminal: String
+  let machine: String
+  let bytes: Data
+  let fileName: String
+  private let link: CoreLink
+
+  init(terminal: String, machine: String, bytes: Data, fileName: String, link: CoreLink) {
+    self.terminal = terminal
+    self.machine = machine
+    self.bytes = bytes
+    self.fileName = fileName
+    self.link = link
+    (progress, signal) = AsyncStream.makeStream(of: ImageUploadProgress.self)
+  }
+
+  /// - Throws: `MachineImageRefusal.tooLarge` before anything is sent for more than the core
+  ///   takes, `ImageUploadFailure.stalled` when no answer came, and what
+  ///   `CoreControl.putOutcome(of:)` makes of a refusal.
+  func upload() async throws -> ImageUploadOutcome {
+    defer { signal.finish() }
+    guard bytes.count <= CoreControl.putByteLimit else {
+      throw MachineImageRefusal.tooLarge(limit: CoreControl.putByteLimit)
+    }
+    try Task.checkCancellation()
+    let (connection, handshake) = await link.established()
+    guard let connection else { throw CoreControl.failure(for: handshake) }
+
+    let method = "terminal.put"
+    let reply: Result<CorePutResult, CoreRPCError>
+    do {
+      reply = try await connection.callKeepingRefusal(
+        method,
+        params: CorePutParams(
+          terminal: terminal, name: fileName, data: bytes.base64EncodedString()),
+        as: CorePutResult.self,
+        deadline: CoreControl.putCallDeadline(forBytes: bytes.count)
+      )
+    } catch {
+      if CoreConnection.gotNoAnswer(error, to: method) { throw ImageUploadFailure.stalled }
+      throw error
+    }
+    let outcome = try CoreControl.putOutcome(of: reply)
+    signal.yield(ImageUploadProgress(bytesSent: bytes.count, totalBytes: bytes.count))
+    return outcome
   }
 }

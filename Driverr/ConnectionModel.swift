@@ -610,8 +610,8 @@ final class ConnectionModel {
           composers = PaneComposerCache(
             control: { [weak self] in self?.liveHerdr },
             // Resolved per upload, because the link can go while a photo is staged.
-            makeUpload: { [weak self] bytes, fileName in
-              self?.makeImageUpload(bytes: bytes, fileName: fileName)
+            makeUpload: { [weak self] paneID, bytes, fileName in
+              self?.makeImageUpload(forPane: paneID, bytes: bytes, fileName: fileName)
             },
             // After a send, refresh the conversation and the screen. Wired here because this
             // object owns all three caches; a composer reaching for its siblings would need a
@@ -873,6 +873,23 @@ final class ConnectionModel {
     }
     guard let client = bridgeClient() else { return nil }
     return try? await client.observe(terminalID: terminalID, size: size)
+  }
+
+  /// One image upload for this pane, or `nil` with no link.
+  ///
+  /// **A pane on a machine a core added never uses the host's inbox** (#68). That path names
+  /// a file on the SSH host, which the agent on the machine cannot open, so a pane there goes
+  /// through the core's `terminal.put`, and a control that cannot put one gets a refusal that
+  /// says so. Every other pane, a core's own `core:t3` included, keeps the host's uploader.
+  func makeImageUpload(forPane paneID: String, bytes: Data, fileName: String)
+    -> (any ImageUploading)?
+  {
+    guard CorePaneID.machine(of: paneID) != nil else {
+      return makeImageUpload(bytes: bytes, fileName: fileName)
+    }
+    guard let herdr = liveHerdr else { return nil }
+    return herdr.imageUploader(forPane: paneID, bytes: bytes, fileName: fileName)
+      ?? RefusedImageUpload(MachineImageRefusal.unsupported)
   }
 
   /// One image upload on this connection's link, or `nil` with no link.

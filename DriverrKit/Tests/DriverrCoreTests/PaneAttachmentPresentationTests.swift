@@ -141,4 +141,138 @@ import Testing
     #expect(!others.contains(sentence))
     #expect(!sentence.contains("Try again"))
   }
+  // MARK: - A pane on a machine a core added (#68)
+
+  private static let box = PaneAttachmentPlace.machine("box")
+
+  /// The host's sentences are the ones that shipped before a machine had any. A host place
+  /// must not change a byte of them.
+  @Test func theHostsSentencesAreUnchangedAtTheHost() {
+    #expect(PaneAttachmentCopy.uploaded(at: .host) == "Sent to the host")
+    let partway = ImageUploadProgress(bytesSent: 412_000, totalBytes: 1_200_000)
+    #expect(PaneAttachmentCopy.uploading(partway, at: .host) == "412 KB of 1.2 MB")
+    #expect(PaneAttachmentCopy.uploading(partway, at: .host) == PaneAttachmentCopy.progress(partway))
+    #expect(PaneAttachmentCopy.uploaded(at: .host) == PaneAttachmentCopy.uploaded)
+    #expect(
+      PaneAttachmentFailureCopy.handOffFailed(at: .host)
+        == "The host has the image, but the pane could not be told where it is.")
+    let failures: [ImageUploadFailure] = [
+      .channelDropped(reason: "gone"),
+      .commandFailed(exitStatus: 1, standardError: "No space left"),
+      .sizeMismatch(expectedBytes: 10),
+      .noHostPath,
+      .stalled,
+    ]
+    for failure in failures {
+      #expect(
+        PaneAttachmentFailureCopy.sentence(for: failure, at: .host)
+          == PaneAttachmentFailureCopy.sentence(for: failure))
+      #expect(
+        PaneAttachmentFailureCopy.sentence(for: failure as any Error, at: .host)
+          == PaneAttachmentFailureCopy.sentence(for: failure as any Error))
+    }
+    #expect(
+      PaneAttachmentFailureCopy.sentence(
+        for: ImageUploadFailure.commandFailed(exitStatus: 1, standardError: ""), at: .host)
+        == "The host refused the upload. Check its disk space and permissions.")
+    #expect(
+      PaneAttachmentFailureCopy.sentence(for: ImageUploadFailure.noHostPath, at: .host)
+        == "The host saved the image but did not say where.")
+    #expect(
+      PaneAttachmentFailureCopy.sentence(for: AppError.notConnected(host: "this host"), at: .host)
+        == "Driverr isn't connected to this host.")
+  }
+
+  @Test func aMachinesSentencesNameIt() {
+    #expect(PaneAttachmentCopy.uploaded(at: Self.box) == "Sent to box")
+    #expect(
+      PaneAttachmentCopy.uploading(
+        ImageUploadProgress(bytesSent: 0, totalBytes: 4_100_000), at: Self.box)
+        == "Sending to box…")
+    #expect(
+      PaneAttachmentFailureCopy.handOffFailed(at: Self.box)
+        == "The image is on box, but the pane could not be told where it is.")
+    #expect(
+      PaneAttachmentFailureCopy.sentence(
+        for: ImageUploadFailure.commandFailed(exitStatus: 1, standardError: "No space"),
+        at: Self.box)
+        == "Driverr could not save the image on box. Check its disk space and permissions.")
+    #expect(
+      PaneAttachmentFailureCopy.sentence(for: ImageUploadFailure.noHostPath, at: Self.box)
+        == "The image was saved on box, but Driverr was not told where.")
+    #expect(
+      PaneAttachmentFailureCopy.sentence(for: ImageUploadFailure.stalled, at: Self.box)
+        == "Nothing came back from box, so the upload was stopped. Try again.")
+    #expect(
+      PaneAttachmentFailureCopy.sentence(for: MachineImageRefusal.unsupported, at: Self.box)
+        == "Driverr can't send images to box.")
+  }
+
+  /// Built from the limit, never a literal, so the sentence cannot drift from the check. The
+  /// core's limit is 8 MiB, which `size` writes in decimal units, as iOS shows file sizes.
+  @Test func aMachinesSizeRefusalNamesTheLimit() {
+    #expect(
+      PaneAttachmentFailureCopy.sentence(
+        for: MachineImageRefusal.tooLarge(limit: 8 << 20), at: Self.box)
+        == "The image is over the 8.4 MB limit for box.")
+    #expect(
+      PaneAttachmentFailureCopy.sentence(
+        for: MachineImageRefusal.tooLarge(limit: 2_000_000), at: Self.box)
+        == "The image is over the \(PaneAttachmentCopy.size(2_000_000)) limit for box.")
+  }
+
+  /// The core's own words name its terminal, `t7 has finished`, which says nothing about what
+  /// to do, so every other error at a machine is the one fallback.
+  @Test func anyOtherErrorAtAMachineIsTheFallback() {
+    struct Unknown: Error {}
+    for error: any Error in [
+      AppError.herdrCommandFailed(reason: "t7 has finished"),
+      AppError.channelFailed(reason: "The connection to herdr-core ended."),
+      Unknown(),
+    ] {
+      #expect(
+        PaneAttachmentFailureCopy.sentence(for: error, at: Self.box)
+          == "The image could not be sent to box.")
+    }
+  }
+
+  /// Only the SSH inbox command drops a channel or writes short, so those keep the host's.
+  @Test func theInboxOnlyFailuresKeepTheHostsSentenceAtAMachine() {
+    for failure: ImageUploadFailure in [.channelDropped(reason: "gone"), .sizeMismatch(expectedBytes: 3)]
+    {
+      #expect(
+        PaneAttachmentFailureCopy.sentence(for: failure, at: Self.box)
+          == PaneAttachmentFailureCopy.sentence(for: failure))
+    }
+  }
+
+  /// A machine's put is one call with no count to report, so its row says what is happening
+  /// and never a byte count, which would read `0 bytes of` for the whole put.
+  @Test func aMachinesUploadShowsNoCount() {
+    for sent in [0, 2_000_000, 4_100_000] {
+      let status = PaneAttachmentCopy.uploading(
+        ImageUploadProgress(bytesSent: sent, totalBytes: 4_100_000), at: Self.box)
+      #expect(status == "Sending to box…")
+      #expect(!status.contains("of"))
+      #expect(!status.contains("MB"))
+    }
+  }
+
+  @Test func aMachinesSentencesAreAllDifferent() {
+    let sentences = [
+      PaneAttachmentCopy.uploaded(at: Self.box),
+      PaneAttachmentCopy.uploading(ImageUploadProgress(bytesSent: 0, totalBytes: 1), at: Self.box),
+      PaneAttachmentFailureCopy.handOffFailed(at: Self.box),
+      PaneAttachmentFailureCopy.sentence(
+        for: ImageUploadFailure.commandFailed(exitStatus: 1, standardError: ""), at: Self.box),
+      PaneAttachmentFailureCopy.sentence(for: ImageUploadFailure.noHostPath, at: Self.box),
+      PaneAttachmentFailureCopy.sentence(for: ImageUploadFailure.stalled, at: Self.box),
+      PaneAttachmentFailureCopy.sentence(for: MachineImageRefusal.unsupported, at: Self.box),
+      PaneAttachmentFailureCopy.sentence(
+        for: MachineImageRefusal.tooLarge(limit: 8 << 20), at: Self.box),
+      PaneAttachmentFailureCopy.sentence(for: AppError.herdrResponseUnreadable, at: Self.box),
+    ]
+    #expect(Set(sentences).count == sentences.count)
+    #expect(sentences.allSatisfy { $0.contains("box") })
+  }
 }

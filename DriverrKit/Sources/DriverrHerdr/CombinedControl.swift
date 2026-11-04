@@ -255,6 +255,12 @@ public struct CombinedControl: HerdrControl {
     side(for: id).commandRunner(forPane: id)
   }
 
+  public func imageUploader(forPane id: String, bytes: Data, fileName: String)
+    -> (any ImageUploading)?
+  {
+    side(for: id).imageUploader(forPane: id, bytes: bytes, fileName: fileName)
+  }
+
   public func sendText(paneID: String, text: String) async throws {
     try await side(for: paneID).sendText(paneID: paneID, text: text)
   }
