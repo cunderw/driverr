@@ -3,7 +3,7 @@ import Foundation
 import Observation
 import UIKit
 
-/// The one image a pane's composer holds, from Photos until the host has it.
+/// The one image a pane's composer holds, from Photos until the pane's computer has it.
 ///
 /// One at a time, per pane. `PaneComposerModel` holds it and is cached per pane
 /// (`PaneComposerCache`), so an attachment survives a switch to the Terminal surface, as a
@@ -25,7 +25,8 @@ final class PaneAttachmentModel {
   /// What the row draws. Built from the prepared bytes, so it shows what is sent.
   private(set) var thumbnail: UIImage?
 
-  /// The prepared PNG's size, which is what the row reports and what the host will receive.
+  /// The prepared PNG's size, which is what the row reports and what the pane's computer
+  /// will receive.
   private(set) var byteCount = 0
 
   /// Whether there is anything to show.
@@ -40,10 +41,11 @@ final class PaneAttachmentModel {
   /// is on screen and a captured coordinator would outlive it.
   @ObservationIgnored private let makeUpload: @MainActor (Data, String) -> (any ImageUploading)?
 
-  /// Hands the finished host path to the pane.
+  /// Hands the finished path to the pane.
   ///
   /// Takes only the path, so this type never learns what a pane is and tests need no herdr.
-  /// A throw is a real outcome: the bytes are already on the host, so the failure says so.
+  /// A throw is a real outcome: the bytes have already landed, on the host or the pane's
+  /// machine, so the failure says so.
   /// See `PaneAttachmentFailureCopy.handOffFailed`.
   @ObservationIgnored private let handOff: @MainActor (String) async throws -> Void
 
@@ -55,7 +57,7 @@ final class PaneAttachmentModel {
   /// progress event in flight at Remove still lands afterwards.
   @ObservationIgnored private var generation = 0
 
-  /// The file's name on the host: a fresh UUID, because the inbox is shared and
+  /// The file's name where it lands: a fresh UUID, because the host's inbox is shared and
   /// `IMG_0042.png` from two phones would be one file.
   @ObservationIgnored private let makeFileName: @Sendable () -> String
 
@@ -165,8 +167,8 @@ final class PaneAttachmentModel {
     } catch is CancellationError {
       return
     } catch {
-      // Not the error's own text: what matters is that the image is already on the host, so
-      // picking it again sends it twice.
+      // Not the error's own text: what matters is that the image has already landed, on the
+      // host or the pane's machine, so picking it again sends it twice.
       settle(run, .failed(PaneAttachmentFailureCopy.handOffFailed(at: place)))
       return
     }

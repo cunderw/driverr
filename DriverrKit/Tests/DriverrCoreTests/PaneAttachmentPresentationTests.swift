@@ -149,6 +149,9 @@ import Testing
   /// must not change a byte of them.
   @Test func theHostsSentencesAreUnchangedAtTheHost() {
     #expect(PaneAttachmentCopy.uploaded(at: .host) == "Sent to the host")
+    let partway = ImageUploadProgress(bytesSent: 412_000, totalBytes: 1_200_000)
+    #expect(PaneAttachmentCopy.uploading(partway, at: .host) == "412 KB of 1.2 MB")
+    #expect(PaneAttachmentCopy.uploading(partway, at: .host) == PaneAttachmentCopy.progress(partway))
     #expect(PaneAttachmentCopy.uploaded(at: .host) == PaneAttachmentCopy.uploaded)
     #expect(
       PaneAttachmentFailureCopy.handOffFailed(at: .host)
@@ -182,6 +185,10 @@ import Testing
 
   @Test func aMachinesSentencesNameIt() {
     #expect(PaneAttachmentCopy.uploaded(at: Self.box) == "Sent to box")
+    #expect(
+      PaneAttachmentCopy.uploading(
+        ImageUploadProgress(bytesSent: 0, totalBytes: 4_100_000), at: Self.box)
+        == "Sending to box…")
     #expect(
       PaneAttachmentFailureCopy.handOffFailed(at: Self.box)
         == "The image is on box, but the pane could not be told where it is.")
@@ -239,9 +246,22 @@ import Testing
     }
   }
 
+  /// A machine's put is one call with no count to report, so its row says what is happening
+  /// and never a byte count, which would read `0 bytes of` for the whole put.
+  @Test func aMachinesUploadShowsNoCount() {
+    for sent in [0, 2_000_000, 4_100_000] {
+      let status = PaneAttachmentCopy.uploading(
+        ImageUploadProgress(bytesSent: sent, totalBytes: 4_100_000), at: Self.box)
+      #expect(status == "Sending to box…")
+      #expect(!status.contains("of"))
+      #expect(!status.contains("MB"))
+    }
+  }
+
   @Test func aMachinesSentencesAreAllDifferent() {
     let sentences = [
       PaneAttachmentCopy.uploaded(at: Self.box),
+      PaneAttachmentCopy.uploading(ImageUploadProgress(bytesSent: 0, totalBytes: 1), at: Self.box),
       PaneAttachmentFailureCopy.handOffFailed(at: Self.box),
       PaneAttachmentFailureCopy.sentence(
         for: ImageUploadFailure.commandFailed(exitStatus: 1, standardError: ""), at: Self.box),

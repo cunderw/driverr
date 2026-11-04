@@ -813,7 +813,7 @@ struct PaneComposerBar: View {
     case .ready:
       return PaneAttachmentCopy.size(byteCount)
     case .uploading(let progress):
-      return PaneAttachmentCopy.progress(progress)
+      return PaneAttachmentCopy.uploading(progress, at: place)
     case .uploaded:
       return PaneAttachmentCopy.uploaded(at: place)
     case .handedOver:

@@ -243,6 +243,25 @@ struct CoreRPCError: Decodable, Error, Sendable {
 
   var kind: String? { data?.kind }
 
+  init(code: Int?, message: String?, data: Details?) {
+    self.code = code
+    self.message = message
+    self.data = data
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case code, message, data
+  }
+
+  /// Every field leniently: an error that is not quite the schema's must still be read as a
+  /// refusal, not turn the whole call into `herdrResponseUnreadable`.
+  init(from decoder: any Decoder) throws {
+    let error = try decoder.container(keyedBy: CodingKeys.self)
+    code = try? error.decodeIfPresent(Int.self, forKey: .code)
+    message = try? error.decodeIfPresent(String.self, forKey: .message)
+    data = try? error.decodeIfPresent(Details.self, forKey: .data)
+  }
+
   /// JSON-RPC's code for a method the core does not have.
   static let methodNotFound = -32601
 }

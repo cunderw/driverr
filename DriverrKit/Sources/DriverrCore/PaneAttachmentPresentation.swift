@@ -10,12 +10,14 @@ public enum PaneAttachmentPhase: Equatable, Sendable {
   case ready
   /// On the wire, with the count so far.
   case uploading(ImageUploadProgress)
-  /// The host has the file, at this path read off its stdout. Next comes ``handedOver``.
+  /// The file has landed, at this path as the computer the pane runs on sees it: the SSH
+  /// host's, read off the inbox command's stdout, or a machine's, as its core answered.
+  /// Next comes ``handedOver``.
   case uploaded(hostPath: String)
   /// The path has been typed into the pane, with no newline.
   ///
   /// Its own phase rather than clearing the row, because the path lands in the agent's input
-  /// on the host, where Driverr's field shows nothing. A vanishing row would look like one
+  /// in the pane, where Driverr's field shows nothing. A vanishing row would look like one
   /// that gave up. Carries no path, because nothing reads it. Cleared by the next successful
   /// reply from this composer, and by Remove.
   case handedOver
@@ -40,7 +42,7 @@ public enum PaneAttachmentPhase: Equatable, Sendable {
     }
   }
 
-  /// The finished host path, or `nil`. It drives the hand-off, so `.handedOver` returns `nil`
+  /// The finished path, as the pane's computer sees it, or `nil`. It drives the hand-off, so `.handedOver` returns `nil`
   /// and cannot drive a second one.
   public var hostPath: String? {
     if case .uploaded(let path) = self { return path }
@@ -65,8 +67,8 @@ public enum PaneAttachmentCopy {
   public static let imageLabel = "Image"
   /// While the picked bytes are being read down to PNG.
   public static let preparing = "Preparing…"
-  /// Once the host has it. Not the path, a `~/.driverr/inbox/` UUID that tells a reader
-  /// nothing.
+  /// Once the host has it, for a pane on the SSH host. Not the path, a UUID file name that
+  /// tells a reader nothing. ``uploaded(at:)`` names the place.
   public static let uploaded = "Sent to the host"
 
   /// ``uploaded``, naming the machine for a pane on one.
@@ -77,9 +79,21 @@ public enum PaneAttachmentCopy {
     }
   }
 
-  /// Once the path is in the pane. "the prompt", because it went into the agent's input on
-  /// the host, not into Driverr's field.
+  /// Once the path is in the pane. "the prompt", because it went into the agent's input in
+  /// the pane, not into Driverr's field.
   public static let handedOver = "Added to the pane’s prompt"
+
+  /// While the bytes are on the wire. A host's upload reports `sent of total`. A machine's is
+  /// one `terminal.put` that says nothing until it is done, so it has no count to show, and
+  /// a `0 bytes of` would sit there for the whole put.
+  public static func uploading(_ progress: ImageUploadProgress, at place: PaneAttachmentPlace)
+    -> String
+  {
+    switch place {
+    case .host: self.progress(progress)
+    case .machine(let name): "Sending to \(name)…"
+    }
+  }
 
   /// `sent of total`. "of", because VoiceOver reads a slash as "slash" and this is also the
   /// row's accessibility value.

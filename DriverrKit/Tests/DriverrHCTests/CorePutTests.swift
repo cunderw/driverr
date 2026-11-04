@@ -91,6 +91,24 @@ struct CorePutTests {
     #expect(failure as? AppError == .herdrCommandFailed(reason: message))
   }
 
+  /// `data` is an object in every core so far. One that is not must still read as the core
+  /// saying no, in its words, and not as an answer Driverr cannot read.
+  @Test("an error whose data is not an object is still the core's refusal")
+  func lenientErrorData() async throws {
+    let stream = answering(.rawError(#"{"code":-32000,"message":"t7 has finished","data":"x"}"#))
+    let failure = await failure(of: try upload(stream))
+    #expect(failure as? AppError == .herdrCommandFailed(reason: "t7 has finished"))
+
+    let other = FakeCoreStream()
+    other.replies["terminal.get"] = .rawError(#"{"code":-32000,"message":"no t9","data":[1]}"#)
+    do {
+      try await control(other).perform(.split(.right), on: "core:t9")
+      Issue.record("expected the refusal")
+    } catch {
+      #expect(error as? AppError == .herdrCommandFailed(reason: "no t9"))
+    }
+  }
+
   @Test("a core that has no terminal.put refuses the image, by code or by kind")
   func methodNotFound() async throws {
     let byCode = answering(

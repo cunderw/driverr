@@ -17,6 +17,8 @@ final class FakeCoreStream: HerdrStream, @unchecked Sendable {
     case error(String)
     /// A refusal as a core writes one: a sentence, and the stable `kind` under `data`.
     case refused(kind: String, message: String, code: Int = -32000)
+    /// A refusal whose `error` object is this JSON, as written, for a shape off the schema.
+    case rawError(String)
     /// Never answers, for the deadline tests.
     case silent
     /// Answers after `delay`, by which time the caller may have gone.
@@ -271,6 +273,8 @@ final class FakeCoreStream: HerdrStream, @unchecked Sendable {
       respond(
         #"{"id":\#(id),"jsonrpc":"2.0","error":{"code":\#(code),"message":"\#(message)","#
           + #""data":{"hint":"","kind":"\#(kind)"}}}"#)
+    case .rawError(let json):
+      respond(#"{"id":\#(id),"jsonrpc":"2.0","error":\#(json)}"#)
     case .silent:
       break
     case .after(let frames, let json):
