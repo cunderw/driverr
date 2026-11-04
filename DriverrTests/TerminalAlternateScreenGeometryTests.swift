@@ -153,6 +153,8 @@ struct TerminalAlternateScreenGeometryTests {
     view.feedKeepingScrollGeometry(
       Self.bytes(Self.scrollingScreen(rows: terminal.rows, cols: terminal.cols)))
     window.layoutIfNeeded()
+    // Fires SwiftTerm's queuePendingDisplay, a 16.67 ms main-queue asyncAfter, before the paint
+    // check. The yDisp check does not depend on it.
     RunLoop.current.run(until: Date().addingTimeInterval(0.05))
     window.layoutIfNeeded()
     let red = Self.firstRedY(view)

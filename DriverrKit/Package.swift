@@ -37,8 +37,9 @@ let package = Package(
     // lowers it only when the buffer holds lines, and the alternate buffer is empty while
     // inactive, so after the keyboard shrank the grid the next alternate screen grew back to
     // the old row count as `less` scrolled its first screen in, and drew low (#73). Not
-    // submitted upstream. `TerminalAlternateScreenGeometryTests` holds the rule in the app's
-    // hosted tier.
+    // submitted upstream. `AlternateScreenShrinkTests` holds the rule, so a pin that loses it
+    // fails the kit tier. `TerminalAlternateScreenGeometryTests` checks the drawn geometry in
+    // the app's hosted tier.
     //
     // The fork is upstream **v1.18.0** plus those three commits, so the delta from upstream
     // is one function, one `switch` and one branch. Pinned by revision rather than a version
