@@ -814,7 +814,7 @@ struct TerminalSessionTests {
     rule,
     "> ",
     rule,
-    statusLine("  INSERT | drover-testing", "ctx:68.6k  5h:21%  wk:15%"),
+    statusLine("  EDIT | sample-project", "used 41%  left 59%"),
   ]
 
   private static let secondFrame = [
@@ -823,7 +823,7 @@ struct TerminalSessionTests {
     rule,
     "> ",
     rule,
-    statusLine("  INSERT | drover-testing", "ctx:68.7k  5h:22%  wk:15%"),
+    statusLine("  EDIT | sample-project", "used 42%  left 58%"),
   ]
 
   /// What a thumbnail should hold: the program's last six rows. Trailing spaces are dropped on
@@ -845,7 +845,7 @@ struct TerminalSessionTests {
 
     feed.emit(Self.agentFrame(Self.firstFrame, erasingLinesOf: []))
     feed.emit(Self.agentFrame(Self.secondFrame, erasingLinesOf: Self.firstFrame))
-    await waitUntil { renderer.screen.contains("ctx:68.7k") }
+    await waitUntil { renderer.screen.contains("used 42%") }
     // `PaneThumbnailModel.lineCount`, which lives in the app target.
     return (session.visibleLines(last: 6)?.map(Self.withoutTrailingSpaces), renderer.screen)
   }
