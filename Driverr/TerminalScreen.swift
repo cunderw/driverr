@@ -50,7 +50,7 @@ struct TerminalScreen: View {
   /// Where `paneSurfaces` ends, in window coordinates.
   ///
   /// A diagnostic, not a layout input. `debug.keyboardMetrics` and
-  /// `PaneSwitchUITests.testLandscapeKeepsTheComposerAndTheSegmentReachable` read it, and
+  /// `PaneSwitchUITests.testLandscapeKeepsTheComposerAndTheSurfaceToggleReachable` read it, and
   /// that test catches a re-ordered modifier chain.
   ///
   /// Read from the surfaces' own frame, below its floor and clip, where the composer bar is
@@ -110,23 +110,13 @@ struct TerminalScreen: View {
 
   var body: some View {
     content
+      // Set but not drawn. The title still names the scene to VoiceOver, the back button's
+      // long-press menu and the multitasking switcher; the bar shows only floating glass
+      // buttons, with no title, no subtitle and no background band. The host is named by the
+      // pane switcher's sections and the back menu (CLAUDE.md).
       .navigationTitle(scene.title)
-      // Which host this is. Keep it: the phone's system back button is a bare chevron, so
-      // without the subtitle the host's name is nowhere on the pane screen. Empty on the
-      // detail route, whose back control already names the host. An empty string draws no
-      // second line.
-      .navigationSubtitle(route == .detailColumn ? "" : (scene.subtitle ?? ""))
       .navigationBarTitleDisplayMode(.inline)
-      // The bar sits on the host screen's colour, so the accent glyphs contrast the same.
-      // This scene's base fill runs up under the bar, and the glass capsule lightens whatever
-      // it sits over, so on that backdrop the accent glyphs fell under the 3:1 non-text
-      // floor in dark. The accent may not be dimmed or swapped (CLAUDE.md, Style), so the
-      // surface is what changes.
-      //
-      // **Both lines are needed.** An unscrolled bar's background is hidden and ignores the
-      // style alone; `.toolbarBackgroundVisibility(.visible, …)` makes it land.
-      .toolbarBackground(Color(.systemGroupedBackground), for: .navigationBar)
-      .toolbarBackgroundVisibility(.visible, for: .navigationBar)
+      .toolbar(removing: .title)
       .toolbar {
         ToolbarItem(placement: .topBarLeading) {
           // A named back control in the detail column, where the column swapped its content
@@ -152,6 +142,12 @@ struct TerminalScreen: View {
             .accessibilityLabel("Back to \(host.displayName)")
             .accessibilityIdentifier("terminal.back")
           }
+        }
+        // The chat or terminal switch, in its own capsule ahead of Panes and ⋯. Only on a
+        // pane with two surfaces, so the spacer goes with it and a shell pane gets no gap.
+        if showsSurfaceToggle {
+          ToolbarItem(placement: .primaryAction) { surfaceToggle }
+          ToolbarSpacer(.fixed, placement: .primaryAction)
         }
         // Absent on a host with no panes, per `PaneStripModel.showsSwitcher`. Otherwise a
         // plain shell grows a button whose sheet holds only the terminal already on screen.
@@ -186,13 +182,14 @@ struct TerminalScreen: View {
             .opacity(isLinkDown ? 0.45 : 1)
             .disabled(isLinkDown)
             .animation(.default, value: isLinkDown)
-            // Glyphs keep the accent, matching the host screen's toolbar glyphs one level up
-            // (CLAUDE.md, Style).
+            // Label-coloured, like every glyph on this bar (CLAUDE.md, Style). On the
+            // `Button`, not the label, so the count keeps its own red.
+            .tint(Color.primary)
             .accessibilityIdentifier("terminal.panes")
           }
         }
         ToolbarItem(placement: .primaryAction) {
-          // Accent glyph, as above. `PaneActionsMenu` does not tint itself.
+          // Label-coloured, as above. `PaneActionsMenu` does not tint itself.
           PaneActionsMenu(
             model: scene.actions,
             liveActivity: settingsModel.settings.liveActivities
@@ -222,6 +219,7 @@ struct TerminalScreen: View {
                 })
               : nil,
             onSettings: { scene.showSettings() })
+          .tint(Color.primary)
         }
       }
       // No sheets are attached here. `TerminalSceneSheets` attaches them at `ContentView`'s
@@ -274,15 +272,11 @@ struct TerminalScreen: View {
   @ViewBuilder
   private var content: some View {
     ZStack(alignment: .bottom) {
-      // **Chrome order.** The segment is the only permanent band, so it comes first and no
-      // banner appearing or leaving can move it under the user's thumb. Below it, widest
-      // subject first: the connection (while the link is down nothing about a pane is true),
-      // then the per-pane banners, then the keyboard notice, which is about the terminal's
-      // input and sits next to it.
+      // **Chrome order.** There is no permanent band: the chat or terminal switch is a
+      // toolbar button (`surfaceToggle`). Widest subject first: the connection (while the
+      // link is down nothing about a pane is true), then the per-pane banners, then the
+      // keyboard notice, which is about the terminal's input and sits next to it.
       VStack(spacing: 0) {
-        // Under the navigation bar, not in its principal slot, which would take the title
-        // slot with it. See `surfaceSegment`.
-        surfaceSegment
         connectionBar
         closedPaneBanner
         // Inline, not an alert: the detail column must not present (CLAUDE.md). See
@@ -303,7 +297,8 @@ struct TerminalScreen: View {
           //
           // A `.frame(minHeight:)` does not compress a child that will not fit: it centres it
           // and lets it hang off both ends. The surfaces plus the composer overhung upward over
-          // the segment band, and the way back to the terminal was not drawn.
+          // the segment band that used to sit above them, and the way back to the terminal
+          // was not drawn.
           //
           // **Do not fix that with `alignment: .top`. It hangs the app.** The block then no
           // longer fills its slot, the terminal's measure-and-pad loop stops converging, and
@@ -311,9 +306,9 @@ struct TerminalScreen: View {
           // times out). `.zIndex` does not help, because it is layout, not paint order.
           //
           // The fix is that nothing needs squeezing. In the one posture with no room (landscape
-          // phone, keyboard up) the composer collapses to one row (`isComposerCollapsed`), the
-          // floor gives way with it (`surfaceFloor`), and the segment band hides so the
-          // conversation gets its height. Portrait always fits.
+          // phone, keyboard up) the composer collapses to one row (`isComposerCollapsed`) and
+          // the floor gives way with it (`surfaceFloor`), so the conversation gets its height.
+          // Portrait always fits.
           .frame(minHeight: surfaceFloor)
           // **Everything below this frame is attached to the slot; everything above it to the
           // surfaces' own content.** The frame is the region the surfaces were given, and
@@ -329,10 +324,10 @@ struct TerminalScreen: View {
           //   height. The bar is on the chat layer in `paneSurfaces`, with a frame of its own
           //   pinning it to the slot.
           //
-          // Only `PaneSwitchUITests.testLandscapeKeepsTheComposerAndTheSegmentReachable` catches
-          // a re-order, by reading these probes on the device (including its `terminalBottom`
-          // check). `PaneSurfaceLayoutTests` models the shapes on a fixture and does not guard
-          // this chain.
+          // Only `PaneSwitchUITests.testLandscapeKeepsTheComposerAndTheSurfaceToggleReachable`
+          // catches a re-order, by reading these probes on the device (including its
+          // `terminalBottom` check). `PaneSurfaceLayoutTests` models the shapes on a fixture and
+          // does not guard this chain.
           //
           // The probe is a diagnostic, not a layout input, and is attached only when
           // `isReportingKeyboardMetrics`; see `SurfaceGeometryProbe`. A probe on the composer
@@ -346,7 +341,8 @@ struct TerminalScreen: View {
           )
 
           // **A clip over the whole slot.** Content that does not fit is centred and would
-          // paint over the segment band. In portrait nothing overflows and this does nothing.
+          // paint over the banners above it. In portrait nothing overflows and this does
+          // nothing.
           //
           // It must stay at the slot's bottom, below where the composer bar attaches. A clip
           // above the bar would cut the conversation at the card's top edge, leaving the glass
@@ -409,12 +405,12 @@ struct TerminalScreen: View {
 
   // MARK: - Chat or terminal
 
-  /// Whether this pane gets a `Chat | Terminal` segment: if and only if it has an agent,
+  /// Whether this pane gets the chat or terminal toggle: if and only if it has an agent,
   /// even with an unreadable transcript. A shell pane opens straight into the terminal.
   ///
   /// The rule and the selection live on the scene, because the surface decides whether the
   /// pane holds the attach token or an observer.
-  private var showsSurfaceSegment: Bool { scene.showsSurfaceSegment }
+  private var showsSurfaceToggle: Bool { scene.showsSurfaceToggle }
 
   private var surface: PaneSurface { scene.surface }
 
@@ -595,9 +591,8 @@ struct TerminalScreen: View {
   }
 
   /// The one state with no room for a two-row composer: a landscape phone with the keyboard
-  /// up, which leaves about 100 pt. The composer collapses to one row, and the segment band
-  /// hides (`surfaceSegment`), so the conversation keeps some height. Both inputs are values
-  /// this screen already tracks.
+  /// up, which leaves about 100 pt. The composer collapses to one row, so the conversation
+  /// keeps some height. Both inputs are values this screen already tracks.
   ///
   /// **Keyboard facts no simulator shows.** On hardware the keyboard's end frame sits about
   /// 31 pt (the home indicator's inset) higher than a composer laid out on the safe area
@@ -613,9 +608,9 @@ struct TerminalScreen: View {
     verticalSizeClass == .compact && keyboardTop != nil
   }
 
-  /// The surfaces' floor: `minimumSurfaceHeight`, or zero when collapsed. There a floor
-  /// would overflow the small region on its own, and with the band hidden the surfaces
-  /// still get about 46 pt.
+  /// The surfaces' floor: `minimumSurfaceHeight`, or zero when collapsed. With nothing above
+  /// the surfaces the 64 pt floor fits the collapsed posture's ~96 pt region; it only binds
+  /// when a banner sits above the surfaces in that posture, and then it would overflow.
   private var surfaceFloor: CGFloat {
     isComposerCollapsed ? 0 : Self.minimumSurfaceHeight
   }
@@ -638,39 +633,38 @@ struct TerminalScreen: View {
     return model.paneScreens?.model(for: pane)
   }
 
-  /// The `Chat | Terminal` segment. **Hidden while `isComposerCollapsed`.** Otherwise the
-  /// conversation gets about 3 pt and paints over the band. Dismissing the keyboard or
-  /// turning the phone upright brings it back.
-  @ViewBuilder
-  private var surfaceSegment: some View {
-    if showsSurfaceSegment && !isComposerCollapsed {
-      Picker(
-        "Surface",
-        selection: Binding(
-          get: { surface },
-          set: { scene.show($0) }
-        )
-      ) {
-        // Identifiers on the segments, never on the `Picker`, which would overwrite them.
-        Text("Chat").tag(PaneSurface.chat)
-          .accessibilityIdentifier("pane.surface.chat")
-        Text("Terminal").tag(PaneSurface.terminal)
-          .accessibilityIdentifier("pane.surface.terminal")
+  /// The chat or terminal toggle, a toolbar button that names where it goes: the terminal's
+  /// glyph while the chat is up, the chat's while the terminal is. Its identifier and spoken
+  /// label are the destination too, matching ⌘⇧T's title in the Pane menu.
+  ///
+  /// **It stays while `isComposerCollapsed`.** It is in the navigation bar, so it costs the
+  /// conversation no height, unlike the band it replaced.
+  ///
+  /// Icon only on the phone. Words beside the glyph in the detail column, as an `HStack`,
+  /// not a `Label`: a navigation bar draws a `Label` icon-only even with `.titleAndIcon`.
+  private var surfaceToggle: some View {
+    let destination = surface.toggled
+    let command: KeyCommand = destination == .terminal ? .showTerminal : .showChat
+    let systemImage =
+      destination == .terminal ? "apple.terminal" : "bubble.left.and.text.bubble.right"
+    return Button {
+      scene.show(destination)
+    } label: {
+      if route == .detailColumn {
+        HStack(spacing: 6) {
+          Image(systemName: systemImage)
+          Text(destination == .terminal ? "Terminal" : "Chat")
+        }
+      } else {
+        Image(systemName: systemImage)
       }
-      .pickerStyle(.segmented)
-      .labelsHidden()
-      // **The picker takes the readable measure; the band spans the full width.** An
-      // uncapped picker on a wide iPad dwarfs the conversation it switches, and a capped
-      // band leaves the toolbar controls floating either side of it.
-      .readableColumn(route)
-      .padding(.horizontal, 12)
-      .padding(.vertical, 6)
-      .frame(maxWidth: .infinity)
-      // The navigation bar's colour, not a material, which drew a third grey between the
-      // bar and the content. The `Divider` separates the band from the conversation.
-      .background(Color(.systemGroupedBackground))
-      .overlay(alignment: .bottom) { Divider() }
     }
+    // Label-coloured, like every glyph on this bar (CLAUDE.md, Style).
+    .tint(Color.primary)
+    .accessibilityLabel(command.title)
+    .help(command.title)
+    .accessibilityIdentifier(
+      destination == .terminal ? "pane.surface.terminal" : "pane.surface.chat")
   }
 
   /// The two surfaces: the terminals always laid out, the chat drawn over them.
@@ -714,7 +708,7 @@ struct TerminalScreen: View {
             },
             isComposerFocused: isComposerFocused,
             // The one posture where scrolling may dismiss the keyboard, because that brings
-            // the hidden segment band back.
+            // back the full composer and the rows the collapse hides.
             isComposerCollapsed: isComposerCollapsed,
             // `nil` unless the readout was asked for. See `ChatScrollProbe`.
             onScrollGeometry: Self.isReportingKeyboardMetrics ? { chatScroll = $0 } : nil,
@@ -743,7 +737,7 @@ struct TerminalScreen: View {
           // `outsetBy` gives back the insets
           // `PaneComposerBar.barContent` adds, or it is capped twice; see
           // `readableColumn(_:outsetBy:)`. The device check is
-          // `PaneSwitchUITests.testLandscapeKeepsTheComposerAndTheSegmentReachable`.
+          // `PaneSwitchUITests.testLandscapeKeepsTheComposerAndTheSurfaceToggleReachable`.
           .safeAreaBar(edge: .bottom, spacing: 0) {
             paneComposer.readableColumn(route, outsetBy: ChatColumn.inset * 2)
           }
@@ -904,10 +898,9 @@ struct TerminalScreen: View {
         guard let target = scene.strip.target(before: scene.current) else { return }
         scene.select(target)
       },
-      // ⌘⇧T toggles the segment. Shifted, so ⌘T stays free for "new tab". Gated on the pane
-      // having two surfaces, not on the segment being drawn, so it works while the segment
-      // is collapsed away.
-      surfaceCommand: scene.showsSurfaceSegment
+      // ⌘⇧T does what the toolbar toggle does. Shifted, so ⌘T stays free for "new tab".
+      // Gated on the pane having two surfaces, the same rule as the toggle.
+      surfaceCommand: scene.showsSurfaceToggle
         ? (surface == .chat ? .showTerminal : .showChat) : nil,
       toggleSurface: { scene.show(surface.toggled) },
       // A `focusedSceneValue` is scene-wide, so the menu is still live while the scene

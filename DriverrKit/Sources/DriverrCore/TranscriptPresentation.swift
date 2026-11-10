@@ -307,7 +307,7 @@ public struct TranscriptNotice: Equatable, Sendable {
         symbolName: "exclamationmark.triangle"
       )
     case .paneHasNoAgent:
-      // Unreachable from the pane screen, since a shell pane has no chat segment. Present so
+      // Unreachable from the pane screen, since a shell pane has no chat surface. Present so
       // the mapping is total.
       self.init(
         title: "No agent in this pane",

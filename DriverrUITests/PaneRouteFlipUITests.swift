@@ -66,9 +66,14 @@ final class PaneRouteFlipUITests: XCTestCase {
     XCUIDevice.shared.orientation = orientation
     let window = app.windows.firstMatch
     let deadline = Date().addingTimeInterval(10)
+    // **Shape alone is not settled.** Mid-animation the window reads frames such as
+    // `{{-3.7, 23.2}, {904.0, 329.1}}`, already wider than tall and past `regularWidth` on a
+    // phone that stays compact. The app can report idle that early, so the origin must be
+    // back at zero too.
     func settled() -> Bool {
-      landscape
-        ? window.frame.width > window.frame.height : window.frame.height > window.frame.width
+      let frame = window.frame
+      let shaped = landscape ? frame.width > frame.height : frame.height > frame.width
+      return shaped && abs(frame.minX) < 0.5 && abs(frame.minY) < 0.5
     }
     while Date() < deadline && !settled() {
       _ = window.waitForExistence(timeout: 0.2)

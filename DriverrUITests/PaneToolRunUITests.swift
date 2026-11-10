@@ -318,9 +318,9 @@ final class PaneToolRunUITests: XCTestCase {
     // The fourth row, because a closed run already names three.
     require(app, "pane.chat.turn.tools.\(runID).call.3", "Expected the run to have opened")
 
-    require(app, "pane.surface.terminal", "Expected the Terminal segment").tap()
+    require(app, "pane.surface.terminal", "Expected the Show Terminal toggle").tap()
     require(app, "terminal.view", "Expected the terminal after switching to it")
-    require(app, "pane.surface.chat", "Expected the Chat segment").tap()
+    require(app, "pane.surface.chat", "Expected the Show Chat toggle").tap()
 
     require(
       app,

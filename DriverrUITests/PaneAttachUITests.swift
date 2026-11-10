@@ -59,9 +59,9 @@ final class PaneAttachUITests: XCTestCase {
   }
 
   /// An agent pane opens on its chat, so a test that wants the terminal asks for it. Every
-  /// caller is on an agent pane, so a missing segment fails.
+  /// caller is on an agent pane, so a missing toggle fails.
   private func showTerminal(_ app: XCUIApplication) {
-    require(app, "pane.surface.terminal", "Expected the Terminal segment on an agent pane").tap()
+    require(app, "pane.surface.terminal", "Expected Show Terminal on an agent pane").tap()
   }
 
   /// Opens the pane sheet, the one place that marks the current pane.

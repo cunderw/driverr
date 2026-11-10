@@ -425,7 +425,8 @@ final class PaneComposerUITests: XCTestCase {
       XCTWaiter().wait(for: [focused], timeout: 10), .completed,
       "Reply on a pane with no question of its own must still focus the composer")
     requireGone(app, "terminal.view", "Reply must not attach a terminal")
-    require(app, "pane.surface.chat", "Expected Reply to land on the pane screen")
+    // On the chat, the surface toggle leads to the terminal.
+    require(app, "pane.surface.terminal", "Expected Reply to land on the pane's chat")
   }
 
   // MARK: - Slash command autocomplete

@@ -1,6 +1,6 @@
 import XCTest
 
-/// The pane screen's chat: which panes get a `Chat | Terminal` segment, how a transcript
+/// The pane screen's chat: which panes get a chat or terminal toggle, how a transcript
 /// renders, and where `Show the screen` lands.
 ///
 /// Every sentence on this screen is asserted in cheaper tiers (`TranscriptPresentationTests`,
@@ -183,32 +183,33 @@ final class PaneChatUITests: XCTestCase {
     row.tap()
   }
 
-  // MARK: - Which panes get a segment
+  // MARK: - Which panes get a surface toggle
 
-  /// The segment appears if and only if the pane has an agent, and an agent pane opens on
-  /// Chat.
-  func testAnAgentPaneOpensOnChatWithASegment() {
+  /// The toggle appears if and only if the pane has an agent, and an agent pane opens on
+  /// Chat. The toggle names its destination, so on the chat it is the Terminal one and the
+  /// Chat one is absent.
+  func testAnAgentPaneOpensOnChatWithASurfaceToggle() {
     let app = connectedHost()
 
     tapPane(app, titled: "needs a decision")
 
-    require(app, "pane.surface.chat", "Expected a Chat segment on an agent pane")
-    require(app, "pane.surface.terminal", "Expected a Terminal segment on an agent pane")
+    require(app, "pane.surface.terminal", "Expected Show Terminal on an agent pane")
     require(app, "pane.chat", "Expected the pane to open on the chat")
+    requireGone(app, "pane.surface.chat", "The toggle on the chat must lead to the terminal")
     // The terminal is laid out behind the chat and hidden from accessibility. If it were
     // findable here, a later "switching shows the terminal" assertion would prove nothing.
     requireGone(app, "terminal.view", "Expected the terminal to be hidden behind the chat")
   }
 
-  func testAShellPaneHasNoSegmentAndOpensOnTheTerminal() {
+  func testAShellPaneHasNoSurfaceToggleAndOpensOnTheTerminal() {
     let app = connectedHost()
 
     // A pane with no agent.
     tapPane(app, titled: "swift test")
 
     require(app, "terminal.view", "Expected a shell pane to open straight into the terminal")
-    requireGone(app, "pane.surface.chat", "Expected no Chat segment on a shell pane")
-    requireGone(app, "pane.surface.terminal", "Expected no Terminal segment on a shell pane")
+    requireGone(app, "pane.surface.chat", "Expected no Show Chat toggle on a shell pane")
+    requireGone(app, "pane.surface.terminal", "Expected no Show Terminal toggle on a shell pane")
   }
 
   // MARK: - What the chat draws
@@ -1176,7 +1177,7 @@ final class PaneChatUITests: XCTestCase {
     )
   }
 
-  /// An agent pane whose transcript Driverr cannot read keeps the segment and opens straight
+  /// An agent pane whose transcript Driverr cannot read keeps the toggle and opens straight
   /// onto its captured screen, with no notice. An agent with no reader is a normal state,
   /// not an error. The seed's `schema sync` pane is a Gemini agent.
   func testAnUnreadableAgentOpensStraightOntoItsScreen() {
@@ -1184,7 +1185,7 @@ final class PaneChatUITests: XCTestCase {
 
     tapPane(app, titled: "schema sync")
 
-    require(app, "pane.surface.chat", "An agent pane keeps its segment even with no transcript")
+    require(app, "pane.surface.terminal", "An agent pane keeps its toggle even with no transcript")
     require(app, "pane.screen", "Expected the captured screen as the Chat side itself")
     let caption = require(app, "pane.screen.caption", "Expected the screen to be captioned")
     XCTAssertTrue(
@@ -1213,12 +1214,12 @@ final class PaneChatUITests: XCTestCase {
     require(app, "pane.screen", "Expected the captured screen as the Chat side itself")
 
     for round in 1...2 {
-      require(app, "pane.surface.terminal", "Round \(round): expected the Terminal segment")
+      require(app, "pane.surface.terminal", "Round \(round): expected the Show Terminal toggle")
         .tap()
       require(app, "terminal.view", "Round \(round): expected the terminal after switching")
       requireGone(app, "pane.screen", "Round \(round): the screen must go with the chat")
 
-      require(app, "pane.surface.chat", "Round \(round): expected the Chat segment").tap()
+      require(app, "pane.surface.chat", "Round \(round): expected the Show Chat toggle").tap()
       require(app, "pane.screen", "Round \(round): expected the captured screen back")
       requireGone(app, "pane.chat.notice", "Round \(round): an unreadable kind gets no notice")
     }
@@ -1244,7 +1245,7 @@ final class PaneChatUITests: XCTestCase {
     tapPane(app, titled: "needs a decision")
     require(app, "pane.chat.notice", "Expected the no-session-file notice")
 
-    require(app, "pane.surface.terminal", "Expected the Terminal segment").tap()
+    require(app, "pane.surface.terminal", "Expected the Show Terminal toggle").tap()
     let terminal = require(app, "terminal.view", "Expected the terminal after switching")
     if !app.keyboards.firstMatch.waitForExistence(timeout: 3) { terminal.tap() }
     XCTAssertTrue(
@@ -1253,7 +1254,7 @@ final class PaneChatUITests: XCTestCase {
         + "that hung. A connected hardware keyboard hides it.\nTree was:\n\(app.debugDescription)"
     )
 
-    require(app, "pane.surface.chat", "Expected the Chat segment").tap()
+    require(app, "pane.surface.chat", "Expected the Show Chat toggle").tap()
     require(app, "pane.chat.notice", "Expected the notice back after the switch")
     // The terminal gave the keyboard back, so the resign did happen, only later.
     let keyboardGone = XCTNSPredicateExpectation(
@@ -1463,10 +1464,10 @@ final class PaneChatUITests: XCTestCase {
     tapPane(app, titled: "needs a decision")
     require(app, "pane.chat.turn.assistant", "Expected the agent's turn before switching")
 
-    require(app, "pane.surface.terminal", "Expected the Terminal segment").tap()
+    require(app, "pane.surface.terminal", "Expected the Show Terminal toggle").tap()
     require(app, "terminal.view", "Expected the terminal after switching to it")
 
-    require(app, "pane.surface.chat", "Expected the Chat segment").tap()
+    require(app, "pane.surface.chat", "Expected the Show Chat toggle").tap()
     // No spinner, because the transcript is cached on the connection.
     requireGone(app, "pane.chat.progress", "Expected no re-fetch on the way back to the chat")
     require(app, "pane.chat.turn.assistant", "Expected the same turns after switching back")
@@ -1483,7 +1484,7 @@ final class PaneChatUITests: XCTestCase {
 
     tapPane(app, titled: "needs a decision")
     require(app, "pane.chat", "Expected the pane to open on its chat the first time")
-    require(app, "pane.surface.terminal", "Expected the Terminal segment").tap()
+    require(app, "pane.surface.terminal", "Expected the Show Terminal toggle").tap()
     require(app, "terminal.view", "Expected the terminal after switching to it")
 
     leavePaneScene(app, "Expected a way out of the pane screen")
@@ -1706,10 +1707,10 @@ final class PaneChatUITests: XCTestCase {
     XCTAssertTrue(newest.waitForExistence(timeout: 10), "The newest turn was never built")
     XCTAssertTrue(newest.isHittable, "The chat did not open on the newest turn")
 
-    require(app, "pane.surface.terminal", "Expected the Terminal side of the segment").tap()
+    require(app, "pane.surface.terminal", "Expected the Show Terminal toggle").tap()
     require(app, "terminal.view", "Expected the terminal to come up", timeout: 20)
 
-    require(app, "pane.surface.chat", "Expected the Chat side of the segment").tap()
+    require(app, "pane.surface.chat", "Expected the Show Chat toggle").tap()
     require(app, "pane.chat", "Expected the conversation back")
 
     // Check existence before hittability. The conversation is a `UICollectionView`, so a cell
@@ -2312,8 +2313,8 @@ final class PaneChatUITests: XCTestCase {
 
   /// Scrolling back through the conversation in portrait keeps the keyboard up.
   ///
-  /// Scroll-to-dismiss exists so a landscape reader can bring back the hidden
-  /// `Chat | Terminal` band. In portrait the band never hides, and dismissing would take the
+  /// Scroll-to-dismiss exists so a landscape reader can bring back the full composer and the
+  /// rows the collapse hides. In portrait nothing collapses, and dismissing would take the
   /// keyboard mid-reply. The fixtures are those of
   /// `testTheChatOpensAtTheEndOfATallNewestTurn`, so there is somewhere to scroll back to.
   ///

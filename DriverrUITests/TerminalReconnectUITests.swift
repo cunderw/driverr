@@ -84,7 +84,7 @@ final class TerminalReconnectUITests: XCTestCase {
 
   /// An agent pane opens on its chat, so a test that wants the terminal asks for it.
   private func showTerminal(_ app: XCUIApplication) {
-    require(app, "pane.surface.terminal", "Expected the Terminal segment on an agent pane").tap()
+    require(app, "pane.surface.terminal", "Expected Show Terminal on an agent pane").tap()
   }
 
   func testTheTerminalSaysTheLinkWentAndBringsThePaneBack() {

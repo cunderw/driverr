@@ -66,8 +66,12 @@ This file holds the rules and traps on top of that.
   - **On iPad, do not push from `HostDetailView`.** A second push from a split view's
     detail column pops back to the host list instead of navigating.
   - `ContentView.phonePath`'s setter must not guard on the route; its doc comment says why.
-  - The system back button draws as a bare chevron. Keep `navigationSubtitle` on the pane
-    screen, or the host name disappears from it.
+  - The pane screen's bar draws no title and no subtitle, by the owner's choice: floating
+    glass buttons over the content, as in Claude's iOS app. `navigationTitle` stays set for
+    VoiceOver, the back button's long-press menu and the multitasking switcher, and is
+    hidden with `.toolbar(removing: .title)`. The host is still named by the back button's
+    long-press menu (the host screen), the pane switcher's sections and, on iPad, the detail
+    column's back control.
   - Put nothing custom in the leading nav slot. Replacing the back button disables the
     edge-swipe pop. The UI-test helper `leavePaneScene` finds the system back button by
     position, because it carries no identifier.
@@ -319,9 +323,14 @@ printed value instead.
   changes. No hard-coded brand hex. Read `\.themeAccent`, never `Color.accentColor`, which
   is the system accent and ignores `.tint`. Text buttons in a toolbar take
   `.tint(Color.primary)`, because no usable blue reads 4.5:1 on the toolbar glass; glyphs
-  keep the accent. A label on an accent fill takes `\.themeAccentForeground` (black or white
-  by measured contrast; a fixed white reads at 3.42:1 on the default light blue). Never dim
-  the accent or fall back to the system one; switch the foreground instead.
+  keep the accent. **One exception: the pane screen's bar.** Its glyphs (the chat or
+  terminal toggle, Panes, ⋯) take `.tint(Color.primary)` too, as does the iPad's
+  `terminal.back`, because that bar has no background and accent glyphs on its glass fell
+  below 3:1 in dark. The phone's back button is the system one and carries no tint; it draws
+  label-coloured on its own. The Panes count stays red. Nowhere else. A label on an accent
+  fill takes `\.themeAccentForeground` (black or white by measured contrast; a fixed white
+  reads at 3.42:1 on the default light blue). Never dim the accent or fall back to the
+  system one; switch the foreground instead.
 - Tests accompany domain-logic changes in `DriverrCore`: formatters, `AppError` mapping,
   store state transitions, wire-type to domain mapping.
 

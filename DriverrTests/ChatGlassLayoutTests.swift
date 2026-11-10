@@ -234,8 +234,7 @@ struct ChatComposerSafeAreaBarLayoutTests {
 
     var body: some View {
       VStack(spacing: 0) {
-        // A fixed band, like the surface segment, so a top offset can be told apart from a
-        // bottom one.
+        // A fixed band, so a top offset can be told apart from a bottom one.
         Color.gray.frame(height: 43)
         switch shape {
         case .direct:
@@ -364,7 +363,7 @@ struct ChatComposerSafeAreaBarLayoutTests {
 /// - `Placement.onTheChatLayerPinnedToTheSlot` is what the app builds. An overflow goes upward,
 ///   where `.clipped()` hides it.
 ///
-/// `PaneSwitchUITests.testLandscapeKeepsTheComposerAndTheSegmentReachable` checks this on a
+/// `PaneSwitchUITests.testLandscapeKeepsTheComposerAndTheSurfaceToggleReachable` checks this on a
 /// device.
 @MainActor
 @Suite("Chat composer bar placement", .serialized)
