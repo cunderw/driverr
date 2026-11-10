@@ -55,29 +55,40 @@ struct ChatUnderBarLayoutTests {
     }
   }
 
-  private func navigationBar(in view: UIView) -> UINavigationBar? {
-    if let bar = view as? UINavigationBar { return bar }
+  private func first<View: UIView>(_ type: View.Type, in view: UIView) -> View? {
+    if let found = view as? View { return found }
     for child in view.subviews {
-      if let found = navigationBar(in: child) { return found }
+      if let found = first(type, in: child) { return found }
     }
     return nil
+  }
+
+  private func scrollViews(in view: UIView) -> [String] {
+    (view is UIScrollView ? [String(describing: Swift.type(of: view))] : [])
+      + view.subviews.flatMap { scrollViews(in: $0) }
   }
 
   @Test("the conversation reaches under the bar and rests its first row just below it")
   func theConversationScrollsUnderTheBar() {
     var composer = CGRect.zero
+    let model = PreviewSupport.transcript()
     let window = HostedProbe.window(
       Fixture(
-        model: PreviewSupport.transcript(),
+        model: model,
         screen: PreviewSupport.paneScreen(),
         onComposer: { composer = $0 }),
       size: HostedProbe.phone)
     // The transcript loads on a task, so the collection view arrives a few turns later.
-    pump(until: { ScrollViewProbe.first(in: window) is UICollectionView && composer != .zero })
-    guard let collection = ScrollViewProbe.first(in: window) as? UICollectionView,
-      let bar = navigationBar(in: window)
+    pump(until: { first(UICollectionView.self, in: window) != nil && composer != .zero }, budget: 500)
+    guard let collection = first(UICollectionView.self, in: window),
+      let bar = first(UINavigationBar.self, in: window)
     else {
-      Issue.record("No UICollectionView or no UINavigationBar under the fixture.")
+      Issue.record(
+        """
+        No UICollectionView or no UINavigationBar under the fixture. Scroll views: \
+        \(scrollViews(in: window)); navigation bar: \(first(UINavigationBar.self, in: window) != nil); \
+        composer: \(composer); transcript: \(model.shown.state)
+        """)
       withExtendedLifetime(window) {}
       return
     }
