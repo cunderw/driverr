@@ -1117,7 +1117,8 @@ final class PaneChatUITests: XCTestCase {
 
     tapPane(app, titled: "needs a decision")
 
-    let header = require(app, "pane.chat.header", "Expected the provenance header")
+    // The first row of a conversation taller than the screen, so off screen at rest.
+    let header = revealChatHeader(app)
     XCTAssertTrue(
       header.label.hasPrefix("Claude session · reported by herdr"),
       "Expected the exact variant, got '\(header.label)'"

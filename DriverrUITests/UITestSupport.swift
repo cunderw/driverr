@@ -163,6 +163,42 @@ func scrollIntoReach(
   return match
 }
 
+/// The provenance row, `pane.chat.header`, brought on screen.
+///
+/// It is the conversation's first cell, so it scrolls away with the turns, and a cell off
+/// screen is absent from the tree. The chat rests at the end, so on any conversation taller
+/// than the screen the row is not there until the reader scrolls back. Waits for the
+/// conversation first, because "not arrived yet" is not "scrolled away", then flicks toward
+/// the start until the row exists and can be tapped.
+@discardableResult
+@MainActor
+func revealChatHeader(
+  _ app: XCUIApplication,
+  maxSwipes: Int = 10,
+  file: StaticString = #filePath,
+  line: UInt = #line
+) -> XCUIElement {
+  let chat = app.descendants(matching: .any).matching(identifier: "pane.chat").firstMatch
+  let header = app.descendants(matching: .any).matching(identifier: "pane.chat.header").firstMatch
+  guard chat.waitForExistence(timeout: 20) else {
+    XCTFail(
+      "Expected the conversation.\nTree was:\n\(app.debugDescription)", file: file, line: line)
+    return header
+  }
+  if !header.exists { _ = header.waitForExistence(timeout: 2) }
+  for _ in 0..<maxSwipes where !(header.exists && header.isHittable) {
+    chat.swipeDown()
+  }
+  XCTAssertTrue(
+    header.exists && header.isHittable,
+    "The provenance row never came on screen after \(maxSwipes) flicks toward the start.\n"
+      + "Tree was:\n\(app.debugDescription)",
+    file: file,
+    line: line
+  )
+  return header
+}
+
 /// Where a row with this identifier can be tapped: the scroll container that holds it, cut
 /// to the window. The window alone when no container holds it.
 ///

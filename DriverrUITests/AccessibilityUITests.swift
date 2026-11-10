@@ -318,11 +318,12 @@ final class AccessibilityUITests: XCTestCase {
     treePaneRow(app, titled: "needs a decision").tap()
     let toggle = require(app, "pane.surface.terminal", "Expected the toggle at this size")
     XCTAssertTrue(toggle.isHittable, "The Show Terminal toggle is not reachable at this size")
-    let header = require(app, "pane.chat.header", "Expected the provenance header")
-    XCTAssertTrue(header.isHittable, "The provenance header is not reachable at this size")
-
     let turn = require(app, "pane.chat.turn.assistant", "Expected the agent's turn")
     XCTAssertTrue(turn.isHittable, "The agent's turn is not reachable at this size")
+
+    // The conversation's first row, so at this size it is reached by scrolling back to the
+    // start, which `revealChatHeader` asserts it can be.
+    revealChatHeader(app)
 
     // On a blocked pane the unfocused composer is the field and Send.
     let field = require(app, "composer.text", "Expected the composer at accessibility size")
