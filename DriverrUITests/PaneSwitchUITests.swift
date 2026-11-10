@@ -685,13 +685,13 @@ final class PaneSwitchUITests: XCTestCase {
 
   // MARK: - Landscape, with the keyboard up
 
-  /// The composer, the panes button and the way back to the terminal all survive a landscape
+  /// The composer, the panes button and the way to the terminal all survive a landscape
   /// phone with the keyboard up.
   ///
   /// Several pieces of chrome and a keyboard have to fit in about 150 points of height. The
   /// controls are asserted hittable, because a control squeezed to zero height or pushed under
   /// the keyboard still exists.
-  func testLandscapeKeepsTheComposerAndTheSegmentReachable() throws {
+  func testLandscapeKeepsTheComposerAndTheSurfaceToggleReachable() throws {
     let app = chatOnTheBlockedPane([uiTestingKeyboardMetrics])
 
     try rotateToLandscape(app)
@@ -699,6 +699,7 @@ final class PaneSwitchUITests: XCTestCase {
     let field = require(app, "composer.text", "Expected the composer in landscape")
     let panes = require(app, "terminal.panes", "Expected the panes button in landscape")
     let send = require(app, "composer.send", "Expected Send in landscape")
+    let toggle = require(app, "pane.surface.terminal", "Expected the Show Terminal toggle")
     field.tap()
 
     // The keyboard must be on screen. Without it the region is 324 pt rather than 100 and
@@ -733,8 +734,7 @@ final class PaneSwitchUITests: XCTestCase {
     // because app-side `print` never reaches xcodebuild's log.
     print(
       "[landscape] acceptance: keyboard \(keyboard.frame) composer \(field.frame) "
-        + "send \(send.frame) panes \(panes.frame) band exists "
-        + "\(element(app, "pane.surface.terminal").exists)"
+        + "send \(send.frame) panes \(panes.frame) toggle \(toggle.frame)"
     )
 
     // Against the keyboard as drawn, which `keyboard.frame` is not.
@@ -791,36 +791,12 @@ final class PaneSwitchUITests: XCTestCase {
         + "\(metrics.regionTop), so the grid's first rows are under the navigation bar."
     )
 
-    // The band hides only on a phone. `TerminalScreen.isComposerCollapsed` needs a compact
-    // vertical size class, and an iPad is regular even in landscape.
-    if UIDevice.current.userInterfaceIdiom == .pad {
-      // The band stays on iPad, so it must sit clear of the composer.
-      let band = require(app, "pane.surface.terminal", "Expected the surface band on an iPad")
-      XCTAssertTrue(
-        band.isHittable,
-        "The surface band is not reachable in landscape with the keyboard up on iPad: "
-          + "\(band.frame)."
-      )
-      XCTAssertLessThanOrEqual(
-        band.frame.maxY,
-        field.frame.minY,
-        "The surface band overlaps the composer in landscape with the keyboard up on iPad: "
-          + "band \(band.frame) composer \(field.frame)."
-      )
-    } else {
-      // The band hides here, or the conversation gets 3 pt. Asserted absent, which is
-      // what `TerminalScreen.surfaceSegment` does; a hittable check let an overlap through.
-      XCTAssertFalse(
-        element(app, "pane.surface.terminal").exists,
-        "The surface band is still on screen with the keyboard up in landscape. It is "
-          + "supposed to hide there so the conversation gets the room — see "
-          + "TerminalScreen.surfaceSegment.\nTree was:\n\(app.debugDescription)"
-      )
-
-      // The composer's bar must not inset the terminal. A `safeAreaBar` on `paneSurfaces`
-      // insets every child, and `DriverrTerminalView.sizeChanged` would then resize the live
-      // pane on the far side. The shrunken block passes every check above, so the one that
-      // catches it is the terminals reaching the bottom of their region.
+    // The composer's bar must not inset the terminal. A `safeAreaBar` on `paneSurfaces`
+    // insets every child, and `DriverrTerminalView.sizeChanged` would then resize the live
+    // pane on the far side. The shrunken block passes every check above, so the one that
+    // catches it is the terminals reaching the bottom of their region. Phone only: an iPad
+    // is regular even in landscape, so its composer never collapses.
+    if UIDevice.current.userInterfaceIdiom != .pad {
       XCTAssertGreaterThanOrEqual(
         metrics.terminalBottom,
         metrics.regionBottom - 0.5,
@@ -845,10 +821,21 @@ final class PaneSwitchUITests: XCTestCase {
       panes.isHittable,
       "The way to the other panes is not reachable in landscape: \(panes.frame)."
     )
+    // The way to the terminal stays, on the phone too. It is a toolbar button, so the
+    // collapsed composer costs it nothing; the band it replaced had to hide here.
+    XCTAssertTrue(
+      toggle.isHittable,
+      "The Show Terminal toggle is not reachable in landscape with the keyboard up: "
+        + "\(toggle.frame).\nTree was:\n\(app.debugDescription)"
+    )
+    XCTAssertLessThanOrEqual(
+      toggle.frame.maxY,
+      field.frame.minY,
+      "The Show Terminal toggle overlaps the composer in landscape with the keyboard up: "
+        + "toggle \(toggle.frame) composer \(field.frame)."
+    )
 
-    // The band comes straight back, which is what makes hiding it acceptable. Rotation is the
-    // trigger tested, because a synthetic swipe inside the 46 pt conversation does not
-    // register as a drag. Dismissing the keyboard, the other trigger, is not covered here.
+    // Back upright, so the next test does not inherit the rotation.
     XCUIDevice.shared.orientation = .portrait
     let window = app.windows.firstMatch
     let upright = Date().addingTimeInterval(10)
@@ -862,16 +849,9 @@ final class PaneSwitchUITests: XCTestCase {
         + "simulator and not the app: erase this device (`xcrun simctl erase <udid>`) and "
         + "run again."
     )
-    let segment = require(
-      app,
-      "pane.surface.terminal",
-      "Expected the surface band back once the phone was upright"
-    )
     XCTAssertTrue(
-      segment.isHittable,
-      "The band came back but is not reachable: \(segment.frame). It is a band under the "
-        + "navigation bar, so this fails if the chrome above the surfaces has "
-        + "eaten the screen."
+      toggle.isHittable,
+      "The Show Terminal toggle is not reachable once the phone is upright: \(toggle.frame)."
     )
   }
 

@@ -364,7 +364,7 @@ struct ChatComposerSafeAreaBarLayoutTests {
 /// - `Placement.onTheChatLayerPinnedToTheSlot` is what the app builds. An overflow goes upward,
 ///   where `.clipped()` hides it.
 ///
-/// `PaneSwitchUITests.testLandscapeKeepsTheComposerAndTheSegmentReachable` checks this on a
+/// `PaneSwitchUITests.testLandscapeKeepsTheComposerAndTheSurfaceToggleReachable` checks this on a
 /// device.
 @MainActor
 @Suite("Chat composer bar placement", .serialized)

@@ -1649,31 +1649,6 @@ struct TerminalSceneModelTests {
     #expect(scene.title == scene.currentPane?.title)
   }
 
-  /// The subtitle is the host alone. The segment is a band under the bar, so the title slot is
-  /// free for the pane's name.
-  @Test("the subtitle names the host, with the pane's name left to the title")
-  func subtitleNamesTheHostAlone() async throws {
-    let (scene, _) = await makeScene(surface: .chat, responder: Self.everythingPaints)
-    scene.start()
-    await scene.settle()
-
-    #expect(scene.title == "terminal wiring")
-    #expect(scene.subtitle == host.displayName)
-  }
-
-  /// A shell scene is already titled with the host, so a subtitle would add no fact.
-  @Test("a scene already titled with the host has no subtitle to add")
-  func subtitleIsAbsentWhenItWouldRepeatTheTitle() async throws {
-    let (scene, _) = await makeScene(
-      initialTarget: .shell,
-      surface: nil,
-      responder: Self.observersOnly
-    )
-
-    #expect(scene.title == host.displayName)
-    #expect(scene.subtitle == nil)
-  }
-
   // MARK: - Reading a pane versus driving it
 
   /// Asserted against the wire: a controller opened and handed back looks identical on screen
@@ -1798,7 +1773,7 @@ struct TerminalSceneModelTests {
     )
     shell.start()
     await shell.settle()
-    #expect(shell.showsSurfaceSegment == false, "the plain shell has no conversation")
+    #expect(shell.showsSurfaceToggle == false, "the plain shell has no conversation")
     #expect(shell.surface == .terminal)
     #expect(shell.role(for: .shell) == .local, "the shell did not get its pty")
 
@@ -1811,7 +1786,7 @@ struct TerminalSceneModelTests {
     )
     pane.start()
     await pane.settle()
-    #expect(pane.showsSurfaceSegment == false)
+    #expect(pane.showsSurfaceToggle == false)
     #expect(pane.surface == .terminal)
     #expect(pane.role(for: .pane(id: "w1:p3")) == .controller)
     let commands = await transport.streamedCommands
@@ -1832,7 +1807,7 @@ struct TerminalSceneModelTests {
     scene.start()
     await scene.settle()
 
-    #expect(scene.showsSurfaceSegment)
+    #expect(scene.showsSurfaceToggle)
     #expect(scene.surface == .chat)
     let commands = await transport.streamedCommands
     #expect(
@@ -1921,7 +1896,7 @@ struct TerminalSceneModelTests {
     scene.start()
     await scene.settle()
 
-    #expect(scene.showsSurfaceSegment, "an agent pane has a conversation whatever herdr is")
+    #expect(scene.showsSurfaceToggle, "an agent pane has a conversation whatever herdr is")
     #expect(scene.role(for: .pane(id: "w9:p9")) == nil, "reading it attached to it")
     #expect(scene.isOpening == false, "the chat is not waiting on a terminal")
 

@@ -308,8 +308,8 @@ final class TerminalSceneModel {
     return pane(id: id)?.agent != nil
   }
 
-  /// Whether the current target gets the `Chat | Terminal` segment.
-  var showsSurfaceSegment: Bool { hasChatSurface(for: current) }
+  /// Whether the current target gets the chat or terminal toggle.
+  var showsSurfaceToggle: Bool { hasChatSurface(for: current) }
 
   /// Which surface `target` is showing, and therefore what it holds on the host.
   ///
@@ -337,12 +337,6 @@ final class TerminalSceneModel {
       return currentPane?.title ?? host.displayName
     }
     return currentSession?.title ?? currentPane?.title ?? host.displayName
-  }
-
-  /// The line under the title: which host this is on, since pane titles look alike across
-  /// machines. `nil` when it would repeat the title.
-  var subtitle: String? {
-    title == host.displayName ? nil : host.displayName
   }
 
   /// The switcher's model for this scene. The toolbar badge, the pane sheet and its

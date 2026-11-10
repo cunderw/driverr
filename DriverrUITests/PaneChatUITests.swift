@@ -1,6 +1,6 @@
 import XCTest
 
-/// The pane screen's chat: which panes get a `Chat | Terminal` segment, how a transcript
+/// The pane screen's chat: which panes get a chat or terminal toggle, how a transcript
 /// renders, and where `Show the screen` lands.
 ///
 /// Every sentence on this screen is asserted in cheaper tiers (`TranscriptPresentationTests`,
@@ -183,32 +183,33 @@ final class PaneChatUITests: XCTestCase {
     row.tap()
   }
 
-  // MARK: - Which panes get a segment
+  // MARK: - Which panes get a surface toggle
 
-  /// The segment appears if and only if the pane has an agent, and an agent pane opens on
-  /// Chat.
-  func testAnAgentPaneOpensOnChatWithASegment() {
+  /// The toggle appears if and only if the pane has an agent, and an agent pane opens on
+  /// Chat. The toggle names its destination, so on the chat it is the Terminal one and the
+  /// Chat one is absent.
+  func testAnAgentPaneOpensOnChatWithASurfaceToggle() {
     let app = connectedHost()
 
     tapPane(app, titled: "needs a decision")
 
-    require(app, "pane.surface.chat", "Expected a Chat segment on an agent pane")
-    require(app, "pane.surface.terminal", "Expected a Terminal segment on an agent pane")
+    require(app, "pane.surface.terminal", "Expected the Show Terminal toggle on an agent pane")
     require(app, "pane.chat", "Expected the pane to open on the chat")
+    requireGone(app, "pane.surface.chat", "The toggle on the chat must lead to the terminal")
     // The terminal is laid out behind the chat and hidden from accessibility. If it were
     // findable here, a later "switching shows the terminal" assertion would prove nothing.
     requireGone(app, "terminal.view", "Expected the terminal to be hidden behind the chat")
   }
 
-  func testAShellPaneHasNoSegmentAndOpensOnTheTerminal() {
+  func testAShellPaneHasNoSurfaceToggleAndOpensOnTheTerminal() {
     let app = connectedHost()
 
     // A pane with no agent.
     tapPane(app, titled: "swift test")
 
     require(app, "terminal.view", "Expected a shell pane to open straight into the terminal")
-    requireGone(app, "pane.surface.chat", "Expected no Chat segment on a shell pane")
-    requireGone(app, "pane.surface.terminal", "Expected no Terminal segment on a shell pane")
+    requireGone(app, "pane.surface.chat", "Expected no Show Chat toggle on a shell pane")
+    requireGone(app, "pane.surface.terminal", "Expected no Show Terminal toggle on a shell pane")
   }
 
   // MARK: - What the chat draws
@@ -1176,7 +1177,7 @@ final class PaneChatUITests: XCTestCase {
     )
   }
 
-  /// An agent pane whose transcript Driverr cannot read keeps the segment and opens straight
+  /// An agent pane whose transcript Driverr cannot read keeps the toggle and opens straight
   /// onto its captured screen, with no notice. An agent with no reader is a normal state,
   /// not an error. The seed's `schema sync` pane is a Gemini agent.
   func testAnUnreadableAgentOpensStraightOntoItsScreen() {
@@ -1184,7 +1185,7 @@ final class PaneChatUITests: XCTestCase {
 
     tapPane(app, titled: "schema sync")
 
-    require(app, "pane.surface.chat", "An agent pane keeps its segment even with no transcript")
+    require(app, "pane.surface.terminal", "An agent pane keeps its toggle even with no transcript")
     require(app, "pane.screen", "Expected the captured screen as the Chat side itself")
     let caption = require(app, "pane.screen.caption", "Expected the screen to be captioned")
     XCTAssertTrue(

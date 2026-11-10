@@ -66,7 +66,7 @@ struct ChatPlaceProbe: Equatable {
 
 /// Which of a pane's two surfaces is being looked at.
 ///
-/// Only a pane with an agent has two; see `TerminalScreen.showsSurfaceSegment`. A shell opens
+/// Only a pane with an agent has two; see `TerminalScreen.showsSurfaceToggle`. A shell opens
 /// straight into the terminal.
 enum PaneSurface: Hashable {
   case chat
@@ -442,7 +442,7 @@ struct PaneChatView: View {
     // Show the Screen is reachable from a readable chat on a blocked pane, not only from a
     // failure, so the reader never has to switch to Terminal to see a prompt.
     //
-    // Not while the composer is collapsed, like the band in `TerminalScreen.surfaceSegment`.
+    // Not while the composer is collapsed, like the agent-stop row above.
     // A landscape phone with the keyboard up leaves this surface about 100 pt, and without
     // this row the rest fits. The row returns with the keyboard's dismissal or rotation.
     if agentStatus == .blocked && !isComposerCollapsed {
