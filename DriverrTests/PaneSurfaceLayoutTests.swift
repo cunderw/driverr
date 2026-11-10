@@ -28,8 +28,8 @@ struct PaneSurfaceLayoutTests {
     var alignment: Alignment
     /// `TerminalScreen.surfaceFloor`: 64 pt ordinarily, 0 in the collapsed state.
     var floor: CGFloat
-    /// `PaneComposerBar`'s resolved height: 115 pt as the two-row card, 58 collapsed. (At rest
-    /// it is the one-row pill, 62 pt.)
+    /// The composer's height. 115 pt is this fixture's own value, standing in for the two-row
+    /// card rather than measuring it; 58 collapsed. (At rest it is the one-row pill, 62 pt.)
     var composer: CGFloat
     var onFrame: @MainActor (CGRect) -> Void
     var onContent: @MainActor (CGRect) -> Void
@@ -51,8 +51,9 @@ struct PaneSurfaceLayoutTests {
     }
 
     static let floor = TerminalScreen.minimumSurfaceHeight
-    /// `PaneComposerBar` as the two-row card (focused, or holding a draft); the resting pill is
-    /// 62 pt. Over the floor, which is what makes the centring visible.
+    /// A fixture value standing in for `PaneComposerBar` as the two-row card (focused, or
+    /// holding a draft), not a measurement of it; the resting pill is 62 pt. Over the floor,
+    /// which is what makes the centring visible.
     static let composer: CGFloat = 115
     /// The same bar collapsed. One row: 3 pt of card padding either side of a 44 pt tap target,
     /// plus 4 pt under the card.
@@ -123,7 +124,7 @@ struct PaneSurfaceLayoutTests {
     #expect(content.height >= Self.conversationFloor, "\(starved)")
   }
 
-  /// The negative for the composer's half: the 115 pt two-row card centred in the 64 pt
+  /// The negative for the composer's half: the fixture's 115 pt composer centred in the 64 pt
   /// floor overflows upward, out of its slot and over whatever sits above it. Without it the
   /// collapse reads as a style choice.
   @Test("the full-height composer is what pushed the surfaces out of their slot")

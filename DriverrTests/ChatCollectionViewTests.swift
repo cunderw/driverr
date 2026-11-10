@@ -5,8 +5,9 @@ import UIKit
 
 @testable import Driverr
 
-/// `PaneComposerBar` as the two-row card (focused, or holding a draft), the same 115 the other
-/// chat layout suites use, so their numbers compare. At rest the bar is the 62 pt pill.
+/// A fixture value standing in for `PaneComposerBar` as the two-row card (focused, or holding a
+/// draft), not a measurement of it: the same 115 the other chat layout suites use, so their
+/// numbers compare. At rest the bar is the 62 pt pill.
 private let composerHeight: CGFloat = 115
 
 /// Long enough that both windows have a scroll to rest at the end of, and no longer.
