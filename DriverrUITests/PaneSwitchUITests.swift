@@ -644,10 +644,11 @@ final class PaneSwitchUITests: XCTestCase {
     otherTile.tap()
 
     requireSheetGone(app, "Expected the pick to dismiss the sheet")
-    // The system back button names the screen it returns to, the other host's. The bar draws
-    // no title or subtitle, so this is the host's name on the pane screen.
-    let backToBeta = app.navigationBars.buttons.matching(identifier: "BackButton")
-      .matching(NSPredicate(format: "label == %@", "beta"))
+    // The back control names the host it returns to: the phone's system back button by the
+    // host screen's title, the detail column's `terminal.back` as "Back to <host>". The bar
+    // draws no title or subtitle, so this is the host's name on the pane screen.
+    let backToBeta = app.navigationBars.buttons
+      .matching(NSPredicate(format: "label == %@ OR label == %@", "beta", "Back to beta"))
       .firstMatch
     XCTAssertTrue(
       backToBeta.waitForExistence(timeout: 20),
