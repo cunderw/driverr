@@ -72,11 +72,16 @@ struct ChatUnderBarLayoutTests {
 
   @Test("the conversation reaches under the bar and rests its first row just below it")
   func theConversationScrollsUnderTheBar() async {
-    var composer = CGRect.zero
     // Loaded before the window, so the conversation is ready on the first frame.
     let model = PreviewSupport.transcript()
     await model.currentLoad?.value
     await model.subagentListLoad?.value
+    expectTheConversationUnderTheBar(model: model)
+  }
+
+  /// The synchronous half: `RunLoop` cannot be pumped from an `async` context.
+  private func expectTheConversationUnderTheBar(model: PaneTranscriptModel) {
+    var composer = CGRect.zero
     let window = HostedProbe.window(
       Fixture(
         model: model,
