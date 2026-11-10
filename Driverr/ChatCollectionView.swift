@@ -714,11 +714,18 @@ struct ChatCollectionView<Row: View>: UIViewRepresentable {
     func scrollViewDidScroll(_ scrollView: UIScrollView) { report() }
 
     /// A scroll that has come to rest either returns the reader to the end, within
-    /// `ChatEndProximity.jumpTolerance`, or re-anchors them to what they see now.
+    /// `ChatEndProximity.settleTolerance(scrollRange:)`, or re-anchors them to what they see now.
+    ///
+    /// The tolerance is capped at half the scroll range, or a conversation that overflows by
+    /// less than `jumpTolerance` snaps every scroll back to the end and its provenance row can
+    /// never be read. It only narrows the return-to-end band; a settle still never makes a
+    /// follower a reader.
     private func settle() {
       guard let collection else { return }
+      let scrollRange = endOffset(in: collection) + collection.adjustedContentInset.top
       place = place.applying(
-        .settled(distanceFromEnd: distanceFromEnd(in: collection), at: currentAnchor()))
+        .settled(distanceFromEnd: distanceFromEnd(in: collection), at: currentAnchor()),
+        tolerance: ChatEndProximity.settleTolerance(scrollRange: Double(scrollRange)))
       reconcile()
       report()
     }

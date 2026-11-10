@@ -47,4 +47,22 @@ public enum ChatEndProximity {
   /// smallest viewport (211 pt, phone with keyboard up). Not a fraction of the viewport,
   /// because the resting padding does not change when the keyboard halves the screen.
   public static let jumpTolerance: Double = 64
+
+  /// How near the end a reader's settle must be to return them to following the latest:
+  /// `jumpTolerance`, capped at half the conversation's scroll range.
+  ///
+  /// A conversation that overflows its viewport by less than `jumpTolerance` is all "near the
+  /// end", so with the plain tolerance every scroll back settled inside it and snapped to the
+  /// end. Its first rows could never be read: the provenance row, the conversation's first
+  /// cell, was unreachable on a page 47 pt taller than the screen. Capped at half the range, a
+  /// reader nearer the start than the end keeps their place, and one at the end still returns.
+  ///
+  /// It only narrows the return-to-end band. A settle never creates a reading place; only a
+  /// drag does (`ChatReaderPlace.applying(_:tolerance:)`), so a settle against a half-measured
+  /// layout still cannot demote a follower, whatever this returns.
+  ///
+  /// `scrollRange` is the distance from the top rest to the end rest, in points.
+  public static func settleTolerance(scrollRange: Double) -> Double {
+    min(jumpTolerance, max(0, scrollRange) / 2)
+  }
 }

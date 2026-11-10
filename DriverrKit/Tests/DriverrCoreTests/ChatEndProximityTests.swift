@@ -55,6 +55,48 @@ struct ChatEndProximityTests {
     #expect(overscrolled == 0)
   }
 
+  // MARK: - How near the end a settle returns the reader
+
+  /// The seeded `needs a decision` page overflowed its phone viewport by 47 pt. With the plain
+  /// tolerance, a reader at its top settled 47 pt from the end and was sent back there.
+  @Test("A short overflow returns a reader to the end only within half its range")
+  func aShortOverflowHalvesTheSettleTolerance() {
+    let tolerance = ChatEndProximity.settleTolerance(scrollRange: 47)
+    #expect(tolerance == 23.5)
+    let atTheTop = ChatReaderPlace.reading(anchorItemID: "provenance", offsetWithinItem: 0)
+      .applying(.settled(distanceFromEnd: 47, at: nil), tolerance: tolerance)
+    #expect(atTheTop.isPositionedByReader)
+    let nearTheEnd = ChatReaderPlace.reading(anchorItemID: "turn", offsetWithinItem: 30)
+      .applying(.settled(distanceFromEnd: 20, at: nil), tolerance: tolerance)
+    #expect(nearTheEnd == .followingLatest)
+  }
+
+  @Test("A range of twice the jump tolerance or more keeps the jump tolerance")
+  func aLongRangeKeepsTheJumpTolerance() {
+    #expect(ChatEndProximity.settleTolerance(scrollRange: 128) == ChatEndProximity.jumpTolerance)
+    #expect(ChatEndProximity.settleTolerance(scrollRange: 5000) == ChatEndProximity.jumpTolerance)
+  }
+
+  @Test("With no range a reader at the end still returns to following")
+  func noRangeStillReturnsAReaderAtTheEnd() {
+    let tolerance = ChatEndProximity.settleTolerance(scrollRange: 0)
+    #expect(tolerance == 0)
+    let place = ChatReaderPlace.reading(anchorItemID: "turn", offsetWithinItem: 0)
+      .applying(.settled(distanceFromEnd: 0, at: nil), tolerance: tolerance)
+    #expect(place == .followingLatest)
+  }
+
+  /// The #599 rule: only a drag hands the position over. A narrower band must not let a
+  /// settle far from the end, against a half-measured layout, make a follower a reader.
+  @Test("A narrower band still never makes a follower a reader")
+  func aNarrowerBandNeverDemotesAFollower() {
+    let anchor = ChatReaderPlace.Anchor(itemID: "turn", offsetWithinItem: 1613)
+    let place = ChatReaderPlace.followingLatest.applying(
+      .settled(distanceFromEnd: 1600, at: anchor),
+      tolerance: ChatEndProximity.settleTolerance(scrollRange: 47))
+    #expect(place == .followingLatest)
+  }
+
   // MARK: - Whether the control belongs on screen
 
   @Test("At rest there is nowhere to go, so there is no control")
