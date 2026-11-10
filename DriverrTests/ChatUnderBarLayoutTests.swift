@@ -1,3 +1,4 @@
+import DriverrCore
 import SwiftUI
 import Testing
 import UIKit
@@ -23,6 +24,22 @@ import UIKit
 struct ChatUnderBarLayoutTests {
   /// A stand-in for the resting composer pill. A fixture value, not a measurement.
   private static let composer: CGFloat = 62
+
+  /// The seed's one pane with a reported session, `needs a decision`, set to working. Blocked,
+  /// it pins Show the Screen above the conversation, and a pinned row keeps the conversation
+  /// out from under the bar by design (`PaneChatView.chat`).
+  private static var workingPane: DriverrCore.Pane {
+    let pane = PreviewSupport.agentPane
+    return DriverrCore.Pane(
+      id: pane.id, tabID: pane.tabID, workspaceID: pane.workspaceID, title: pane.title,
+      agent: pane.agent.map {
+        Agent(
+          name: $0.name, kind: $0.kind, status: .working, session: $0.session,
+          machine: $0.machine)
+      },
+      terminalID: pane.terminalID, directory: pane.directory, isFocused: pane.isFocused,
+      viewportRows: pane.viewportRows)
+  }
 
   private struct Fixture: View {
     let model: PaneTranscriptModel
@@ -73,7 +90,7 @@ struct ChatUnderBarLayoutTests {
   @Test("the conversation reaches under the bar and rests its first row just below it")
   func theConversationScrollsUnderTheBar() async {
     // Loaded before the window, so the conversation is ready on the first frame.
-    let model = PreviewSupport.transcript()
+    let model = PreviewSupport.transcript(for: Self.workingPane)
     await model.currentLoad?.value
     await model.subagentListLoad?.value
     expectTheConversationUnderTheBar(model: model)
@@ -85,7 +102,7 @@ struct ChatUnderBarLayoutTests {
     let window = HostedProbe.window(
       Fixture(
         model: model,
-        screen: PreviewSupport.paneScreen(),
+        screen: PreviewSupport.paneScreen(for: Self.workingPane),
         onComposer: { composer = $0 }),
       size: HostedProbe.phone)
     pump(until: { first(UICollectionView.self, in: window) != nil && composer.width > 100 })
