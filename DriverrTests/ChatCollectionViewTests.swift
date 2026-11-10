@@ -195,7 +195,7 @@ private func spikeRow(
       .frame(height: 1)
       .padding(.vertical, 9)
       .frame(maxWidth: .infinity, alignment: .leading)
-  case .paging, .activity, .reply:
+  case .provenance, .paging, .activity, .reply:
     EmptyView()
   }
 }
