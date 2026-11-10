@@ -36,7 +36,9 @@ struct ChatUnderBarLayoutTests {
           .safeAreaBar(edge: .bottom, spacing: 0) {
             Color.green
               .frame(height: ChatUnderBarLayoutTests.composer)
-              .measuredFrame(into: onComposer)
+              // Not `measuredFrame`, whose `onAppear` reads the first frame only, which in a
+              // `NavigationStack` is laid out before the stack has its size.
+              .onGeometryChange(for: CGRect.self, of: { $0.frame(in: .global) }) { onComposer($0) }
           }
           .navigationTitle("pane")
           .navigationBarTitleDisplayMode(.inline)
@@ -69,17 +71,19 @@ struct ChatUnderBarLayoutTests {
   }
 
   @Test("the conversation reaches under the bar and rests its first row just below it")
-  func theConversationScrollsUnderTheBar() {
+  func theConversationScrollsUnderTheBar() async {
     var composer = CGRect.zero
+    // Loaded before the window, so the conversation is ready on the first frame.
     let model = PreviewSupport.transcript()
+    await model.currentLoad?.value
+    await model.subagentListLoad?.value
     let window = HostedProbe.window(
       Fixture(
         model: model,
         screen: PreviewSupport.paneScreen(),
         onComposer: { composer = $0 }),
       size: HostedProbe.phone)
-    // The transcript loads on a task, so the collection view arrives a few turns later.
-    pump(until: { first(UICollectionView.self, in: window) != nil && composer != .zero }, budget: 500)
+    pump(until: { first(UICollectionView.self, in: window) != nil && composer.width > 100 })
     guard let collection = first(UICollectionView.self, in: window),
       let bar = first(UINavigationBar.self, in: window)
     else {
