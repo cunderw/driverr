@@ -143,7 +143,7 @@
       if view.font != font { view.font = font }
       apply(palette: palette, to: view)
       // Re-applied on every update. The caller uses it to mark the terminal on screen,
-      // and the `Chat | Terminal` segment makes an existing view current.
+      // and the chat or terminal toggle makes an existing view current.
       view.accessibilityIdentifier = accessibilityIdentifier
       // Before the focus check, so a pane that just became current can answer the bump.
       view.wantsKeyboardFocus = wantsKeyboardFocus
@@ -718,7 +718,7 @@
     /// that are alive but not on screen.
     ///
     /// Turning it off also gives the keyboard back. Otherwise a terminal left by the
-    /// `Chat | Terminal` segment keeps its accessory row up and the composer lays out under
+    /// chat or terminal toggle keeps its accessory row up and the composer lays out under
     /// the keyboard.
     ///
     /// **The resign waits one run-loop turn.** This is set from `updateUIView`, inside

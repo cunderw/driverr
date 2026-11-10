@@ -323,13 +323,14 @@ printed value instead.
   changes. No hard-coded brand hex. Read `\.themeAccent`, never `Color.accentColor`, which
   is the system accent and ignores `.tint`. Text buttons in a toolbar take
   `.tint(Color.primary)`, because no usable blue reads 4.5:1 on the toolbar glass; glyphs
-  keep the accent. **One exception: the pane screen's bar.** Its glyphs (back, the chat or
-  terminal toggle, Panes, ⋯) take `.tint(Color.primary)` too, because that bar has no
-  background and accent glyphs on glass floating over the conversation fell below 3:1 in
-  dark. The Panes count stays red. Nowhere else. A label on an accent fill takes
-  `\.themeAccentForeground` (black or white by measured contrast; a fixed white reads at
-  3.42:1 on the default light blue). Never dim the accent or fall back to the system one;
-  switch the foreground instead.
+  keep the accent. **One exception: the pane screen's bar.** Its glyphs (the chat or
+  terminal toggle, Panes, ⋯) take `.tint(Color.primary)` too, as does the iPad's
+  `terminal.back`, because that bar has no background and accent glyphs on its glass fell
+  below 3:1 in dark. The phone's back button is the system one and carries no tint; it draws
+  label-coloured on its own. The Panes count stays red. Nowhere else. A label on an accent
+  fill takes `\.themeAccentForeground` (black or white by measured contrast; a fixed white
+  reads at 3.42:1 on the default light blue). Never dim the accent or fall back to the
+  system one; switch the foreground instead.
 - Tests accompany domain-logic changes in `DriverrCore`: formatters, `AppError` mapping,
   store state transitions, wire-type to domain mapping.
 

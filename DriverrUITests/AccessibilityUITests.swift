@@ -142,7 +142,7 @@ final class AccessibilityUITests: XCTestCase {
 
     auditLabels(app, "the pane chat")
 
-    require(app, "pane.surface.terminal", "Expected the Terminal segment").tap()
+    require(app, "pane.surface.terminal", "Expected the Show Terminal toggle").tap()
     require(app, "terminal.view", "Expected the terminal")
 
     auditLabels(app, "the terminal")
@@ -316,8 +316,8 @@ final class AccessibilityUITests: XCTestCase {
     // The pane screen's chrome is asserted reachable, not only present. Opened from the tree
     // row, because the Needs-you row brings a keyboard that covers most of the screen.
     treePaneRow(app, titled: "needs a decision").tap()
-    let segment = require(app, "pane.surface.terminal", "Expected the segment at this size")
-    XCTAssertTrue(segment.isHittable, "The Terminal segment is not reachable at this size")
+    let toggle = require(app, "pane.surface.terminal", "Expected the toggle at this size")
+    XCTAssertTrue(toggle.isHittable, "The Show Terminal toggle is not reachable at this size")
     let header = require(app, "pane.chat.header", "Expected the provenance header")
     XCTAssertTrue(header.isHittable, "The provenance header is not reachable at this size")
 

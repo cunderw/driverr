@@ -5,11 +5,12 @@ import UIKit
 
 @testable import Driverr
 
-/// The pane surfaces must not be drawn across the chrome band above them.
+/// The pane surfaces must not be drawn across the chrome above them.
 ///
 /// A `.frame(minHeight:)` does not compress a child that will not fit. It reports the floor and
 /// centres the child, so a block taller than the floor hangs off both ends. A 115 pt composer
-/// against the 64 pt floor painted over the `Chat | Terminal` segment and the navigation bar.
+/// against the 64 pt floor painted over the band that then sat above the surfaces (the
+/// `Chat | Terminal` segment, since replaced by a toolbar button) and over the navigation bar.
 ///
 /// `alignment: .top` moves the overflow downward and hangs the app on dismissal; see
 /// `TerminalScreen.swift`. Instead, in the one state with no room, the composer collapses to
@@ -19,27 +20,22 @@ import UIKit
 @MainActor
 @Suite("Pane surface layout", .serialized)
 struct PaneSurfaceLayoutTests {
-  /// `TerminalScreen`'s stack reduced to a fixed chrome band, a floored surface, and the
-  /// surface's bottom `safeAreaInset`. The composer is a `Color` of a stated height, so the
-  /// fixture cannot stop reproducing when the bar changes.
+  /// `TerminalScreen`'s stack reduced to a floored surface and the surface's bottom
+  /// `safeAreaInset`. The composer is a `Color` of a stated height, so the fixture cannot stop
+  /// reproducing when the bar changes. Nothing sits above the surfaces in the ordinary case:
+  /// the chat or terminal switch is a toolbar button, and the banners come and go.
   private struct Stack: View {
     var alignment: Alignment
-    /// `Stack.band` when drawn, 0 in the collapsed state, where the segment is not in the tree.
-    var bandHeight: CGFloat
     /// `TerminalScreen.surfaceFloor`: 64 pt ordinarily, 0 in the collapsed state.
     var floor: CGFloat
     /// `PaneComposerBar`'s resolved height: 115 pt in its ordinary shape, 58 collapsed.
     var composer: CGFloat
-    var onBand: @MainActor (CGRect) -> Void
     var onFrame: @MainActor (CGRect) -> Void
     var onContent: @MainActor (CGRect) -> Void
     var onComposer: @MainActor (CGRect) -> Void
 
     var body: some View {
       VStack(spacing: 0) {
-        Color.gray
-          .frame(height: bandHeight)
-          .measuredFrame(into: onBand)
         Color.blue
           .frame(maxWidth: .infinity, maxHeight: .infinity)
           .measuredFrame(into: onContent)
@@ -53,8 +49,6 @@ struct PaneSurfaceLayoutTests {
       }
     }
 
-    /// The segment band's measured height on the device: a 31 pt picker with 6 pt either side.
-    static let band: CGFloat = 43
     static let floor = TerminalScreen.minimumSurfaceHeight
     /// `PaneComposerBar`'s measured height with an empty field. Over the floor, which is what
     /// makes the centring visible.
@@ -64,56 +58,52 @@ struct PaneSurfaceLayoutTests {
     static let collapsedComposer: CGFloat = 58
   }
 
-  private typealias Measured = (band: CGRect, frame: CGRect, content: CGRect, composer: CGRect)
+  private typealias Measured = (frame: CGRect, content: CGRect, composer: CGRect)
 
   private func measure(
     _ alignment: Alignment,
-    band bandHeight: CGFloat = Stack.band,
     floor: CGFloat = Stack.floor,
     composer composerHeight: CGFloat = Stack.composer
   ) -> Measured {
-    var band = CGRect.zero
     var frame = CGRect.zero
     var content = CGRect.zero
     var composer = CGRect.zero
     let window = HostedProbe.window(
       Stack(
         alignment: alignment,
-        bandHeight: bandHeight,
         floor: floor,
         composer: composerHeight,
-        onBand: { band = $0 },
         onFrame: { frame = $0 },
         onContent: { content = $0 },
         onComposer: { composer = $0 }
       ),
       // The region a landscape phone leaves once the navigation bar and keyboard take theirs.
       // The window has to be that small: at the phone's full 402 pt the `minHeight` never
-      // binds and the negatives below stop reproducing. band(43) + floor(64) = 107 exceeds it.
+      // binds and the negative below stops reproducing.
       size: CGSize(width: 874, height: Self.region)
     )
     withExtendedLifetime(window) {}
-    return (band, frame, content, composer)
+    return (frame, content, composer)
   }
 
   /// The region the real stack gets on a landscape phone with the keyboard up.
   private static let region: CGFloat = 100
 
   /// The least conversation this posture may leave. Asserted directly by
-  /// `theHiddenBandGivesTheConversationItsRoom` and used as the collapsed bar's budget below.
+  /// `theCollapsedComposerLeavesTheConversationItsRoom` and used as the collapsed bar's budget
+  /// below.
   private static let conversationFloor: CGFloat = 40
 
-  /// The shipped shape. Collapsing the composer alone leaves the conversation a few points, and
-  /// a `Color` compresses to that without complaint where a real chat with a header cannot. So
-  /// the band hides too, and this asserts the conversation has room to be read.
+  /// The shipped shape: the composer collapsed and the floor gone, with nothing above the
+  /// surfaces. This asserts the conversation has room to be read, since a `Color` compresses
+  /// without complaint where a real chat with a header cannot.
   ///
   /// 40 pt is asserted rather than the measured 42, so a point of padding moving does not fail
   /// it; anything that halves it does.
-  @Test("with the band hidden the conversation keeps the room the composer does not take")
-  func theHiddenBandGivesTheConversationItsRoom() {
-    let (_, frame, content, composer) = measure(
+  @Test("collapsed, the conversation keeps the room the composer does not take")
+  func theCollapsedComposerLeavesTheConversationItsRoom() {
+    let (frame, content, composer) = measure(
       .center,
-      band: 0,
       floor: 0,
       composer: Stack.collapsedComposer
     )
@@ -126,20 +116,20 @@ struct PaneSurfaceLayoutTests {
     // Built as a `String` first: `#expect` takes a `Comment`, which a literal converts to and
     // a `+` concatenation does not.
     let starved = """
-      The conversation is \(content.height) pt. Hiding the band was supposed to buy it about \
+      The conversation is \(content.height) pt. The collapse is supposed to leave it about \
       42, and 3 pt of chat is what that decision exists to stop.
       """
     #expect(content.height >= Self.conversationFloor, "\(starved)")
   }
 
   /// The negative for the composer's half: the ordinary 115 pt composer centred in the 64 pt
-  /// floor covers the band. Without it the collapse reads as a style choice.
-  @Test("the full-height composer is what put the surfaces over the band")
-  func theFullComposerOverlapsTheBand() {
-    let (band, frame, content, _) = measure(.center)
+  /// floor overflows upward, out of its slot and over whatever sits above it. Without it the
+  /// collapse reads as a style choice.
+  @Test("the full-height composer is what pushed the surfaces out of their slot")
+  func theFullComposerOverflowsUpward() {
+    let (frame, content, _) = measure(.center)
 
     #expect(content.minY < frame.minY, "The 115 pt composer no longer overflows upward")
-    #expect(content.minY < band.maxY, "The 115 pt composer no longer reaches the band")
   }
 
   /// Anchors `Stack.collapsedComposer` to the real bar. A hand-entered height goes on passing
@@ -148,7 +138,7 @@ struct PaneSurfaceLayoutTests {
   ///
   /// The budget is the region less the conversation floor. A second 44 pt row on the collapsed
   /// card fails it.
-  @Test("the real collapsed bar fits the room the band leaves, and matches the fixture")
+  @Test("the real collapsed bar fits the room there is, and matches the fixture")
   func theRealCollapsedBarFitsTheBudget() {
     var measured = CGRect.zero
     let window = HostedProbe.window(
@@ -166,7 +156,7 @@ struct PaneSurfaceLayoutTests {
     let tooTall = """
       The collapsed bar is \(measured.height) pt of the \(Self.region) pt region. Over \
       \(budget) and the conversation is left less than the \(Self.conversationFloor) pt \
-      floor hiding the band was supposed to buy it.
+      floor the collapse is supposed to leave it.
       """
     let drifted = """
       The collapsed bar resolves to \(measured.height) pt, not the \
@@ -177,19 +167,6 @@ struct PaneSurfaceLayoutTests {
 
     #expect(measured.height <= budget, "\(tooTall)")
     #expect(abs(measured.height - Stack.collapsedComposer) <= 2, "\(drifted)")
-  }
-
-  /// The negative for the floor's half. With the 64 pt floor in force, `band(43) + floor(64)`
-  /// overflows the 100 pt region whatever the composer's height. Without this, collapsing
-  /// `surfaceFloor` reads as belt-and-braces.
-  @Test("the 64 pt floor is what still pushed the collapsed composer under the keyboard")
-  func theFloorAloneStillOverflows() {
-    let (_, _, _, composer) = measure(.center, floor: Stack.floor, composer: Stack.collapsedComposer)
-
-    #expect(
-      composer.maxY > Self.region,
-      "The 64 pt floor no longer overflows the region: \(composer)"
-    )
   }
 
   // MARK: - The slot, and the two things attached to it

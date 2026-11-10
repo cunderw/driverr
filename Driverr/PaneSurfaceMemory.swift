@@ -14,7 +14,8 @@ import Observation
 /// connection, because a dropped link does not change what the person chose.
 ///
 /// `@Observable`, unlike those caches, because nothing here inserts from a view body. The
-/// picker's setter is the only writer, and the segment is bound to this, so it must redraw.
+/// scene's `show(_:)` is the only writer, and the surface toggle reads this, so it must
+/// redraw.
 @MainActor
 @Observable
 final class PaneSurfaceMemory {

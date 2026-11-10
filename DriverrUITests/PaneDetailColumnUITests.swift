@@ -63,14 +63,14 @@ final class PaneDetailColumnUITests: XCTestCase {
 
   /// A connected host with a pane open from its tree row, which opens without the keyboard.
   ///
-  /// The Terminal segment is tapped because an agent pane opens on its chat, and this class
+  /// The Show Terminal toggle is tapped because an agent pane opens on its chat, and this class
   /// uses `terminal.view` as the sign that the scene is up.
   private func openedPane(_ launchArguments: [String] = []) throws -> XCUIApplication {
     let app = connectedHostApp(launchArguments)
     // After the launch, because the guard reads the app's window.
     try requireRegularWidth(app)
     treePaneRow(app, titled: "needs a decision").tap()
-    waitFor(app, "pane.surface.terminal", "Expected the Terminal segment", timeout: 20).tap()
+    waitFor(app, "pane.surface.terminal", "Expected the Show Terminal toggle", timeout: 20).tap()
     waitFor(app, "terminal.view", "Expected the pane scene to open", timeout: 20)
     return app
   }
@@ -208,7 +208,7 @@ final class PaneDetailColumnUITests: XCTestCase {
     connect(app, to: "workbox")
 
     treePaneRow(app, titled: "needs a decision").tap()
-    waitFor(app, "pane.surface.terminal", "Expected the Terminal segment", timeout: 20).tap()
+    waitFor(app, "pane.surface.terminal", "Expected the Show Terminal toggle", timeout: 20).tap()
     waitFor(app, "terminal.view", "Expected the pane scene to open", timeout: 20)
 
     waitFor(app, "terminal.panes", "Expected the panes button", timeout: 20).tap()

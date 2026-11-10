@@ -8,7 +8,7 @@ import Testing
 
 /// Switching `Chat | Terminal` back and forth on a pane whose agent Driverr has no reader for.
 ///
-/// A round trip through the segment, rather than one step of the chain. It sees only the scene
+/// A round trip through the toggle, rather than one step of the chain. It sees only the scene
 /// chain parking, not the surface's layout never settling; `PaneChatUITests` covers layout.
 ///
 /// `.serialized` for `TerminalSceneModelTests`' reason: a `TerminalSceneModel` observes

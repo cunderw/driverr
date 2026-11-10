@@ -524,7 +524,7 @@ final class TerminalSceneModel {
     enqueue(on: target) { [weak self] in await self?.openSurface(for: target) }
   }
 
-  /// The `Chat | Terminal` segment moved, for the current target.
+  /// The chat or terminal toggle was used, for the current target.
   ///
   /// **What is on screen is what the pane holds on the host.** The terminal side promotes
   /// to a controller and the chat side hands it back at once. Holding it "in case" would
@@ -1764,7 +1764,7 @@ final class TerminalSceneModel {
   /// promotion leaves a typing viewer, a herdr pane typed at after its agent quit leaves a
   /// controller (`openForTyping(_:)`), and so does a plain herdr shell the phone held when an
   /// agent started in it. A pane the user put on Terminal stays there, because its remembered
-  /// surface keeps `surface(for:)` at `.terminal`. `show(_:)` covers the segment.
+  /// surface keeps `surface(for:)` at `.terminal`. `show(_:)` covers the toggle.
   private func demoteViewerLeftBehindItsChat() {
     let target = current
     guard surface(for: target) == .chat, entry(for: target)?.role == .controller

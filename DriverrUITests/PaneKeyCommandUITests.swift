@@ -217,7 +217,7 @@ final class PaneKeyCommandUITests: XCTestCase {
     )
   }
 
-  /// ⌘⇧T is the `Chat | Terminal` segment from the keyboard. An agent pane opens on its
+  /// ⌘⇧T is the chat or terminal toggle from the keyboard. An agent pane opens on its
   /// chat, so the terminal appearing is the claim.
   func testCommandShiftTSwitchesBetweenTheChatAndTheTerminal() {
     let app = sceneOnTheBlockedPane()

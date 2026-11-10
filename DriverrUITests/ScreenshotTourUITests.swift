@@ -406,7 +406,7 @@ final class ScreenshotTourUITests: XCTestCase {
     // opens on its chat, so the tour asks for the terminal.
     waitForBothBlockedPanes(app)
     blockedPaneRow(app, titled: "needs a decision").tap()
-    require(app, "pane.surface.terminal", "Expected the Terminal segment").tap()
+    require(app, "pane.surface.terminal", "Expected the Show Terminal toggle").tap()
     require(app, "terminal.view", "Expected the terminal")
     settle(app)
     // The key row is in the listing's copy, and it can be in the tree without being in the

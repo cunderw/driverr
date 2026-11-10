@@ -108,7 +108,7 @@ struct TerminalSceneModelTests {
   /// A connected host, and a scene on `initialTarget`, with bridge commands answered by
   /// `responder`.
   ///
-  /// - Parameter surface: which side of the `Chat | Terminal` segment the scene opens on, or
+  /// - Parameter surface: which surface, chat or terminal, the scene opens on, or
   ///   `nil` for the scene's own choice (`.chat` for an agent pane). It defaults to `.terminal`
   ///   because most of this suite is about the controller's lifetime. Set before `start()`, as
   ///   the screen does.
@@ -1777,7 +1777,7 @@ struct TerminalSceneModelTests {
     #expect(shell.surface == .terminal)
     #expect(shell.role(for: .shell) == .local, "the shell did not get its pty")
 
-    // And `w1:p3`, the fixture's agentless `swift test` pane: no segment, straight into the
+    // And `w1:p3`, the fixture's agentless `swift test` pane: no toggle, straight into the
     // terminal, controller immediately.
     let (pane, transport) = await makeScene(
       initialTarget: .pane(id: "w1:p3"),

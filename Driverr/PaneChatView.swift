@@ -1292,7 +1292,7 @@ struct PaneChatView: View {
   }
 
   /// The exit that needs nothing installed and always works where it is drawn. It shows the
-  /// captured screen on the Chat side of the segment.
+  /// captured screen on the Chat side of the surface toggle.
   private func showScreenButton(isProminent: Bool) -> some View {
     Button { isShowingScreen = true } label: {
       BorderedButtonLabel(TranscriptNotice.showScreenTitle)

@@ -193,7 +193,7 @@ final class PaneChatUITests: XCTestCase {
 
     tapPane(app, titled: "needs a decision")
 
-    require(app, "pane.surface.terminal", "Expected the Show Terminal toggle on an agent pane")
+    require(app, "pane.surface.terminal", "Expected Show Terminal on an agent pane")
     require(app, "pane.chat", "Expected the pane to open on the chat")
     requireGone(app, "pane.surface.chat", "The toggle on the chat must lead to the terminal")
     // The terminal is laid out behind the chat and hidden from accessibility. If it were
@@ -1214,12 +1214,12 @@ final class PaneChatUITests: XCTestCase {
     require(app, "pane.screen", "Expected the captured screen as the Chat side itself")
 
     for round in 1...2 {
-      require(app, "pane.surface.terminal", "Round \(round): expected the Terminal segment")
+      require(app, "pane.surface.terminal", "Round \(round): expected the Show Terminal toggle")
         .tap()
       require(app, "terminal.view", "Round \(round): expected the terminal after switching")
       requireGone(app, "pane.screen", "Round \(round): the screen must go with the chat")
 
-      require(app, "pane.surface.chat", "Round \(round): expected the Chat segment").tap()
+      require(app, "pane.surface.chat", "Round \(round): expected the Show Chat toggle").tap()
       require(app, "pane.screen", "Round \(round): expected the captured screen back")
       requireGone(app, "pane.chat.notice", "Round \(round): an unreadable kind gets no notice")
     }
@@ -1245,7 +1245,7 @@ final class PaneChatUITests: XCTestCase {
     tapPane(app, titled: "needs a decision")
     require(app, "pane.chat.notice", "Expected the no-session-file notice")
 
-    require(app, "pane.surface.terminal", "Expected the Terminal segment").tap()
+    require(app, "pane.surface.terminal", "Expected the Show Terminal toggle").tap()
     let terminal = require(app, "terminal.view", "Expected the terminal after switching")
     if !app.keyboards.firstMatch.waitForExistence(timeout: 3) { terminal.tap() }
     XCTAssertTrue(
@@ -1254,7 +1254,7 @@ final class PaneChatUITests: XCTestCase {
         + "that hung. A connected hardware keyboard hides it.\nTree was:\n\(app.debugDescription)"
     )
 
-    require(app, "pane.surface.chat", "Expected the Chat segment").tap()
+    require(app, "pane.surface.chat", "Expected the Show Chat toggle").tap()
     require(app, "pane.chat.notice", "Expected the notice back after the switch")
     // The terminal gave the keyboard back, so the resign did happen, only later.
     let keyboardGone = XCTNSPredicateExpectation(
@@ -1464,10 +1464,10 @@ final class PaneChatUITests: XCTestCase {
     tapPane(app, titled: "needs a decision")
     require(app, "pane.chat.turn.assistant", "Expected the agent's turn before switching")
 
-    require(app, "pane.surface.terminal", "Expected the Terminal segment").tap()
+    require(app, "pane.surface.terminal", "Expected the Show Terminal toggle").tap()
     require(app, "terminal.view", "Expected the terminal after switching to it")
 
-    require(app, "pane.surface.chat", "Expected the Chat segment").tap()
+    require(app, "pane.surface.chat", "Expected the Show Chat toggle").tap()
     // No spinner, because the transcript is cached on the connection.
     requireGone(app, "pane.chat.progress", "Expected no re-fetch on the way back to the chat")
     require(app, "pane.chat.turn.assistant", "Expected the same turns after switching back")
@@ -1484,7 +1484,7 @@ final class PaneChatUITests: XCTestCase {
 
     tapPane(app, titled: "needs a decision")
     require(app, "pane.chat", "Expected the pane to open on its chat the first time")
-    require(app, "pane.surface.terminal", "Expected the Terminal segment").tap()
+    require(app, "pane.surface.terminal", "Expected the Show Terminal toggle").tap()
     require(app, "terminal.view", "Expected the terminal after switching to it")
 
     leavePaneScene(app, "Expected a way out of the pane screen")
@@ -1707,10 +1707,10 @@ final class PaneChatUITests: XCTestCase {
     XCTAssertTrue(newest.waitForExistence(timeout: 10), "The newest turn was never built")
     XCTAssertTrue(newest.isHittable, "The chat did not open on the newest turn")
 
-    require(app, "pane.surface.terminal", "Expected the Terminal side of the segment").tap()
+    require(app, "pane.surface.terminal", "Expected the Show Terminal toggle").tap()
     require(app, "terminal.view", "Expected the terminal to come up", timeout: 20)
 
-    require(app, "pane.surface.chat", "Expected the Chat side of the segment").tap()
+    require(app, "pane.surface.chat", "Expected the Show Chat toggle").tap()
     require(app, "pane.chat", "Expected the conversation back")
 
     // Check existence before hittability. The conversation is a `UICollectionView`, so a cell
