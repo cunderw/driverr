@@ -8,7 +8,9 @@ import UIKit
 /// answers, including under a captured screen with no transcript. `PanePromptBar` has the
 /// same shape.
 ///
-/// Idle, it is the field and Send. There are no terminal keys: a pending question is answered
+/// At rest, with nothing typed, it is a one-row pill: Attach, the field, Stop as a glyph while
+/// the agent works, and Send. Focused or holding a draft it is the card, the field over its
+/// controls. See `shape`. There are no terminal keys: a pending question is answered
 /// by chips under its turn (`ReplyChipRow`), an interrupt is Stop, which shows only while the
 /// agent is working, and Escape and the arrows are on the Terminal side. With no accessory
 /// row, the keyboard's end frame is the safe area and iOS's own avoidance is correct.
@@ -651,8 +653,9 @@ struct PaneComposerBar: View {
   /// Half the pill's 48 pt height, so its ends are round.
   private static let pillRadius: CGFloat = 24
 
-  /// The one shape for background, stroke, tap target and the suggestion clip. One constant,
-  /// because the clip only works while it matches the stroke exactly.
+  /// The card's shape, and the one shape for the panels above it: the `/` list's background,
+  /// stroke and clip. One constant, because the clip only works while it matches the stroke
+  /// exactly.
   private static let cardShape = RoundedRectangle(cornerRadius: cardRadius, style: .continuous)
 
   /// The card's own outline in `shape`. The `/` list, the attachment row and the interrupt
