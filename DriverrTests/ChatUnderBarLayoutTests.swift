@@ -93,16 +93,28 @@ struct ChatUnderBarLayoutTests {
     let model = PreviewSupport.transcript(for: Self.workingPane)
     await model.currentLoad?.value
     await model.subagentListLoad?.value
-    expectTheConversationUnderTheBar(model: model)
+    expectTheConversation(model: model, pane: Self.workingPane, underTheBar: true)
+  }
+
+  /// A blocked pane pins Show the Screen above the conversation, so the conversation stays
+  /// under that row, and the provenance row is still its first row.
+  @Test("under a pinned row the conversation stays below it and still opens on its provenance")
+  func aPinnedRowKeepsTheConversationBelowIt() async {
+    let model = PreviewSupport.transcript(for: PreviewSupport.agentPane)
+    await model.currentLoad?.value
+    await model.subagentListLoad?.value
+    expectTheConversation(model: model, pane: PreviewSupport.agentPane, underTheBar: false)
   }
 
   /// The synchronous half: `RunLoop` cannot be pumped from an `async` context.
-  private func expectTheConversationUnderTheBar(model: PaneTranscriptModel) {
+  private func expectTheConversation(
+    model: PaneTranscriptModel, pane: DriverrCore.Pane, underTheBar: Bool
+  ) {
     var composer = CGRect.zero
     let window = HostedProbe.window(
       Fixture(
         model: model,
-        screen: PreviewSupport.paneScreen(for: Self.workingPane),
+        screen: PreviewSupport.paneScreen(for: pane),
         onComposer: { composer = $0 }),
       size: HostedProbe.phone)
     pump(until: { first(UICollectionView.self, in: window) != nil && composer.width > 100 })
@@ -128,9 +140,14 @@ struct ChatUnderBarLayoutTests {
     let frame = collection.convert(collection.bounds, to: window)
     let under = """
       The conversation's scroll view starts at y \(frame.minY) in the window, against the bar's \
-      bottom at \(barBottom). Rows can pass under the glass only if it reaches the window's top.
+      bottom at \(barBottom). Rows can pass under the glass only if it reaches the window's top, \
+      and must not while a row is pinned above them.
       """
-    #expect(frame.minY < 0.5, "\(under)")
+    if underTheBar {
+      #expect(frame.minY < 0.5, "\(under)")
+    } else {
+      #expect(frame.minY > barBottom, "\(under)")
+    }
 
     // The top of the conversation, where a reader who scrolled all the way back rests.
     collection.contentOffset = CGPoint(x: 0, y: -collection.adjustedContentInset.top)
@@ -142,6 +159,19 @@ struct ChatUnderBarLayoutTests {
       return
     }
     let firstTop = collection.convert(first.frame, to: window).minY
+    let items = (collection.dataSource as? UICollectionViewDiffableDataSource<ChatSection, ChatItem>)?
+      .snapshot().itemIdentifiers ?? []
+    let provenance = """
+      The conversation's items are \(items.prefix(3))…, and its first is \(first.frame.height) pt \
+      tall. The provenance row must be the first row, drawn.
+      """
+    #expect(items.first == .provenance, "\(provenance)")
+    #expect(first.frame.height > 10, "\(provenance)")
+    // The rest of the claims are about the conversation under the bar.
+    guard underTheBar else {
+      withExtendedLifetime(window) {}
+      return
+    }
     let below = """
       At the top of the conversation the first row starts at y \(firstTop), against the bar's \
       bottom at \(barBottom). Above the bar it is drawn under the glass at rest; more than \
