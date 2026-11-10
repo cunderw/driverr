@@ -86,8 +86,8 @@ struct ChatGlassLayoutTests {
     return (first, last, scrollBounds, composer)
   }
 
-  /// `PaneComposerBar` as the two-row card's height (focused, or holding a draft). At rest the bar is the one-row pill,
-  /// 62 pt with the bar's padding; these suites keep the taller card. Shared with
+  /// `PaneComposerBar` as the two-row card (focused, or holding a draft). At rest the bar is
+  /// the one-row pill, 62 pt with its padding; these suites keep the taller card. Shared with
   /// `PaneSurfaceLayoutTests.Stack.composer` and `ChatConversationInsetLayoutTests`.
   private static let composer: CGFloat = 115
   private static let rowHeight: CGFloat = 120
