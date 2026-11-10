@@ -1,7 +1,7 @@
 import DriverrCore
 import SwiftUI
 
-/// The pane chat's list of every sub-agent its session spawned, under the provenance row.
+/// The pane chat's list of every sub-agent its session spawned, pinned above the conversation.
 ///
 /// **Inline, not a sheet**, for the reason `AgentStopRow` is: the chat is inside the pane
 /// scene's presentation. Collapsed it is one row, `3 sub-agents · 1 running`; a tap opens the

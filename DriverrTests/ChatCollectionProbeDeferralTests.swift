@@ -8,7 +8,7 @@ import UIKit
 /// The coordinator's two diagnostic probes must not reach SwiftUI inside a UIKit callback.
 ///
 /// `report()` runs from `scrollViewDidScroll` and `layoutSubviews`, and both can land inside a
-/// SwiftUI update: `updateUIView` calls `applyBottomInset()`, and a changed `contentInset`
+/// SwiftUI update: `updateUIView` calls `applyInsets()`, and a changed `contentInset`
 /// scrolls the view before the update returns. `TerminalScreen` stores both probes in `@State`,
 /// so a synchronous call is a state write during a view update, which logs `Modifying state
 /// during view update`. `onReaderState` is deferred for the same reason.

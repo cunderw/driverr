@@ -140,7 +140,7 @@ struct PaneComposerBar: View {
   ///
   /// Every shape is the same `cardLayout`, so the field keeps its identity and the keyboard
   /// across a change. The bar's height reaches the chat only through the `safeAreaBar` it sits
-  /// in (`ChatCollectionView.Coordinator.applyBottomInset`); nothing here corrects for it.
+  /// in (`ChatCollectionView.Coordinator.applyInsets`); nothing here corrects for it.
   private var shape: CardShape {
     if isCollapsed { return .collapsed }
     let isResting =

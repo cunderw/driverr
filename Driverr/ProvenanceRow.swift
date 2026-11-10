@@ -2,8 +2,8 @@ import DriverrCore
 import SwiftUI
 import UIKit
 
-/// The one caption line above the transcript, saying where the conversation came from. The
-/// raw evidence is a long-press away.
+/// The one caption line at the top of the transcript, saying where the conversation came from.
+/// The raw evidence is a long-press away.
 ///
 /// **It never presents a guess as a fact.** The matched variant says it guessed from the
 /// pane's directory, the exact variant drops the guess, and a picked file credits the pick.
@@ -24,9 +24,9 @@ struct ProvenanceRow: View {
 
   /// The gutter between this row's ink and the edge of the chat's column.
   ///
-  /// Passed in because `ChatColumn.gutter(forColumnWidth:)` varies with the column width.
-  /// This row sits beside the collection view, so the section insets that give the turns
-  /// their gutter do not reach it. The default is the phone's answer.
+  /// The chat passes 0: the row is the conversation's first cell, and its section carries the
+  /// gutter, as the turns' sections do. The default is the phone's gutter, for a row drawn
+  /// outside the conversation, as the layout tests draw it.
   var horizontalInset: CGFloat = ProvenanceRow.horizontalPadding
 
   var body: some View {

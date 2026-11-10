@@ -61,6 +61,11 @@ struct TerminalScreen: View {
   /// edges, so the top says by how much. Read in the same `onGeometryChange` as the bottom,
   /// because two probes can report from different layout passes.
   @State private var surfacesTop: Double = 0
+  /// The surfaces' top safe-area inset: the status bar and the navigation bar when no banner
+  /// stands above the surfaces, 0 when one does. The slot's clip opens upward by this much so
+  /// the conversation can pass under the bar. A layout input to the clip only, which is a
+  /// render mask and cannot move the frame it is read from.
+  @State private var surfacesTopInset: CGFloat = 0
   /// The region the whole pane stack is laid out in: the safe area below the navigation
   /// bar. Nothing inside the stack moves it, so the surfaces' maximum height is safe to
   /// derive from it, and it is the baseline for spotting an overflow.
@@ -340,6 +345,9 @@ struct TerminalScreen: View {
             )
           )
 
+          .onGeometryChange(for: CGFloat.self, of: { $0.safeAreaInsets.top }) {
+            surfacesTopInset = $0
+          }
           // **A clip over the whole slot.** Content that does not fit is centred and would
           // paint over the banners above it. In portrait nothing overflows and this does
           // nothing.
@@ -348,7 +356,12 @@ struct TerminalScreen: View {
           // above the bar would cut the conversation at the card's top edge, leaving the glass
           // nothing to blur. `ChatGlassLayoutTests` cannot see that, because a clip on an
           // ancestor is a render mask, not a frame change; only a capture shows it.
-          .clipped()
+          //
+          // Open upward by the top safe-area inset, for the same reason at the other end: the
+          // conversation reaches under the navigation bar (`PaneChatView`), and a clip at the
+          // slot's top would cut it at the bar's bottom edge. The inset is 0 whenever a banner
+          // stands above, so the banners stay covered. The terminals never reach up there.
+          .clipShape(SlotClip(topOutset: surfacesTopInset))
           // The last frame stays, dimmed, while the link is down. A blank surface would read as
           // the pane being gone.
           .opacity(isLinkDown ? 0.45 : 1)
@@ -564,8 +577,8 @@ struct TerminalScreen: View {
       + "chatContentWidth=\(String(format: "%.2f", chatScroll.contentWidth)) "
       + "chatContainerWidth=\(String(format: "%.2f", chatScroll.containerWidth)) "
       + "chatContentHeight=\(String(format: "%.2f", chatScroll.contentHeight)) "
-      // The conversation's inset and the two numbers it derives from. See
-      // `ChatCollectionView.Coordinator.applyBottomInset`.
+      // The conversation's bottom inset and two of the numbers it derives from. See
+      // `ChatCollectionView.Coordinator.applyInsets`.
       + "chatInsetBottom=\(String(format: "%.2f", chatScroll.insetBottom)) "
       + "chatBoundsHeight=\(String(format: "%.2f", chatScroll.boundsHeight)) "
       + "chatSlotHeight=\(String(format: "%.2f", chatScroll.slotHeight)) "
@@ -1256,6 +1269,19 @@ extension View {
     } else {
       self
     }
+  }
+}
+
+/// The pane surfaces' clip: their own frame, extended upward by `topOutset`. See the clip in
+/// `TerminalScreen.content`.
+private struct SlotClip: Shape {
+  var topOutset: CGFloat
+
+  func path(in rect: CGRect) -> Path {
+    Path(
+      CGRect(
+        x: rect.minX, y: rect.minY - topOutset,
+        width: rect.width, height: rect.height + topOutset))
   }
 }
 
