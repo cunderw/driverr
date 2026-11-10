@@ -54,12 +54,14 @@ struct PaneComposerSlashSuggestionsLayoutTests {
     #expect(slashHeight > idleHeight)
   }
 
+  /// The baseline holds one plain character, not nothing: an empty unfocused bar is the
+  /// one-row pill, and any text makes it the card (`PaneComposerPillLayoutTests`).
   @Test("a space ending the command word collapses the bar back to idle height")
   func spaceCollapsesTheList() {
     var idleHeight: Double = 0
     var afterSpaceHeight: Double = 0
 
-    let idle = HostedProbe.window(bar(text: "", transcript: transcript) { idleHeight = $0 })
+    let idle = HostedProbe.window(bar(text: "x", transcript: transcript) { idleHeight = $0 })
     let afterSpace = HostedProbe.window(
       bar(text: "/run-tests ", transcript: transcript) { afterSpaceHeight = $0 }
     )
