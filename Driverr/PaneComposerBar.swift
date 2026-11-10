@@ -120,6 +120,33 @@ struct PaneComposerBar: View {
   /// drawn circle shrinks. Every other state keeps the five-line field.
   var isCollapsed = false
 
+  /// The card's three shapes. Decided once per render in `shape`.
+  private enum CardShape {
+    /// One row: Attach, the field, Stop as a glyph, Send. At rest, with nothing typed.
+    case pill
+    /// The field over a row of controls. Focused, holding a draft, or at an accessibility size.
+    case card
+    /// The landscape phone with the keyboard up. See `isCollapsed`.
+    case collapsed
+  }
+
+  /// The pill at rest, the card the moment the field is focused or holds anything, including a
+  /// draft left after the keyboard went away, and the card at accessibility sizes, where one
+  /// row cannot carry the field and three controls. `isCollapsed` outranks both.
+  ///
+  /// A staged image counts as a draft: its row sits above the card and Send is what sends it.
+  ///
+  /// Every shape is the same `cardLayout`, so the field keeps its identity and the keyboard
+  /// across a change. The bar's height reaches the chat only through the `safeAreaBar` it sits
+  /// in (`ChatCollectionView.Coordinator.applyBottomInset`); nothing here corrects for it.
+  private var shape: CardShape {
+    if isCollapsed { return .collapsed }
+    let isResting =
+      !isTextFocused && model.text.isEmpty && !model.attachment.isAttached
+      && dynamicTypeSize < .accessibility1
+    return isResting ? .pill : .card
+  }
+
   /// Asked for an image.
   ///
   /// A closure, not a `PhotosPicker` here; see `ComposerPhotosPicker`. `nil` hides the button.
@@ -534,24 +561,33 @@ struct PaneComposerBar: View {
   /// One rounded card holding the field and, beneath it, the controls that act on it,
   /// floating on the conversation's background.
   private var card: some View {
-    cardLayout {
-      field
-      controlRow
+    let shape = shape
+    let outline = Self.cardShape(for: shape)
+    let layout = cardLayout(for: shape)
+    return layout {
+      // Leading only in the pill. A conditional child holds a fixed slot ahead of the field,
+      // so the field's identity is the same in every shape; see `cardLayout`.
+      if shape == .pill, onAttach != nil { attachButton(in: shape) }
+      field(in: shape)
+      controlRow(in: shape)
     }
-    .padding(.horizontal, 8)
+    // The pill: 2 pt around the 44 pt targets makes it 48 tall, and each 36 pt circle sits
+    // 6 pt inside the edge, the same ring all round.
+    .padding(.horizontal, shape == .pill ? 2 : 8)
     // 3 pt collapsed: the field is beside Send, so the card is exactly the 44 pt target tall.
-    .padding(.vertical, isCollapsed ? 3 : 8)
-    // `.regularMaterial` with an `opaqueSeparator` border, both semantic. At rest the card's
-    // backdrop is the page itself, so a thin material would vanish into it; the lift has to
-    // come from the panel. The material still blurs turns that scroll behind the card.
-    .background(.regularMaterial, in: Self.cardShape)
+    .padding(.vertical, shape == .pill ? 2 : shape == .collapsed ? 3 : 8)
+    // `.regularMaterial` with an `opaqueSeparator` border, both semantic, in every shape. At
+    // rest the card's backdrop is the page itself, so a thin material would vanish into it;
+    // the lift has to come from the panel. The material still blurs turns that scroll behind
+    // the card.
+    .background(.regularMaterial, in: outline)
     .background { cardFrameProbe }
     .overlay {
-      Self.cardShape
+      outline
         .strokeBorder(Color(.opaqueSeparator), lineWidth: 1)
     }
     // The whole card is the field's target, so a tap beside a short draft does not miss.
-    .contentShape(Self.cardShape)
+    .contentShape(outline)
     .onTapGesture { isTextFocused = true }
   }
 
@@ -582,48 +618,104 @@ struct PaneComposerBar: View {
   /// `TextField` two identities, so collapsing rebuilds the field, which resigns first
   /// responder, which drops the keyboard, which un-collapses the bar. It then looks normal,
   /// with no keyboard. `AnyLayout` changes the layout and keeps the children's identity.
-  private var cardLayout: AnyLayout {
-    isCollapsed
-      ? AnyLayout(HStackLayout(alignment: .center, spacing: 6))
-      : AnyLayout(VStackLayout(alignment: .leading, spacing: 6))
+  ///
+  /// The pill is a row too, with Attach ahead of the field. Attach is an optional child in
+  /// its own slot, not a reordering, because a reordering would move the field to another slot.
+  private func cardLayout(for shape: CardShape) -> AnyLayout {
+    switch shape {
+    case .pill: AnyLayout(HStackLayout(alignment: .center, spacing: 4))
+    case .collapsed: AnyLayout(HStackLayout(alignment: .center, spacing: 6))
+    case .card: AnyLayout(VStackLayout(alignment: .leading, spacing: 6))
+    }
   }
 
-  /// One line when collapsed, up to five otherwise. Keep `axis: .vertical` either way and let
-  /// `lineLimit` do it; swapping the initialiser would change the field's identity and drop
-  /// the keyboard.
-  private var field: some View {
+  /// One line in a row shape, up to five in the card. Keep `axis: .vertical` either way and
+  /// let `lineLimit` do it; swapping the initialiser would change the field's identity and
+  /// drop the keyboard.
+  private func field(in shape: CardShape) -> some View {
     TextField(PaneComposerCopy.field, text: $model.text, selection: selectionBinding, axis: .vertical)
       .textFieldStyle(.plain)
-      .lineLimit(isCollapsed ? 1...1 : 1...5)
+      .lineLimit(shape == .card ? 1...5 : 1...1)
       // A terminal reply is not prose: an autocapitalised "Yes" or autocorrected flag is a
       // wrong answer.
       .textInputAutocapitalization(.never)
       .autocorrectionDisabled()
       .focused($isTextFocused)
       .padding(.horizontal, 6)
-      .padding(.top, isCollapsed ? 0 : 6)
+      .padding(.top, shape == .card ? 6 : 0)
       .accessibilityIdentifier("composer.text")
   }
 
   private static let cardRadius: CGFloat = 22
 
+  /// Half the pill's 48 pt height, so its ends are round.
+  private static let pillRadius: CGFloat = 24
+
   /// The one shape for background, stroke, tap target and the suggestion clip. One constant,
   /// because the clip only works while it matches the stroke exactly.
   private static let cardShape = RoundedRectangle(cornerRadius: cardRadius, style: .continuous)
 
+  /// The card's own outline in `shape`. The `/` list, the attachment row and the interrupt
+  /// confirm keep `cardShape`: they only show over the card, never the pill.
+  private static func cardShape(for shape: CardShape) -> RoundedRectangle {
+    RoundedRectangle(cornerRadius: shape == .pill ? pillRadius : cardRadius, style: .continuous)
+  }
+
   /// Under the field, inside the card: controls only. Status and Retry are `ChatActivity`, at
   /// the foot of the transcript.
-  private var controlRow: some View {
-    HStack(alignment: .center, spacing: 8) {
-      if onAttach != nil { attachButton }
+  ///
+  /// In the pill, Attach has moved ahead of the field, and the 44 pt targets touch so the
+  /// drawn circles sit 8 pt apart.
+  private func controlRow(in shape: CardShape) -> some View {
+    HStack(alignment: .center, spacing: shape == .pill ? 0 : 8) {
+      if shape != .pill, onAttach != nil { attachButton(in: shape) }
       // No spacer while collapsed, or it would strand Attach in the middle of the card. The
-      // controls hug the trailing edge in both shapes.
-      if !isCollapsed { Spacer(minLength: 0) }
+      // controls hug the trailing edge in every shape.
+      if shape == .card { Spacer(minLength: 0) }
       // Stop exists only while something is running.
       if header.isWorking && !isConfirmingInterrupt {
-        stopButton
+        if shape == .pill { stopGlyphButton } else { stopButton }
       }
-      sendButton
+      sendButton(in: shape)
+    }
+  }
+
+  /// Stop in the pill: the glyph alone, red on a neutral circle, beside Send.
+  ///
+  /// The word is the label, so VoiceOver and the tests read "Stop" as they do on the card's
+  /// capsule. The same two-step confirm.
+  private var stopGlyphButton: some View {
+    Button(role: .destructive) {
+      isConfirmingInterrupt = true
+    } label: {
+      Label {
+        Text("Stop")
+      } icon: {
+        Image(systemName: "stop.fill")
+          .font(.system(size: 14, weight: .semibold))
+          .foregroundStyle(Color(.systemRed))
+          .frame(width: Self.pillCircle, height: Self.pillCircle)
+          .background(Color(.tertiarySystemFill), in: Circle())
+          .frame(width: 44, height: 44)
+          .contentShape(Circle())
+      }
+      .labelStyle(.iconOnly)
+    }
+    .buttonStyle(.plain)
+    .disabled(model.isSending)
+    .accessibilityLabel("Stop")
+    .accessibilityIdentifier("composer.stop")
+  }
+
+  /// The drawn circle of every control in the pill. The targets stay 44 pt.
+  private static let pillCircle: CGFloat = 36
+
+  /// The drawn circle of a control in `shape`: 36 in the pill, 32 collapsed, 40 in the card.
+  private static func circle(in shape: CardShape) -> CGFloat {
+    switch shape {
+    case .pill: pillCircle
+    case .collapsed: 32
+    case .card: 40
     }
   }
 
@@ -684,19 +776,21 @@ struct PaneComposerBar: View {
 
   // MARK: - The pending image
 
-  /// The way into Photos, at the leading edge.
+  /// The way into Photos, at the leading edge: ahead of the field in the pill, under it in
+  /// the card.
   ///
-  /// Away from Send, so the two controls that send stay together. The target stays 44 pt and
-  /// only the glyph shrinks when collapsed, which a button style cannot do, so this is
-  /// `.plain`.
-  private var attachButton: some View {
+  /// `plus`, not a photo glyph, because more than images will come through it. Away from
+  /// Send, so the two controls that send stay together. The target stays 44 pt and only the
+  /// circle changes size with the shape, which a button style cannot do, so this is `.plain`.
+  private func attachButton(in shape: CardShape) -> some View {
     Button {
       onAttach?()
     } label: {
-      Image(systemName: "photo.on.rectangle")
-        .font(.system(size: isCollapsed ? 15 : 17, weight: .medium))
+      Image(systemName: "plus")
+        .font(.system(size: shape == .card ? 17 : 15, weight: .semibold))
         .foregroundStyle(themeAccent)
-        .frame(width: isCollapsed ? 32 : 40, height: isCollapsed ? 32 : 40)
+        .frame(width: Self.circle(in: shape), height: Self.circle(in: shape))
+        .background(Color(.tertiarySystemFill), in: Circle())
         .frame(width: 44, height: 44)
         .contentShape(Rectangle())
     }
@@ -826,7 +920,7 @@ struct PaneComposerBar: View {
   // MARK: - The reply
 
   /// Send, on the card's control row beside the field.
-  private var sendButton: some View {
+  private func sendButton(in shape: CardShape) -> some View {
     Button {
       Task { await model.send() }
     } label: {
@@ -835,7 +929,7 @@ struct PaneComposerBar: View {
       Label {
         Text(PaneComposerCopy.send)
       } icon: {
-        sendIcon
+        sendIcon(in: shape)
       }
       .labelStyle(.iconOnly)
     }
@@ -848,15 +942,15 @@ struct PaneComposerBar: View {
   }
 
   /// The send button's drawn face.
-  private var sendIcon: some View {
+  private func sendIcon(in shape: CardShape) -> some View {
     // The circle is drawn here, not by a button style. A style sizes its chrome around the
     // label, so a 44 pt label became a 58 pt circle. Drawing it separates the two numbers:
     // a 40 pt circle in a 44 pt target. The frame belongs on the label, not the button.
-    // Collapsed, only the circle shrinks, to 32; the 44 pt target stays.
+    // In the pill and collapsed only the circle shrinks, to 36 and 32; the 44 pt target stays.
     Image(systemName: "arrow.up")
-      .font(.system(size: isCollapsed ? 15 : 17, weight: .semibold))
+      .font(.system(size: shape == .card ? 17 : 15, weight: .semibold))
       .foregroundStyle(model.canSend ? themeAccentForeground : Color.secondary)
-      .frame(width: isCollapsed ? 32 : 40, height: isCollapsed ? 32 : 40)
+      .frame(width: Self.circle(in: shape), height: Self.circle(in: shape))
       .background(
         model.canSend ? themeAccent : Color(.tertiarySystemFill),
         in: Circle()
