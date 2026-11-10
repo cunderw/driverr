@@ -560,8 +560,9 @@ struct PaneComposerBar: View {
   /// derive. It is the card's own padding, not a guess at the keyboard's geometry.
   static let cardBottomInset: CGFloat = 8
 
-  /// One rounded card holding the field and, beneath it, the controls that act on it,
-  /// floating on the conversation's background.
+  /// One rounded panel holding the field and the controls that act on it, floating on the
+  /// conversation's background: the controls beneath the field in the card, and either side of
+  /// it, on one row, in the pill and collapsed.
   private var card: some View {
     let shape = shape
     let outline = Self.cardShape(for: shape)
@@ -658,8 +659,10 @@ struct PaneComposerBar: View {
   /// exactly.
   private static let cardShape = RoundedRectangle(cornerRadius: cardRadius, style: .continuous)
 
-  /// The card's own outline in `shape`. The `/` list, the attachment row and the interrupt
-  /// confirm keep `cardShape`: they only show over the card, never the pill.
+  /// The card's own outline in `shape`. The panels above it keep `cardShape` in every shape.
+  /// The `/` list and the attachment row only show over the card, because text or a staged
+  /// image makes the bar the card, but the interrupt confirm also shows over the pill, from
+  /// the pill's Stop.
   private static func cardShape(for shape: CardShape) -> RoundedRectangle {
     RoundedRectangle(cornerRadius: shape == .pill ? pillRadius : cardRadius, style: .continuous)
   }

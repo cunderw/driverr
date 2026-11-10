@@ -41,12 +41,14 @@ struct PaneComposerSlashSuggestionsLayoutTests {
     )
   }
 
+  /// The baseline holds one plain character, as in `spaceCollapsesTheList`. Against an empty
+  /// bar, the pill, the card's own extra height would pass this with no list drawn.
   @Test("a bare slash grows the bar taller than idle")
   func bareSlashGrowsTheBar() {
     var idleHeight: Double = 0
     var slashHeight: Double = 0
 
-    let idle = HostedProbe.window(bar(text: "", transcript: transcript) { idleHeight = $0 })
+    let idle = HostedProbe.window(bar(text: "x", transcript: transcript) { idleHeight = $0 })
     let slash = HostedProbe.window(bar(text: "/", transcript: transcript) { slashHeight = $0 })
     withExtendedLifetime((idle, slash)) {}
 
