@@ -59,7 +59,9 @@ final class PaneKeyCommandUITests: XCTestCase {
     return match
   }
 
-  /// Which pane the scene is on, read off the navigation bar's title.
+  /// Which pane the scene is on, read off the navigation bar's identifier, which is the
+  /// scene's title. The bar draws no title (`TerminalScreen`'s `.toolbar(removing: .title)`),
+  /// so there is no heading text to find.
   ///
   /// Scoped to the navigation bar, because a pane's name also appears on the sheet's tiles.
   private func requireCurrentPane(
@@ -68,7 +70,7 @@ final class PaneKeyCommandUITests: XCTestCase {
     file: StaticString = #filePath,
     line: UInt = #line
   ) {
-    let heading = app.navigationBars.staticTexts[title]
+    let heading = app.navigationBars[title]
     XCTAssertTrue(
       heading.waitForExistence(timeout: 15),
       "Expected the scene to be on “\(title)”.\nTree was:\n\(app.debugDescription)",
@@ -150,9 +152,9 @@ final class PaneKeyCommandUITests: XCTestCase {
     )
   }
 
-  /// The navigation bar's heading for one pane.
+  /// The navigation bar for one pane, found by its identifier, the scene's title.
   private func heading(_ app: XCUIApplication, _ title: String) -> XCUIElement {
-    app.navigationBars.staticTexts[title]
+    app.navigationBars[title]
   }
 
   /// A pane scene on the blocked pane `w1:p2`, the second place, so both neighbour keys

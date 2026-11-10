@@ -644,9 +644,13 @@ final class PaneSwitchUITests: XCTestCase {
     otherTile.tap()
 
     requireSheetGone(app, "Expected the pick to dismiss the sheet")
-    // The navigation bar's subtitle names the host.
+    // The system back button names the screen it returns to, the other host's. The bar draws
+    // no title or subtitle, so this is the host's name on the pane screen.
+    let backToBeta = app.navigationBars.buttons.matching(identifier: "BackButton")
+      .matching(NSPredicate(format: "label == %@", "beta"))
+      .firstMatch
     XCTAssertTrue(
-      app.staticTexts["beta"].waitForExistence(timeout: 20),
+      backToBeta.waitForExistence(timeout: 20),
       "Expected the scene to be on the other host.\nTree was:\n\(app.debugDescription)"
     )
     // A pane scene, not the host screen behind it.
