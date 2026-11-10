@@ -1111,8 +1111,9 @@ struct ChatCollectionViewTests {
     withExtendedLifetime(window) {}
   }
 
-  /// `ChatTopFade` is drawn over the slot's top, so the collection view's top inset decides
-  /// whether the first row's content starts under the fade or where it ends.
+  /// `ChatTopFade` is drawn over the slot's top while a row is pinned above it, as here, with no
+  /// `topExtension`, so the collection view's top inset decides whether the first row's content
+  /// starts under the fade or where it ends. Under the bar, `ChatUnderBarLayoutTests`.
   @Test("at the top of the conversation the first row starts where the top fade ends")
   func theFirstRowStartsWhereTheTopFadeEnds() {
     let (_, window) = measure(

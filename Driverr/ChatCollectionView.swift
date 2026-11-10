@@ -122,20 +122,21 @@ struct ChatRowInputs: Equatable {
   var activity: ChatActivity?
 }
 
-/// Fades the conversation out as it scrolls under the rows above it, instead of cutting it
-/// square.
+/// Fades the conversation out as it scrolls under a row pinned above it (the sub-agent list,
+/// the stop notice, Show the Screen, the back bar), instead of cutting it square.
 ///
-/// Drawn by hand because the system cannot draw it here. `topEdgeEffect.style = .soft` shows
-/// nothing, with or without a top inset: a scroll edge effect takes its shape from views that
-/// overlay the scroll view's edge, such as a bar or a `UIScrollEdgeElementContainerInteraction`,
-/// and the provenance row and sub-agent card stand above the collection view, not over it.
-/// An overlay on the slot, not a mask over the conversation; see the bottom edge's comment in
-/// `makeCollection`.
+/// Drawn only while such a row stands above the slot. With none, the conversation reaches up
+/// under the navigation bar and the collection view's own `topEdgeEffect` softens it, because
+/// a scroll edge effect takes its shape from views that overlay the scroll view's edge, such
+/// as a bar. A row standing above the collection view does not overlay it, so there
+/// `topEdgeEffect` shows nothing and this is drawn by hand. An overlay on the slot, not a mask
+/// over the conversation; see the bottom edge's comment in `makeCollection`.
 struct ChatTopFade: View {
   static let height: CGFloat = 16
-  /// The collection view's `contentInset.top`: the fade's height less the first row's own
-  /// `ChatColumn.rowPadding`, so at the top of the conversation the first row's content starts
-  /// where the fade ends.
+  /// The collection view's `contentInset.top` below the bar or the pinned row: the fade's
+  /// height less the first row's own `ChatColumn.rowPadding`, so at the top of the
+  /// conversation the first row's content starts where the fade ends. Under the bar it is
+  /// added to `ChatCollectionView.topExtension`; see `Coordinator.applyInsets`.
   static var contentInset: CGFloat { height - ChatColumn.rowPadding }
 
   var body: some View {
@@ -224,8 +225,9 @@ struct ChatCollectionView<Row: View>: UIViewRepresentable {
   /// The extra margin the last row gets beyond its own `ChatColumn.rowPadding`.
   ///
   /// Rows carry 9 points above and below, giving 18 between rows, and the end gets 14 in all.
-  /// The start gets `ChatTopFade.contentInset` instead, as `contentInset.top`: the fade's height
-  /// less the row padding, so the first row's content starts where the fade ends.
+  /// The start gets `ChatTopFade.contentInset` instead, in `contentInset.top` below the bar or
+  /// the pinned row: the fade's height less the row padding, so the first row's content starts
+  /// where the fade ends.
   /// It goes on the section, because `contentInset.bottom` belongs to the composer. It shows at
   /// rest with the keyboard down, which is the posture a reader meets first. Do not make it
   /// depend on the keyboard.
