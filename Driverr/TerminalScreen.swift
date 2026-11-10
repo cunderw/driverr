@@ -608,8 +608,9 @@ struct TerminalScreen: View {
     verticalSizeClass == .compact && keyboardTop != nil
   }
 
-  /// The surfaces' floor: `minimumSurfaceHeight`, or zero when collapsed. There a floor
-  /// would overflow the small region on its own.
+  /// The surfaces' floor: `minimumSurfaceHeight`, or zero when collapsed. With nothing above
+  /// the surfaces the 64 pt floor fits the collapsed posture's ~96 pt region; it only binds
+  /// when a banner sits above the surfaces in that posture, and then it would overflow.
   private var surfaceFloor: CGFloat {
     isComposerCollapsed ? 0 : Self.minimumSurfaceHeight
   }

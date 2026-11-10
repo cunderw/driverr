@@ -113,8 +113,8 @@ struct PaneComposerBar: View {
 
   /// One line, one row: the collapsed shape for a landscape phone with the keyboard up.
   ///
-  /// That state leaves about 100 pt between the navigation bar and the keys. The
-  /// `Chat | Terminal` band takes 43 and the ordinary bar wants 115, so both cannot fit.
+  /// That state leaves about 96 pt between the navigation bar and the keys, and the ordinary
+  /// bar wants 115, so it cannot fit.
   /// Collapsed, the bar is one row about 54 pt tall: the field clamped to one line beside
   /// Send, with 3 pt card padding instead of 8. The 44 pt tap targets do not change; only the
   /// drawn circle shrinks. Every other state keeps the five-line field.

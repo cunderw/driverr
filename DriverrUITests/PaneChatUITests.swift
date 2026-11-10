@@ -2313,8 +2313,8 @@ final class PaneChatUITests: XCTestCase {
 
   /// Scrolling back through the conversation in portrait keeps the keyboard up.
   ///
-  /// Scroll-to-dismiss exists so a landscape reader can bring back the hidden
-  /// `Chat | Terminal` band. In portrait the band never hides, and dismissing would take the
+  /// Scroll-to-dismiss exists so a landscape reader can bring back the full composer and the
+  /// rows the collapse hides. In portrait nothing collapses, and dismissing would take the
   /// keyboard mid-reply. The fixtures are those of
   /// `testTheChatOpensAtTheEndOfATallNewestTurn`, so there is somewhere to scroll back to.
   ///
