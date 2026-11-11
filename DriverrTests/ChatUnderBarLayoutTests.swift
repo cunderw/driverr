@@ -25,9 +25,8 @@ struct ChatUnderBarLayoutTests {
   /// A stand-in for the resting composer pill. A fixture value, not a measurement.
   private static let composer: CGFloat = 62
 
-  /// The seed's one pane with a reported session, `needs a decision`, set to working. Blocked,
-  /// it pins Show the Screen above the conversation, and a pinned row keeps the conversation
-  /// out from under the bar by design (`PaneChatView.chat`).
+  /// The seed's one pane with a reported session, `needs a decision`, set to working, so no
+  /// capsule floats over the conversation.
   private static var workingPane: DriverrCore.Pane {
     let pane = PreviewSupport.agentPane
     return DriverrCore.Pane(
@@ -96,14 +95,15 @@ struct ChatUnderBarLayoutTests {
     expectTheConversation(model: model, pane: Self.workingPane, underTheBar: true)
   }
 
-  /// A blocked pane pins Show the Screen above the conversation, so the conversation stays
-  /// under that row, and the provenance row is still its first row.
-  @Test("under a pinned row the conversation stays below it and still opens on its provenance")
-  func aPinnedRowKeepsTheConversationBelowIt() async {
+  /// A blocked pane offers Show the Screen as a capsule floating over the conversation, not as
+  /// a row pinned above it, so the conversation still reaches under the bar and its first row
+  /// still rests just below the bar.
+  @Test("Show the Screen floats over the conversation, which still reaches under the bar")
+  func showTheScreenFloatsOverTheConversation() async {
     let model = PreviewSupport.transcript(for: PreviewSupport.agentPane)
     await model.currentLoad?.value
     await model.subagentListLoad?.value
-    expectTheConversation(model: model, pane: PreviewSupport.agentPane, underTheBar: false)
+    expectTheConversation(model: model, pane: PreviewSupport.agentPane, underTheBar: true)
   }
 
   /// The synchronous half: `RunLoop` cannot be pumped from an `async` context.
