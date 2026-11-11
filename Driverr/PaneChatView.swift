@@ -1299,7 +1299,9 @@ struct PaneChatView: View {
       .padding(.horizontal, 16)
       .padding(.vertical, 10)
       .frame(maxWidth: .infinity)
-      .background(.thinMaterial)
+      // No safe-area edges: by default the material runs on into the composer's `safeAreaBar`
+      // inset and puts the pill on a grey slab.
+      .background(.thinMaterial, ignoresSafeAreaEdges: [])
       .overlay(alignment: .top) { Divider() }
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -1340,7 +1342,8 @@ struct PaneChatView: View {
       .frame(maxWidth: .infinity, alignment: .leading)
       .padding(.vertical, 10)
       .padding(.horizontal, 12)
-      .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 8))
+      // Tertiary, so the row reads as a row on `ChatColumn.ground` in both appearances.
+      .background(Color(.tertiarySystemBackground), in: RoundedRectangle(cornerRadius: 8))
     }
     .buttonStyle(.plain)
     .accessibilityElement(children: .ignore)
