@@ -36,12 +36,7 @@ struct AgentStopRow: View {
           .foregroundStyle(notice.isStale ? Color.secondary : Color.orange)
           .frame(width: glyphWidth, alignment: .center)
           .accessibilityHidden(true)
-        // Two lines at most, so a long error does not cover the conversation; none at
-        // accessibility sizes, where two would cut the reset time. VoiceOver reads the whole
-        // detail through the label either way.
-        text(for: notice)
-          .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
-          .fixedSize(horizontal: false, vertical: true)
+        words(for: notice)
       }
       .font(.footnote)
       .padding(.leading, 10)
@@ -55,12 +50,61 @@ struct AgentStopRow: View {
     }
   }
 
-  private func text(for notice: AgentStopNotice) -> Text {
-    let title = Text(notice.title)
+  /// Two lines at most, so a long error does not cover the conversation; none at
+  /// accessibility sizes, where two would cut the reset time. VoiceOver reads the whole detail
+  /// through the label either way.
+  private var lineLimit: Int? { dynamicTypeSize.isAccessibilitySize ? nil : 2 }
+
+  /// Title and detail as one run, `title · detail`, while the title, the dot and the detail's
+  /// first word fit on the first line. Otherwise the dot would end the first line alone, so the
+  /// detail goes under the title with no dot.
+  ///
+  /// The first choice is the whole run on one line, so the one-line capsule hugs its text. The
+  /// second wraps the run, and is offered only when its probe, the title, the dot and the first
+  /// word on one line, fits: the wrapped run reports no ideal width of its own, so the probe's
+  /// is what `ViewThatFits` measures.
+  @ViewBuilder
+  private func words(for notice: AgentStopNotice) -> some View {
+    if let detail = notice.detail {
+      ViewThatFits(in: .horizontal) {
+        run(title: notice, detail: detail)
+          .fixedSize(horizontal: true, vertical: false)
+          .lineLimit(1)
+        ZStack(alignment: .topLeading) {
+          let firstWord = detail.split(separator: " ").first.map(String.init) ?? detail
+          run(title: notice, detail: firstWord)
+            .fixedSize(horizontal: true, vertical: false)
+            .lineLimit(1)
+            .hidden()
+          run(title: notice, detail: detail)
+            .lineLimit(lineLimit)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(minWidth: 0, idealWidth: 0, alignment: .leading)
+        }
+        VStack(alignment: .leading, spacing: 2) {
+          title(notice)
+            .fixedSize(horizontal: false, vertical: true)
+          Text(detail)
+            .foregroundStyle(Color.secondary)
+            .lineLimit(lineLimit)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+      }
+    } else {
+      title(notice)
+        .lineLimit(lineLimit)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+  }
+
+  private func title(_ notice: AgentStopNotice) -> Text {
+    Text(notice.title)
       .fontWeight(.semibold)
       .foregroundStyle(notice.isStale ? Color.secondary : Color.primary)
-    guard let detail = notice.detail else { return title }
-    return Text("\(title) · \(Text(detail).foregroundStyle(Color.secondary))")
+  }
+
+  private func run(title notice: AgentStopNotice, detail: String) -> Text {
+    Text("\(title(notice)) · \(Text(detail).foregroundStyle(Color.secondary))")
   }
 }
 

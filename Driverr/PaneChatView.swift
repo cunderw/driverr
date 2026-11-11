@@ -214,6 +214,9 @@ struct PaneChatView: View {
   /// Unlike the bottom, the top inset carries no keyboard, so it can be read directly. See `ChatCollectionView.Coordinator.applyInsets`.
   @State private var chatSlotTopInset: CGFloat = 0
 
+  /// Show the Screen capsule's vertical padding, 8 pt at the default text size.
+  @ScaledMetric private var showScreenCapsulePadding: CGFloat = 8
+
 
   /// Whether the last automatic fetch failed, which disarms it.
   ///
@@ -1381,6 +1384,9 @@ struct PaneChatView: View {
       BorderedButtonLabel(TranscriptNotice.showScreenTitle)
         .font(.footnote.weight(.semibold))
         .padding(.horizontal, 14)
+        // Scaled, so the label is not tight against the glass at accessibility sizes. At the
+        // default size the 34 pt minimum decides the height either way.
+        .padding(.vertical, showScreenCapsulePadding)
         .frame(minHeight: 2 * ChatCapsuleGlass.radius)
         .chatCapsuleGlass(Capsule())
         .frame(minHeight: 44)
