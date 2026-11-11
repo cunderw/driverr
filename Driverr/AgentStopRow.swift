@@ -7,10 +7,15 @@ import SwiftUI
 /// presentation inside a presentation. It stands in for the record's own turn, which the
 /// parser hides while the stop stands. See `AgentStop` for the record shapes.
 ///
+/// A glass capsule floating over the top of the conversation, not a strip pinned above it.
+/// Title and detail are one run of text, so the live limit, `Usage limit reached · Resets at
+/// 5:40 PM.`, is one line and the shape is a capsule; a longer detail wraps to a second line
+/// and the shape becomes a rounded card. The reset time leads the detail, so it is always in
+/// the part that shows.
+///
 /// The only timeline entry is the reset time, so nothing animates while the notice is up.
 struct AgentStopRow: View {
   let stop: AgentStop
-  let horizontalInset: CGFloat
 
   /// One width for all five glyphs, so the text does not move when the glyph changes.
   /// `wifi.exclamationmark`, the widest, is about 19 pt. Scaled with Dynamic Type.
@@ -22,38 +27,49 @@ struct AgentStopRow: View {
     // second past the reset so the clock read when it fires is past it too.
     TimelineView(.explicit(stop.resetsAt.map { [$0.addingTimeInterval(1)] } ?? [])) { _ in
       let notice = AgentStopNotice(stop: stop, asOf: Date())
-      HStack(alignment: .firstTextBaseline, spacing: 10) {
+      HStack(alignment: .firstTextBaseline, spacing: 6) {
         Image(systemName: notice.symbolName)
           .foregroundStyle(notice.isStale ? Color.secondary : Color.orange)
           .frame(width: glyphWidth, alignment: .center)
           .accessibilityHidden(true)
-        VStack(alignment: .leading, spacing: 2) {
-          Text(notice.title)
-            .font(.footnote.weight(.semibold))
-            .foregroundStyle(notice.isStale ? Color.secondary : Color.primary)
-          if let detail = notice.detail {
-            // Three lines at most. VoiceOver still reads the whole detail through the label.
-            Text(detail)
-              .font(.footnote)
-              .foregroundStyle(.secondary)
-              .lineLimit(3)
-          }
-        }
-        Spacer(minLength: 0)
+        // Two lines at most. VoiceOver still reads the whole detail through the label.
+        text(for: notice)
+          .lineLimit(2)
+          .fixedSize(horizontal: false, vertical: true)
       }
-      // One accessibility element, so VoiceOver reads title and detail as one statement. The
-      // identifier is here because the card's background and padding sit outside it.
+      .font(.footnote)
+      .padding(.leading, 10)
+      .padding(.trailing, 14)
+      .padding(.vertical, 8)
+      .chatCapsuleGlass(RoundedRectangle(cornerRadius: ChatCapsuleGlass.radius, style: .continuous))
+      // One accessibility element, so VoiceOver reads title and detail as one statement.
       .accessibilityElement(children: .ignore)
       .accessibilityLabel(notice.accessibilityLabel)
       .accessibilityIdentifier("pane.chat.agentStop")
-      .padding(12)
-      // `.thinMaterial` is about 1.02:1 against the chat's `secondarySystemBackground` in light,
-      // so the card had no visible edge.
-      .background(
-        Color(.tertiarySystemBackground), in: RoundedRectangle(cornerRadius: 12, style: .continuous)
-      )
-      .padding(.horizontal, horizontalInset)
-      .padding(.top, 4)
     }
+  }
+
+  private func text(for notice: AgentStopNotice) -> Text {
+    let title = Text(notice.title)
+      .fontWeight(.semibold)
+      .foregroundStyle(notice.isStale ? Color.secondary : Color.primary)
+    guard let detail = notice.detail else { return title }
+    return Text("\(title) · \(Text(detail).foregroundStyle(Color.secondary))")
+  }
+}
+
+/// The chat's floating capsules: the composer's surface, `.regularMaterial` with an
+/// `opaqueSeparator` border, so they read as one family with the card below. See
+/// `PaneComposerBar.card`.
+enum ChatCapsuleGlass {
+  /// Half a one-line capsule's height, so one line draws as a capsule and two as a card.
+  static let radius: CGFloat = 17
+}
+
+extension View {
+  /// The composer's material and border, in `shape`.
+  func chatCapsuleGlass<S: InsettableShape>(_ shape: S) -> some View {
+    background(.regularMaterial, in: shape)
+      .overlay { shape.strokeBorder(Color(.opaqueSeparator), lineWidth: 1) }
   }
 }

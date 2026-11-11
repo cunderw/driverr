@@ -122,8 +122,8 @@ struct ChatRowInputs: Equatable {
   var activity: ChatActivity?
 }
 
-/// Fades the conversation out as it scrolls under a row pinned above it (the stop notice,
-/// Show the Screen, the back bar), instead of cutting it square.
+/// Fades the conversation out as it scrolls under a row pinned above it (the sub-agent back
+/// bar), instead of cutting it square.
 ///
 /// Drawn only while such a row stands above the slot. With none, the conversation reaches up
 /// under the navigation bar and the collection view's own `topEdgeEffect` softens it, because
