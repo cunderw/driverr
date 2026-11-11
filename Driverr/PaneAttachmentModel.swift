@@ -117,36 +117,47 @@ final class PaneAttachmentModel {
     }
   }
 
-  /// Takes a file the document picker handed over, already read, and starts the upload.
+  /// Takes a file the document picker handed over, reads it with `read`, and starts the
+  /// upload.
+  ///
+  /// The row is staged as `.preparing` at once, under this run's generation, and the read runs
+  /// inside it, so a Remove or another pick while a large file is still being read drops the
+  /// result. The caller detaches the read itself; see `TerminalSceneModel.attachPickedFile`.
   ///
   /// The bytes go as they are: no downscale, and no thumbnail, so the row draws a glyph. It
-  /// lands under `AttachmentFileName.remote`, and the row shows `name` as picked. Replaces
-  /// whatever was staged, as ``attach(_:)`` does.
-  func attach(file bytes: Data, name: String) {
+  /// lands under `AttachmentFileName.remote`, and the row shows `name` as picked. A file that
+  /// cannot be read, or is over the limit, settles on its sentence with nothing sent.
+  func attach(
+    fileNamed name: String,
+    reading read: @escaping @Sendable () async -> PickedFileOutcome
+  ) {
     cancelWork()
     generation += 1
     let run = generation
-    kind = .file(name: name)
-    thumbnail = nil
-    byteCount = bytes.count
-    phase = .ready
-    let fileName = AttachmentFileName.remote(original: name, unique: makeUnique())
-    work = Task { [weak self] in
-      await self?.send(bytes, fileName: fileName, run: run)
-    }
-  }
-
-  /// Shows a row that failed before anything was sent, such as a file too large to read.
-  ///
-  /// Replaces whatever was staged, as a new pick does, so the reader sees why this one did not
-  /// attach. Remove clears it.
-  func fail(_ sentence: String, kind: PaneAttachmentKind) {
-    cancelWork()
-    generation += 1
+    let kind = PaneAttachmentKind.file(name: name)
     self.kind = kind
+    phase = .preparing
     thumbnail = nil
     byteCount = 0
-    phase = .failed(sentence)
+    let fileName = AttachmentFileName.remote(original: name, unique: makeUnique())
+
+    work = Task { [weak self] in
+      let outcome = await read()
+      // The generation, not only cancellation: a cancel does not stop a read already done.
+      guard let self, !Task.isCancelled, self.generation == run else { return }
+      switch outcome {
+      case .contents(let bytes):
+        self.byteCount = bytes.count
+        self.phase = .ready
+        await self.send(bytes, fileName: fileName, run: run)
+      case .unreadable:
+        self.settle(run, .failed(PaneAttachmentFailureCopy.unreadable(kind)))
+      case .tooLarge(let limit):
+        self.settle(
+          run,
+          .failed(PaneAttachmentFailureCopy.tooLarge(limit: limit, at: self.place, kind: kind)))
+      }
+    }
   }
 
   /// Discards the pending image, cancelling an upload in flight.

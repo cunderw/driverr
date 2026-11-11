@@ -286,9 +286,10 @@ import Testing
     #expect(PaneAttachmentCopy.filesItem == "Files")
   }
 
-  /// The row names a file by what the reader picked, not by the name it lands under.
+  /// The glyph says "File". The name is beside it on the row, so VoiceOver reads it once.
   @Test func aFileRowIsLabelledWithTheFilesOwnName() {
-    #expect(PaneAttachmentCopy.label(for: file) == "build log.txt")
+    #expect(PaneAttachmentCopy.label(for: file) == "File")
+    #expect(PaneAttachmentCopy.fileLabel == "File")
     #expect(PaneAttachmentCopy.label(for: .image) == PaneAttachmentCopy.imageLabel)
   }
 
@@ -348,10 +349,20 @@ import Testing
   @Test func aFileOverTheLimitNamesTheLimitAndThePlace() {
     #expect(
       PaneAttachmentFailureCopy.tooLarge(limit: AttachmentLimit.host, at: .host, kind: file)
-        == "The file is over the 50.0 MB limit for the host.")
+        == "The file is over the 50 MB limit for the host.")
     #expect(
       PaneAttachmentFailureCopy.tooLarge(
         limit: AttachmentLimit.machine, at: .machine("studio"), kind: file)
         == "The file is over the 8.4 MB limit for studio.")
+  }
+
+  /// A round limit drops its `.0`. Only the limit: a moving count keeps its decimal.
+  @Test func aRoundLimitReadsWithoutADecimal() {
+    #expect(PaneAttachmentFailureCopy.limitSize(50_000_000) == "50 MB")
+    #expect(PaneAttachmentFailureCopy.limitSize(8 << 20) == "8.4 MB")
+    #expect(PaneAttachmentFailureCopy.limitSize(1000) == "1 KB")
+    #expect(PaneAttachmentFailureCopy.limitSize(999) == "999 bytes")
+    #expect(PaneAttachmentFailureCopy.limitSize(150_000_000) == "150 MB")
+    #expect(PaneAttachmentCopy.size(50_000_000) == "50.0 MB")
   }
 }

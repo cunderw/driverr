@@ -1041,8 +1041,8 @@ extension PaneComposerUITests {
 
     let row = require(app, "composer.attachment.row", "Expected a row for the picked file")
     XCTAssertEqual(
-      row.label, "build log.txt",
-      "A file's row is labelled with the name it was picked as.\nTree was:\n"
+      row.label, "File",
+      "A file's glyph says File; its name is the text beside it.\nTree was:\n"
         + app.debugDescription
     )
     // On screen, not only in the label: a `doc` glyph cannot say which file it is.

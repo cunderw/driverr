@@ -881,8 +881,7 @@ struct PaneComposerBar: View {
     }
     .frame(width: side, height: side)
     .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-    // Labelled, because the sentence beside it says everything about the image. A file is
-    // labelled with its name, which nothing else on the row shows.
+    // Labelled, because the text beside it says everything about the image or file.
     .accessibilityLabel(PaneAttachmentCopy.label(for: kind))
     .accessibilityIdentifier("composer.attachment.row")
   }

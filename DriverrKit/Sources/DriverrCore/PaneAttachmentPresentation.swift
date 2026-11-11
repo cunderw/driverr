@@ -90,12 +90,15 @@ public enum PaneAttachmentCopy {
   public static let removeButton = "Remove the attachment"
   /// What the row calls the thing it is showing, beside the thumbnail.
   public static let imageLabel = "Image"
+  /// ``imageLabel`` for a file. Not its name, which the row shows beside the glyph, so
+  /// VoiceOver would read it twice.
+  public static let fileLabel = "File"
 
-  /// ``imageLabel`` for an image, and a file's own name for a file.
+  /// The glyph's label for a kind.
   public static func label(for kind: PaneAttachmentKind) -> String {
     switch kind {
     case .image: imageLabel
-    case .file(let name): name
+    case .file: fileLabel
     }
   }
   /// While the picked bytes are being read down to PNG.
@@ -173,10 +176,19 @@ public enum PaneAttachmentFailureCopy {
   {
     switch place {
     case .host:
-      "The \(kind.noun) is over the \(PaneAttachmentCopy.size(limit)) limit for the host."
+      "The \(kind.noun) is over the \(limitSize(limit)) limit for the host."
     case .machine(let name):
-      "The \(kind.noun) is over the \(PaneAttachmentCopy.size(limit)) limit for \(name)."
+      "The \(kind.noun) is over the \(limitSize(limit)) limit for \(name)."
     }
+  }
+
+  /// A limit as `PaneAttachmentCopy.size` writes it, without a trailing `.0`: a round limit
+  /// reads "50 MB", and the core's 8 MiB still reads "8.4 MB". Here, not in `size`, which
+  /// writes counts that move and keeps its decimal so the row does not jump in width.
+  static func limitSize(_ bytes: Int) -> String {
+    let size = PaneAttachmentCopy.size(bytes)
+    guard let space = size.firstIndex(of: " "), size[..<space].hasSuffix(".0") else { return size }
+    return String(size[..<size.index(space, offsetBy: -2)]) + size[space...]
   }
 
   /// The upload landed and the hand-off did not. It says the host has the file, so the

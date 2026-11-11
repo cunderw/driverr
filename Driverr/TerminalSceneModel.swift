@@ -446,30 +446,18 @@ final class TerminalSceneModel {
   /// ``attachPickedImage(_:)`` does an image.
   ///
   /// The read is detached, because a file can be tens of megabytes and this type is
-  /// `@MainActor`. The limit is the one for where the file is going, checked before the read.
-  /// A file that cannot be sent still gets a row, saying why, through the upload's own inline
-  /// failure.
+  /// `@MainActor`. It runs inside the attachment's own run, so a Remove or another pick while
+  /// it reads drops its result. The limit is the one for where the file is going, checked
+  /// before the read. A file that cannot be sent still gets a row, saying why.
   func attachPickedFile(url: URL) {
     isShowingFileImporter = false
     guard let pane = currentPane, let attachment = model.composers?.model(for: pane).attachment
     else { return }
-    let place = attachment.place
-    let limit = AttachmentLimit.limit(for: place)
-    let name = url.lastPathComponent
-    let kind = PaneAttachmentKind.file(name: name)
-    Task {
-      let outcome = await Task.detached(priority: .userInitiated) {
+    let limit = AttachmentLimit.limit(for: attachment.place)
+    attachment.attach(fileNamed: url.lastPathComponent) {
+      await Task.detached(priority: .userInitiated) {
         PickedFileReader.read(url: url, limit: limit)
       }.value
-      switch outcome {
-      case .contents(let bytes):
-        attachment.attach(file: bytes, name: name)
-      case .unreadable:
-        attachment.fail(PaneAttachmentFailureCopy.unreadable(kind), kind: kind)
-      case .tooLarge(let limit):
-        attachment.fail(
-          PaneAttachmentFailureCopy.tooLarge(limit: limit, at: place, kind: kind), kind: kind)
-      }
     }
   }
 
