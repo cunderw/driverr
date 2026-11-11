@@ -535,6 +535,10 @@ struct ChatCollectionView<Row: View>: UIViewRepresentable {
       collection.contentInset.bottom = inset
       // Otherwise the indicator stops short of the composer, as if the conversation did.
       collection.verticalScrollIndicatorInsets.bottom = inset
+      // The composer floats above the keyboard, and the interactive dismissal starts only
+      // when the finger reaches the keyboard's top, so a thumb dragged across the composer
+      // took nothing with it. Starting at the composer's top edge lets it take the keyboard.
+      collection.keyboardLayoutGuide.keyboardDismissPadding = inset
     }
 
     /// Jump-to-latest, composer focus and a pane switch: go to the end and follow it.

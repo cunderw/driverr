@@ -2419,7 +2419,7 @@ final class PaneChatUITests: XCTestCase {
 
     // The drag has to stay above the keyboard. The scroll view runs the whole way down the
     // window, so `swipeDown()` starts on the keys and scrolls nothing. Both ends come from the
-    // chat's frame clipped to the keyboard's top.
+    // chat's frame clipped to the keyboard's top, and the end also to the composer's.
     let chat = element(app, "pane.chat")
     let chatFrame = chat.frame
     let visibleHeight = min(chatFrame.maxY, opened.minY) - chatFrame.minY
@@ -2431,7 +2431,8 @@ final class PaneChatUITests: XCTestCase {
       withNormalizedOffset: CGVector(dx: 0.5, dy: (visibleHeight * 0.15) / chatFrame.height))
     // And above the composer: a drag that reaches the composer's card starts the keyboard's
     // interactive dismissal (`testDraggingOntoTheComposerTakesTheKeyboardDown`).
-    let endY = min(visibleHeight * 0.85, (composerTop(in: app) ?? opened.minY) - chatFrame.minY - 12)
+    let endY = min(
+      visibleHeight * 0.85, (composerTop(in: app) ?? opened.minY) - chatFrame.minY - 12)
     let end = chat.coordinate(
       withNormalizedOffset: CGVector(dx: 0.5, dy: endY / chatFrame.height))
 
