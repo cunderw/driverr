@@ -699,11 +699,12 @@ final class PaneChatUITests: XCTestCase {
     add(closed)
   }
 
-  /// The list under the provenance row names every sub-agent the session's meta files hold,
-  /// including one whose spawn line is not on the page, and a row opens that sub-agent.
+  /// The bar's sub-agents button opens a list naming every sub-agent the session's meta files
+  /// hold, including one whose spawn line is not on the page, and a row opens that sub-agent.
   ///
-  /// The claim is wiring: the list command through the model to the bar, and a row's tap to
-  /// `openSubagent`. The mapping and the state merge are kit tests (`SubagentListTests`,
+  /// The claim is wiring: the list command through the model to the bar's button and the
+  /// sheet at `ContentView`'s root, and a row's tap to `openSubagent` once the sheet is gone.
+  /// The mapping and the state merge are kit tests (`SubagentListTests`,
   /// `SubagentListReaderTests`). The slow transcript makes the page, and so the list, arrive
   /// after the chat is up, as on a phone.
   func testTheSubagentListNamesEverySubagentAndARowOpensOne() {
@@ -711,12 +712,11 @@ final class PaneChatUITests: XCTestCase {
 
     tapPane(app, titled: "needs a decision")
     require(app, "pane.chat", "Expected the pane to open on its chat")
-    let bar = require(
-      app, "pane.chat.subagents", "Expected the sub-agent list under the provenance row",
-      timeout: 20)
-    XCTAssertEqual(bar.label, "3 sub-agents · 1 running")
-    XCTAssertEqual(bar.value as? String, "Collapsed")
-    bar.tap()
+    let button = require(
+      app, "pane.subagents", "Expected the sub-agents button in the pane bar", timeout: 20)
+    XCTAssertEqual(button.label, "Sub-agents")
+    XCTAssertEqual(button.value as? String, "3", "Expected the bar to count every meta file")
+    button.tap()
 
     let rows = app.descendants(matching: .any).matching(identifier: "pane.chat.subagents.row")
     // Spawned before the page's first turn, so only the meta files know it.
@@ -729,12 +729,18 @@ final class PaneChatUITests: XCTestCase {
     XCTAssertTrue(
       rows.element(matching: NSPredicate(format: "label CONTAINS %@", "verifier-7")).exists,
       "Expected the teammate's row")
-    let expanded = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
-    expanded.name = "subagent-list-expanded"
-    expanded.lifetime = .keepAlways
-    add(expanded)
+    XCTAssertTrue(
+      app.navigationBars.staticTexts["3 sub-agents · 1 running"].exists,
+      "Expected the sheet's title to count the agents and the running one.\nTree was:\n"
+        + app.debugDescription)
+    let open = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+    open.name = "subagent-sheet"
+    open.lifetime = .keepAlways
+    add(open)
     lookup.tap()
 
+    // XCUITest sees through a sheet still sliding away, so wait for it to be gone.
+    requireGone(app, "pane.chat.subagents.row", "A row must close the list")
     let back = require(app, "pane.chat.subagent.back", "Expected the back bar over the sub-agent")
     XCTAssertEqual(
       require(app, "pane.chat.subagent.title", "Expected the sub-agent's name").label, "Explore")
@@ -743,12 +749,11 @@ final class PaneChatUITests: XCTestCase {
     XCTAssertTrue(
       prompt.waitForExistence(timeout: 20),
       "Expected the off-page sub-agent's own prompt.\nTree was:\n\(app.debugDescription)")
-    requireGone(app, "pane.chat.subagents", "The list is not drawn over a sub-agent's chat")
+    requireGone(app, "pane.subagents", "The button is not offered over a sub-agent's chat")
 
     back.tap()
     requireGone(app, "pane.chat.subagent.back", "Back must return to the pane's chat")
-    let returned = require(app, "pane.chat.subagents", "The list must come back with the pane's chat")
-    XCTAssertEqual(returned.value as? String, "Collapsed", "Opening a row closes the list")
+    require(app, "pane.subagents", "The button must come back with the pane's chat")
   }
 
   /// Leaving the pane scene closes a sub-agent opened in it, so coming back finds the pane's

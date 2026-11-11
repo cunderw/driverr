@@ -1,8 +1,8 @@
 import DriverrCore
 import SwiftUI
 
-/// The pane scene's two sheets, the pane switcher and Settings, attached once at
-/// `ContentView`'s root for both routes.
+/// The pane scene's sheets, the pane switcher, the chat's sub-agent list and Settings,
+/// attached once at `ContentView`'s root for both routes.
 ///
 /// **This exists because the detail column may not present** (CLAUDE.md). The phone's scene
 /// is a push, not a presentation, so the root serves both routes. The flags live on
@@ -23,6 +23,16 @@ struct TerminalSceneSheets: ViewModifier {
   let presenter: TerminalPresenter
 
   @Environment(\.settingsModel) private var settingsModel
+
+  /// The sub-agent a row picked, opened once the list has finished going away. See
+  /// `openPickedSubagent()`.
+  @State private var pickedSubagent: PickedSubagent?
+
+  private struct PickedSubagent {
+    let paneID: String
+    let link: SubagentLink
+    let title: String
+  }
 
   /// Whether there is a scene for these sheets to be about.
   ///
@@ -46,6 +56,44 @@ struct TerminalSceneSheets: ViewModifier {
       .sheet(isPresented: panePresentation) {
         paneSheet
       }
+      .sheet(isPresented: subagentPresentation, onDismiss: openPickedSubagent) {
+        subagentSheet
+      }
+  }
+
+  /// The pane's own conversation, from the connection's existing models, as `agentStop:` below
+  /// reads it. The sheet opens only over a chat that has one.
+  private var chatModel: PaneTranscriptModel? {
+    guard let scene, let paneID = scene.currentPane?.id else { return nil }
+    return connections.existingModel(for: scene.host.id)?.transcripts?.existingModel(for: paneID)
+  }
+
+  /// The session's sub-agents, from `chatModel`.
+  @ViewBuilder
+  private var subagentSheet: some View {
+    if let scene, let chatModel {
+      SubagentSheetView(
+        list: chatModel.subagentList,
+        turns: chatModel.transcript?.turns ?? [],
+        isRegularWidth: route == .detailColumn,
+        onOpen: { row in
+          pickedSubagent = PickedSubagent(
+            paneID: chatModel.pane.id, link: row.summary.link, title: row.summary.title)
+          scene.hideSubagentSheet()
+        },
+        onDone: { scene.hideSubagentSheet() }
+      )
+    }
+  }
+
+  /// Opens the row the list was closed by, once it is gone, so the chat and the bar under it
+  /// do not change while the sheet is still sliding away. Only onto the pane it was picked
+  /// on: a scene that closed or moved meanwhile drops the pick.
+  private func openPickedSubagent() {
+    guard let picked = pickedSubagent else { return }
+    pickedSubagent = nil
+    guard let chatModel, chatModel.pane.id == picked.paneID else { return }
+    chatModel.openSubagent(link: picked.link, title: picked.title)
   }
 
   /// The pane switcher, built from `scene.strip`, the same value the toolbar badge counts,
@@ -104,6 +152,17 @@ struct TerminalSceneSheets: ViewModifier {
       set: { raised in
         guard isAttached, let scene else { return }
         raised ? scene.showPaneSheet() : scene.hidePaneSheet()
+      }
+    )
+  }
+
+  /// The sub-agent list's `isPresented`, for the reason above.
+  private var subagentPresentation: Binding<Bool> {
+    Binding(
+      get: { isAttached && scene?.isShowingSubagentSheet == true },
+      set: { raised in
+        guard isAttached, let scene else { return }
+        raised ? scene.showSubagentSheet() : scene.hideSubagentSheet()
       }
     )
   }

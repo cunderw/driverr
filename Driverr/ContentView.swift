@@ -451,7 +451,8 @@ struct ContentView: View {
     let scene = terminalPresenter.request?.scene
     let isRootPresenting =
       isShowingSettings || isShowingKeys || hostForm != nil || hostPendingDeletion != nil
-      || keySheet != nil || scene?.isShowingPaneSheet == true || scene?.isShowingSettings == true
+      || keySheet != nil || scene?.isShowingPaneSheet == true
+      || scene?.isShowingSubagentSheet == true || scene?.isShowingSettings == true
       || scene?.isShowingPhotoPicker == true || scene?.isShowingFileImporter == true
     guard let offer = connections.pendingHookOffer(isRootPresenting: isRootPresenting) else { return nil }
     return HookSheetRequest(

@@ -8,9 +8,9 @@ import Testing
 struct KeyCommandTests {
   @Test("the catalogue holds every title of the eighteen bindings")
   func holdsEveryBinding() {
-    // Add Host, Settings, nine places, next, previous, the surface key's two titles, ⌘W's seven
+    // Add Host, Settings, nine places, next, previous, the surface key's two titles, ⌘W's eight
     // titles, Escape and Send. The two ⌘, buttons are one command.
-    #expect(KeyCommand.all.count == 24)
+    #expect(KeyCommand.all.count == 25)
     #expect(Set(KeyCommand.all).count == KeyCommand.all.count)
   }
 
@@ -44,10 +44,12 @@ struct KeyCommandTests {
   /// The order matches Escape's.
   @Test("⌘W closes what is up before it leaves the pane")
   func commandWClosesTheFrontmostThing() {
-    func commandW(sheet: Bool, settings: Bool, photos: Bool, files: Bool = false) -> KeyCommand {
+    func commandW(
+      sheet: Bool, subagents: Bool = false, settings: Bool, photos: Bool, files: Bool = false
+    ) -> KeyCommand {
       KeyCommand.commandW(
-        isShowingPaneSheet: sheet, isShowingSettings: settings, isShowingPhotoPicker: photos,
-        isShowingFileImporter: files
+        isShowingPaneSheet: sheet, isShowingSubagentSheet: subagents, isShowingSettings: settings,
+        isShowingPhotoPicker: photos, isShowingFileImporter: files
       )
     }
     #expect(commandW(sheet: false, settings: false, photos: false) == .leavePane)
@@ -58,12 +60,18 @@ struct KeyCommandTests {
     #expect(commandW(sheet: true, settings: true, photos: true, files: true) == .closeSwitcher)
     #expect(commandW(sheet: false, settings: true, photos: true, files: true) == .closeSettings)
     #expect(commandW(sheet: false, settings: false, photos: true, files: true) == .closePhotos)
+    #expect(commandW(sheet: false, subagents: true, settings: false, photos: false) == .closeSubagents)
+    #expect(
+      commandW(sheet: false, subagents: true, settings: true, photos: true, files: true)
+        == .closeSubagents)
+    #expect(commandW(sheet: true, subagents: true, settings: false, photos: false) == .closeSwitcher)
   }
 
   @Test("every ⌘W title is in one exclusive group")
   func commandWTitlesShareAGroup() {
     let group: Set<KeyCommand> = [
-      .leavePane, .closeSwitcher, .closeSettings, .closePhotos, .closeFiles, .leaveHost, .close,
+      .leavePane, .closeSwitcher, .closeSubagents, .closeSettings, .closePhotos, .closeFiles,
+      .leaveHost, .close,
     ]
     #expect(KeyCommand.exclusiveGroups.contains(group))
   }

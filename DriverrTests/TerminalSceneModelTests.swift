@@ -2823,6 +2823,31 @@ struct TerminalSceneModelTests {
     #expect(thumbnails.hasRead)
   }
 
+  /// Raised by the bar's sub-agents button and lowered by Done, a row, Escape or ⌘W. Leaving
+  /// the scene lowers it too, so a return does not find the list still up.
+  @Test("the sub-agent list's flag rises and falls, and leaving the scene lowers it")
+  func subagentSheetFlag() async throws {
+    let control = FakeControl()
+    let (scene, _) = await makeScene(herdr: control, responder: Self.everythingPaints)
+    scene.start()
+    await scene.settle()
+
+    #expect(!scene.isShowingSubagentSheet)
+    scene.showSubagentSheet()
+    #expect(scene.isShowingSubagentSheet)
+    let focusBefore = scene.focusRequest
+    scene.hideSubagentSheet()
+    #expect(!scene.isShowingSubagentSheet)
+    // Opened only over the chat, so no terminal is waiting for the keyboard.
+    #expect(scene.focusRequest == focusBefore)
+    scene.hideSubagentSheet()
+    #expect(!scene.isShowingSubagentSheet, "a second close is harmless")
+
+    scene.showSubagentSheet()
+    scene.close()
+    #expect(!scene.isShowingSubagentSheet)
+  }
+
   @Test("closing the pane sheet stops the reads and asks the terminal for the keyboard back")
   func closingThePaneSheetStopsTheReads() async throws {
     // Without the keyboard bump, the terminal underneath looks focused and swallows every

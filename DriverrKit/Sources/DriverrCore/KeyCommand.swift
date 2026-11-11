@@ -32,6 +32,8 @@ public enum KeyCommand: Hashable, Sendable {
   case leavePane
   /// ⌘W while the pane switcher is up over the scene: closes the switcher.
   case closeSwitcher
+  /// ⌘W while the chat's sub-agent list is up over the scene: closes it.
+  case closeSubagents
   /// ⌘W while the scene's Settings sheet is up: closes it.
   case closeSettings
   /// ⌘W while the Photos picker is up: closes it.
@@ -72,8 +74,8 @@ public enum KeyCommand: Hashable, Sendable {
     [.addHost, .settings]
     + (1...9).map { KeyCommand.goToPlace($0) }
     + [.nextPane, .previousPane, .showTerminal, .showChat]
-    + [.leavePane, .closeSwitcher, .closeSettings, .closePhotos, .closeFiles, .leaveHost, .close]
-    + [.dismiss, .send]
+    + [.leavePane, .closeSwitcher, .closeSubagents, .closeSettings, .closePhotos, .closeFiles]
+    + [.leaveHost, .close, .dismiss, .send]
 
   /// What the system lists for this command.
   public var title: String {
@@ -87,6 +89,7 @@ public enum KeyCommand: Hashable, Sendable {
     case .showChat: "Show Chat"
     case .leavePane: "Leave Pane"
     case .closeSwitcher: "Close Switcher"
+    case .closeSubagents: "Close Sub-agents"
     case .closeSettings: "Close Settings"
     case .closePhotos: "Close Photos"
     case .closeFiles: "Close Files"
@@ -105,8 +108,8 @@ public enum KeyCommand: Hashable, Sendable {
     case .nextPane: .character("]")
     case .previousPane: .character("[")
     case .showTerminal, .showChat: .character("t")
-    case .leavePane, .closeSwitcher, .closeSettings, .closePhotos, .closeFiles, .leaveHost,
-      .close:
+    case .leavePane, .closeSwitcher, .closeSubagents, .closeSettings, .closePhotos, .closeFiles,
+      .leaveHost, .close:
       .character("w")
     case .dismiss: .escape
     case .send: .return
@@ -126,10 +129,13 @@ public enum KeyCommand: Hashable, Sendable {
   ///
   /// ⌘⇧T is one key whose title follows the surface it will show. ⌘W closes whatever the
   /// scene has up over itself, and leaves the pane only when there is nothing up; see
-  /// `commandW(isShowingPaneSheet:isShowingSettings:isShowingPhotoPicker:isShowingFileImporter:)`.
+  /// `commandW(isShowingPaneSheet:isShowingSubagentSheet:isShowingSettings:isShowingPhotoPicker:isShowingFileImporter:)`.
   public static let exclusiveGroups: [Set<KeyCommand>] = [
     [.showTerminal, .showChat],
-    [.leavePane, .closeSwitcher, .closeSettings, .closePhotos, .closeFiles, .leaveHost, .close],
+    [
+      .leavePane, .closeSwitcher, .closeSubagents, .closeSettings, .closePhotos, .closeFiles,
+      .leaveHost, .close,
+    ],
   ]
 
   /// What ⌘W does in a pane scene right now: the frontmost thing closes, and the pane is left
@@ -141,11 +147,13 @@ public enum KeyCommand: Hashable, Sendable {
   /// `TerminalScreen.escapeAction`.
   public static func commandW(
     isShowingPaneSheet: Bool,
+    isShowingSubagentSheet: Bool,
     isShowingSettings: Bool,
     isShowingPhotoPicker: Bool,
     isShowingFileImporter: Bool
   ) -> KeyCommand {
     if isShowingPaneSheet { return .closeSwitcher }
+    if isShowingSubagentSheet { return .closeSubagents }
     if isShowingSettings { return .closeSettings }
     if isShowingPhotoPicker { return .closePhotos }
     if isShowingFileImporter { return .closeFiles }
