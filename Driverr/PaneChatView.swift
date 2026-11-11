@@ -256,9 +256,6 @@ struct PaneChatView: View {
   /// keeps `@State` when a different model arrives in the same place, and the picker would
   /// offer another pane's files.
   @State private var isChoosingFile = false
-  /// Whether the sub-agent list above the conversation is open. Closed on a pane switch
-  /// and when a row opens its sub-agent.
-  @State private var isSubagentListOpen = false
 
   /// This view's outer width, passed to each `TranscriptTurnView` as `estimatedContentWidth`.
   /// A row corrects it to its exact width a frame later; this keeps a bounded turn from
@@ -410,15 +407,9 @@ struct PaneChatView: View {
       autoLoadFailed = false
       readerState = ChatReaderState()
     }
-    // The list is hidden while the composer is collapsed, and comes back closed, so the
-    // keyboard going down does not open it over the conversation.
-    .onChange(of: isComposerCollapsed) { _, collapsed in
-      if collapsed { isSubagentListOpen = false }
-    }
     .onChange(of: model.pane.id) {
       isShowingScreen = false
       isChoosingFile = false
-      isSubagentListOpen = false
       // SwiftUI keeps the coordinator across a pane switch, so without this the new pane's chat
       // would hold an anchor from the previous pane's transcript instead of opening at the
       // newest turn.
@@ -449,20 +440,8 @@ struct PaneChatView: View {
   @ViewBuilder
   private func chat(source: TranscriptSource, transcript: Transcript) -> some View {
     // The provenance row is not here: it is the conversation's first row, so it scrolls away
-    // and the conversation meets the bar. See `ChatItem.provenance`.
-    //
-    // Every sub-agent the session spawned, from its meta files. Not over a sub-agent's chat,
-    // where the back bar holds this place, and not while the composer is collapsed, for the
-    // stop row's reason below.
-    if !isShowingSubagent, !isComposerCollapsed, !model.subagentList.isEmpty {
-      SubagentListBar(
-        list: model.subagentList, turns: transcript.turns, isExpanded: $isSubagentListOpen,
-        horizontalInset: chatGutter
-      ) { row in
-        isSubagentListOpen = false
-        model.openSubagent(link: row.summary.link, title: row.summary.title)
-      }
-    }
+    // and the conversation meets the bar. See `ChatItem.provenance`. The session's sub-agents
+    // are not here either: the bar's sub-agents button lists them (`SubagentSheetView`).
     // The agent stopped on a failed API request. Hidden while the composer is collapsed, like
     // the row below, and over a sub-agent's chat, whose stop is not the pane's.
     if let stop = transcript.agentStop, !isComposerCollapsed, !isShowingSubagent {
@@ -545,7 +524,7 @@ struct PaneChatView: View {
         //
         // The top too, so rows pass under the navigation bar's glass and the status bar. It
         // acts only where the slot meets the safe area's top edge: with a pinned row above it
-        // (the sub-agent list, the stop notice, Show the Screen, the back bar) the slot's top
+        // (the stop notice, Show the Screen, the back bar) the slot's top
         // inset is 0 and the conversation stops under that row as before. Never on the
         // terminals; see `TerminalScreen.terminals`.
         .ignoresSafeArea(.container, edges: [.top, .bottom])
@@ -678,7 +657,7 @@ struct PaneChatView: View {
   /// The gutter every row kind shares. See `ChatColumn.gutter(forColumnWidth:)`.
   ///
   /// Turn cards and the provenance row get it from their section. Rows that are not cells,
-  /// such as the sub-agent list and the Show the Screen row, must ask for it here, or they draw
+  /// such as the stop notice and the Show the Screen row, must ask for it here, or they draw
   /// inside the edge
   /// the cards and the composer share. `contentWidthEstimate` is 0 until measured, so the
   /// phone's answer applies until then.

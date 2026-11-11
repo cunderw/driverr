@@ -387,6 +387,9 @@ final class TerminalSceneModel {
   /// view's detail column, which must not present (CLAUDE.md). The sheets attach at the
   /// root instead (`TerminalSceneSheets`), which has to read this state.
   private(set) var isShowingPaneSheet = false
+  /// Whether the chat's sub-agent list is up, opened from the bar's sub-agents button. Here
+  /// for the reason above.
+  private(set) var isShowingSubagentSheet = false
   /// Whether the Settings sheet the pane menu opens is up. Here for the reason above.
   private(set) var isShowingSettings = false
   /// Whether the system Photos picker is up. `PhotosPicker` presents, so it attaches at the
@@ -492,6 +495,17 @@ final class TerminalSceneModel {
     isShowingPaneSheet = false
     paneThumbnails?.close()
     focusRequest += 1
+  }
+
+  /// Opens the sub-agent list over the chat.
+  func showSubagentSheet() {
+    isShowingSubagentSheet = true
+  }
+
+  /// Closes the sub-agent list. Idempotent, like `hidePaneSheet()`. Asks for no keyboard: the
+  /// list opens only over the chat, so no terminal is waiting for focus under it.
+  func hideSubagentSheet() {
+    isShowingSubagentSheet = false
   }
 
   /// Opens Settings over the scene.
@@ -686,6 +700,7 @@ final class TerminalSceneModel {
   func close() {
     isClosed = true
     isShowingPaneSheet = false
+    isShowingSubagentSheet = false
     isShowingSettings = false
     paneThumbnails?.close()
     reconnectWork?.cancel()

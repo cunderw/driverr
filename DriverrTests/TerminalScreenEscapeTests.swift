@@ -21,6 +21,7 @@ struct TerminalScreenEscapeTests {
     #expect(
       TerminalScreen.escapeAction(
         isShowingPaneSheet: false,
+        isShowingSubagentSheet: false,
         isShowingSettings: false,
         hasPrompt: false,
         terminalHoldsKeyboard: true
@@ -35,6 +36,7 @@ struct TerminalScreenEscapeTests {
     #expect(
       TerminalScreen.escapeAction(
         isShowingPaneSheet: false,
+        isShowingSubagentSheet: false,
         isShowingSettings: false,
         hasPrompt: false,
         terminalHoldsKeyboard: false
@@ -49,6 +51,7 @@ struct TerminalScreenEscapeTests {
     #expect(
       TerminalScreen.escapeAction(
         isShowingPaneSheet: true,
+        isShowingSubagentSheet: false,
         isShowingSettings: false,
         hasPrompt: false,
         terminalHoldsKeyboard: true
@@ -61,6 +64,7 @@ struct TerminalScreenEscapeTests {
     #expect(
       TerminalScreen.escapeAction(
         isShowingPaneSheet: false,
+        isShowingSubagentSheet: false,
         isShowingSettings: true,
         hasPrompt: true,
         terminalHoldsKeyboard: true
@@ -75,6 +79,7 @@ struct TerminalScreenEscapeTests {
     #expect(
       TerminalScreen.escapeAction(
         isShowingPaneSheet: false,
+        isShowingSubagentSheet: false,
         isShowingSettings: false,
         hasPrompt: true,
         terminalHoldsKeyboard: false
@@ -83,10 +88,48 @@ struct TerminalScreenEscapeTests {
     #expect(
       TerminalScreen.escapeAction(
         isShowingPaneSheet: false,
+        isShowingSubagentSheet: false,
         isShowingSettings: false,
         hasPrompt: true,
         terminalHoldsKeyboard: true
       ) == nil
+    )
+  }
+
+  @Test("the sub-agent list closes, whatever the surface behind it is")
+  func subagentSheetClosesRegardlessOfFocus() {
+    #expect(
+      TerminalScreen.escapeAction(
+        isShowingPaneSheet: false,
+        isShowingSubagentSheet: true,
+        isShowingSettings: false,
+        hasPrompt: true,
+        terminalHoldsKeyboard: true
+      ) == .closeSubagentSheet
+    )
+  }
+
+  /// The order ⌘W uses (`KeyCommand.commandW`): the switcher, then the sub-agent list, then
+  /// Settings.
+  @Test("the sub-agent list is answered after the pane sheet and before Settings")
+  func subagentSheetOrder() {
+    #expect(
+      TerminalScreen.escapeAction(
+        isShowingPaneSheet: true,
+        isShowingSubagentSheet: true,
+        isShowingSettings: false,
+        hasPrompt: false,
+        terminalHoldsKeyboard: false
+      ) == .closePaneSheet
+    )
+    #expect(
+      TerminalScreen.escapeAction(
+        isShowingPaneSheet: false,
+        isShowingSubagentSheet: true,
+        isShowingSettings: true,
+        hasPrompt: false,
+        terminalHoldsKeyboard: false
+      ) == .closeSubagentSheet
     )
   }
 
@@ -97,6 +140,7 @@ struct TerminalScreenEscapeTests {
     #expect(
       TerminalScreen.escapeAction(
         isShowingPaneSheet: true,
+        isShowingSubagentSheet: false,
         isShowingSettings: true,
         hasPrompt: true,
         terminalHoldsKeyboard: false

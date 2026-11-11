@@ -153,9 +153,15 @@ struct TerminalScreen: View {
             .accessibilityIdentifier("terminal.back")
           }
         }
-        // The chat or terminal switch, in its own capsule ahead of Panes and ⋯. Only on a
-        // pane with two surfaces, so the spacer goes with it and a shell pane gets no gap.
+        // The chat or terminal switch, in a capsule ahead of Panes and ⋯. Only on a pane
+        // with two surfaces, so the spacer goes with it and a shell pane gets no gap.
+        //
+        // The sub-agents button shares the toggle's capsule, because both are about this pane's
+        // chat. It is first, so the toggle does not move when it comes and goes.
         if showsSurfaceToggle {
+          if let subagentList = shownSubagentList {
+            ToolbarItem(placement: .primaryAction) { subagentsButton(subagentList) }
+          }
           ToolbarItem(placement: .primaryAction) { surfaceToggle }
           ToolbarSpacer(.fixed, placement: .primaryAction)
         }
@@ -709,6 +715,40 @@ struct TerminalScreen: View {
       destination == .terminal ? "pane.surface.terminal" : "pane.surface.chat")
   }
 
+  /// The session's sub-agents while the bar offers them: the chat is up with the pane's own
+  /// conversation, and the session spawned at least one. `nil` otherwise. A sub-agent's chat
+  /// has its back bar instead.
+  private var shownSubagentList: SubagentList? {
+    guard isShowingChat, let chatModel, !chatModel.isShowingSubagent,
+      !chatModel.subagentList.isEmpty
+    else { return nil }
+    return chatModel.subagentList
+  }
+
+  /// Opens the session's sub-agent list. The glyph and how many the session spawned, so the
+  /// reason to open it shows without opening it.
+  ///
+  /// **An `HStack`, not a `Label`**, for `surfaceToggle`'s reason. The count is not red: red
+  /// on this bar is the Panes count, which means a pane is waiting.
+  private func subagentsButton(_ list: SubagentList) -> some View {
+    Button {
+      scene.showSubagentSheet()
+    } label: {
+      HStack(spacing: 4) {
+        Image(systemName: "person.2")
+        Text(list.total, format: .number)
+          .monospacedDigit()
+      }
+    }
+    // Label-coloured, like every glyph on this bar (CLAUDE.md, Style).
+    .tint(Color.primary)
+    .accessibilityLabel("Sub-agents")
+    .accessibilityValue(Text(list.total, format: .number))
+    .accessibilityHint(TranscriptChatCopy.subagentListHint)
+    .help("Sub-agents")
+    .accessibilityIdentifier("pane.subagents")
+  }
+
   /// The two surfaces: the terminals always laid out, the chat drawn over them.
   ///
   /// **The terminals are never torn down by the switch.** An `if` would take their
@@ -949,8 +989,8 @@ struct TerminalScreen: View {
       toggleSurface: { scene.show(surface.toggled) },
       // A `focusedSceneValue` is scene-wide, so the menu is still live while the scene
       // presents over itself. The pane's own keys go quiet then; see `PaneKeyActions`.
-      isPresenting: scene.isShowingPaneSheet || scene.isShowingSettings
-        || scene.isShowingPhotoPicker || scene.isShowingFileImporter,
+      isPresenting: scene.isShowingPaneSheet || scene.isShowingSubagentSheet
+        || scene.isShowingSettings || scene.isShowingPhotoPicker || scene.isShowingFileImporter,
       isBehindRootPresentation: isBehindRootPresentation,
       commandW: commandW,
       // ⌘W closes what is up over the scene, or else leaves it, through
@@ -958,6 +998,7 @@ struct TerminalScreen: View {
       performCommandW: {
         switch commandW {
         case .closeSwitcher: scene.hidePaneSheet()
+        case .closeSubagents: scene.hideSubagentSheet()
         case .closeSettings: scene.hideSettings()
         case .closePhotos: scene.hidePhotoPicker()
         case .closeFiles: scene.hideFileImporter()
@@ -971,6 +1012,7 @@ struct TerminalScreen: View {
   private var commandW: KeyCommand {
     KeyCommand.commandW(
       isShowingPaneSheet: scene.isShowingPaneSheet,
+      isShowingSubagentSheet: scene.isShowingSubagentSheet,
       isShowingSettings: scene.isShowingSettings,
       isShowingPhotoPicker: scene.isShowingPhotoPicker,
       isShowingFileImporter: scene.isShowingFileImporter
@@ -981,6 +1023,7 @@ struct TerminalScreen: View {
   /// A value, so `TerminalScreenEscapeTests` can assert it; XCUITest cannot send Escape.
   enum EscapeAction: Equatable {
     case closePaneSheet
+    case closeSubagentSheet
     case closeSettings
     case dismissPrompt
   }
@@ -991,11 +1034,13 @@ struct TerminalScreen: View {
   ///   ignore it, because a sheet takes first responder whatever the surface says.
   static func escapeAction(
     isShowingPaneSheet: Bool,
+    isShowingSubagentSheet: Bool,
     isShowingSettings: Bool,
     hasPrompt: Bool,
     terminalHoldsKeyboard: Bool
   ) -> EscapeAction? {
     if isShowingPaneSheet { return .closePaneSheet }
+    if isShowingSubagentSheet { return .closeSubagentSheet }
     if isShowingSettings { return .closeSettings }
     // The prompt bar is inline, so the terminal may still hold the keyboard, and then
     // Escape belongs to the far side.
@@ -1006,6 +1051,7 @@ struct TerminalScreen: View {
   private var escapeAction: EscapeAction? {
     Self.escapeAction(
       isShowingPaneSheet: scene.isShowingPaneSheet,
+      isShowingSubagentSheet: scene.isShowingSubagentSheet,
       isShowingSettings: scene.isShowingSettings,
       hasPrompt: scene.actions?.prompt != nil,
       terminalHoldsKeyboard: terminalHoldsKeyboard
@@ -1023,6 +1069,7 @@ struct TerminalScreen: View {
   private func perform(_ action: EscapeAction) {
     switch action {
     case .closePaneSheet: scene.hidePaneSheet()
+    case .closeSubagentSheet: scene.hideSubagentSheet()
     case .closeSettings: scene.hideSettings()
     case .dismissPrompt: scene.actions?.dismissPrompt()
     }
