@@ -45,8 +45,9 @@ struct ChatScrollProbe: Equatable {
   /// which `Coordinator.restingOffset` rests against.
   var insetBottom: Double = 0
   /// The scroll view's `bounds.height` and the slot height SwiftUI placed it in.
-  /// `Coordinator.applyBottomInset` sets `insetBottom` from their difference, so the three say
-  /// whether the arithmetic or an input is wrong.
+  /// `Coordinator.applyInsets` sets `insetBottom` from their difference, less the strip it
+  /// reaches above the slot under the bar, so these say whether the arithmetic or an input is
+  /// wrong.
   var boundsHeight: Double = 0
   var slotHeight: Double = 0
 }
@@ -159,6 +160,11 @@ struct PaneChatView: View {
   /// `onScrollGeometry`. See `ChatPlaceProbe`.
   var onPlaceChange: ((ChatPlaceProbe) -> Void)?
 
+  /// Reports whether this view is drawing a conversation, the one state that reaches under the
+  /// bar and the home indicator. `TerminalScreen.slotClip` opens the surfaces' clip for it and
+  /// for nothing else. See `drawsConversation`.
+  var onDrawsConversation: ((Bool) -> Void)?
+
   /// VoiceOver focus, moved to the newest turn when the transcript first renders, where a
   /// sighted reader's eye lands anyway.
   @AccessibilityFocusState private var focusedTurnID: TranscriptTurn.ID?
@@ -182,12 +188,17 @@ struct PaneChatView: View {
   ///
   /// SwiftUI never tells a hosted UIKit view the composer bar's height; it shrinks the
   /// representable's frame instead. The coordinator derives `contentInset.bottom` from this
-  /// and its own `bounds.height`; see `ChatCollectionView.Coordinator.applyBottomInset`.
+  /// and its own `bounds.height`; see `ChatCollectionView.Coordinator.applyInsets`.
   ///
   /// Not a feedback loop: `contentInset` changes what the scroll view does with its content,
   /// not what SwiftUI proposes to this view, so it cannot move the measurement.
   @State private var chatSlotHeight: CGFloat = 0
 
+  /// The slot's top safe-area inset: the status bar and the navigation bar when the slot meets
+  /// them, 0 when a pinned row stands between. The representable reaches up by this much, and
+  /// the coordinator rests the first row below it. Unlike the bottom, the top inset carries no
+  /// keyboard, so it can be read directly. See `ChatCollectionView.Coordinator.applyInsets`.
+  @State private var chatSlotTopInset: CGFloat = 0
 
 
   /// Whether the last automatic fetch failed, which disarms it.
@@ -213,6 +224,14 @@ struct PaneChatView: View {
     return false
   }
 
+  /// Whether a conversation is on screen: a readable transcript, not the captured screen, a
+  /// notice or the file picker. Those are SwiftUI scroll views that draw into the safe area on
+  /// their own, so the surfaces' clip must stay closed for them.
+  private var drawsConversation: Bool {
+    guard !showsCapturedScreen, case .ready = shown.state else { return false }
+    return true
+  }
+
   /// Whether the reader has taken the exit to the pane's captured screen.
   ///
   /// The screen renders on the Chat side, not by switching to Terminal, which would be the
@@ -228,7 +247,7 @@ struct PaneChatView: View {
   /// keeps `@State` when a different model arrives in the same place, and the picker would
   /// offer another pane's files.
   @State private var isChoosingFile = false
-  /// Whether the sub-agent list under the provenance row is open. Closed on a pane switch
+  /// Whether the sub-agent list above the conversation is open. Closed on a pane switch
   /// and when a row opens its sub-agent.
   @State private var isSubagentListOpen = false
 
@@ -314,6 +333,7 @@ struct PaneChatView: View {
       }
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
+    .onChange(of: drawsConversation, initial: true) { _, draws in onDrawsConversation?(draws) }
     // Feeds `contentWidthEstimate`.
     .onGeometryChange(for: CGFloat.self, of: \.size.width) { contentWidthEstimate = $0 }
     // Not `systemBackground`, which is pure black in dark, where a translucent card reads as a
@@ -418,10 +438,9 @@ struct PaneChatView: View {
   /// content moves.
   @ViewBuilder
   private func chat(source: TranscriptSource, transcript: Transcript) -> some View {
-    // A sub-agent's chat draws `SubagentBackBar` in this row's place.
-    if !isShowingSubagent {
-      provenanceHeader(source: source, contextUsage: transcript.contextUsage)
-    }
+    // The provenance row is not here: it is the conversation's first row, so it scrolls away
+    // and the conversation meets the bar. See `ChatItem.provenance`.
+    //
     // Every sub-agent the session spawned, from its meta files. Not over a sub-agent's chat,
     // where the back bar holds this place, and not while the composer is collapsed, for the
     // stop row's reason below.
@@ -456,16 +475,26 @@ struct PaneChatView: View {
       .padding(.top, 4)
     }
     // `Color.clear` takes the safe-area slot and the two overlays cannot change it, as in
-    // `TerminalScreen.paneSurfaces`. The conversation draws into the bottom safe area so it
-    // passes behind the composer's glass. The jump-to-latest control is aligned to the slot's
-    // bottom, the composer's top edge, so it never sits behind the card.
+    // `TerminalScreen.paneSurfaces`. The conversation draws into the top and bottom safe areas
+    // so it passes behind the bar's glass and the composer's. The jump-to-latest control is
+    // aligned to the slot's bottom, the composer's top edge, so it never sits behind the card.
     Color.clear
-      // The slot's height, the SwiftUI half of the inset arithmetic. The gutter is not passed
-      // down; the layout reads its own container. See `ChatColumn.gutter(forColumnWidth:)`.
+      // The slot's height and top inset, the SwiftUI half of the inset arithmetic. The gutter
+      // is not passed down; the layout reads its own container. See
+      // `ChatColumn.gutter(forColumnWidth:)`.
       .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { chatSlotHeight = $0 }
+      .onGeometryChange(for: CGFloat.self, of: { $0.safeAreaInsets.top }) {
+        chatSlotTopInset = $0
+      }
       .overlay {
         ChatCollectionView(
           turns: transcript.turns,
+          // Not over a sub-agent's chat, where `SubagentBackBar` stands in its place.
+          provenance: isShowingSubagent
+            ? nil
+            : ChatProvenance(
+              agentName: agentName, source: source, session: model.pane.agent?.session,
+              contextUsage: transcript.contextUsage),
           showsPaging: shown.paging != nil,
           showsActivity: footActivity != nil,
           replyAfter: replyTurnID,
@@ -473,6 +502,7 @@ struct PaneChatView: View {
             ChatReplyAnchor.headroom(
               screenBandTop: screenBandTop.map(Double.init), bandTop: Double(bandTop))),
           visibleHeight: chatSlotHeight,
+          topExtension: chatSlotTopInset,
           accent: themeAccent,
           accentForeground: themeAccentForeground,
           // What decides whether an existing cell is reconfigured. See `ChatRowInputs`.
@@ -500,12 +530,21 @@ struct PaneChatView: View {
           chatRow(item, in: transcript)
         }
         // Gives the representable its whole frame back. Otherwise SwiftUI shrinks it to the
-        // bar's top edge, rows stop above the card and the material has nothing to blur. The
-        // bar's height arrives through `chatSlotHeight`.
-        .ignoresSafeArea(.container, edges: .bottom)
+        // composer's top edge, rows stop above the card and the material has nothing to blur.
+        // The composer's height arrives through `chatSlotHeight`.
+        //
+        // The top too, so rows pass under the navigation bar's glass and the status bar. It
+        // acts only where the slot meets the safe area's top edge: with a pinned row above it
+        // (the sub-agent list, the stop notice, Show the Screen, the back bar) the slot's top
+        // inset is 0 and the conversation stops under that row as before. Never on the
+        // terminals; see `TerminalScreen.terminals`.
+        .ignoresSafeArea(.container, edges: [.top, .bottom])
       }
-      // Above the collection view, so rows fade out under the rows above the slot.
-      .overlay(alignment: .top) { ChatTopFade() }
+      // Above the collection view, so rows fade out under the rows above the slot. Only where
+      // such a row stands: under the bar, the collection view's own `topEdgeEffect` softens it.
+      .overlay(alignment: .top) {
+        if chatSlotTopInset < 0.5 { ChatTopFade() }
+      }
       // A new turn while the reader is up in the history shows a control instead of moving
       // them. `ChatEndProximity.showsJumpToLatest` is the rule; the tail marker can only hide
       // the control.
@@ -588,6 +627,14 @@ struct PaneChatView: View {
   @ViewBuilder
   private func chatRow(_ item: ChatItem, in transcript: Transcript) -> some View {
     switch item {
+    case .provenance:
+      // The section carries the gutter, so the row adds none of its own. The extra bottom
+      // padding keeps the gap to the first turn the 20 pt it was when this row stood above
+      // the conversation.
+      if case .ready(let source, let page) = shown.state {
+        provenanceHeader(source: source, contextUsage: page.contextUsage)
+          .padding(.bottom, ChatTopFade.contentInset)
+      }
     case .paging:
       // Above the oldest turn, where older ones arrive. The place is an item id, and ids are
       // the session file's record uuids, so a wider page keeps the reader's item.
@@ -620,8 +667,9 @@ struct PaneChatView: View {
 
   /// The gutter every row kind shares. See `ChatColumn.gutter(forColumnWidth:)`.
   ///
-  /// Turn cards get it from their section. Rows that are not cells, such as the provenance
-  /// header and the Show the Screen row, must ask for it here, or they draw inside the edge
+  /// Turn cards and the provenance row get it from their section. Rows that are not cells,
+  /// such as the sub-agent list and the Show the Screen row, must ask for it here, or they draw
+  /// inside the edge
   /// the cards and the composer share. `contentWidthEstimate` is 0 until measured, so the
   /// phone's answer applies until then.
   private var chatGutter: CGFloat {
@@ -991,7 +1039,7 @@ struct PaneChatView: View {
   /// never-ending one-hertz redraw is close to the endless animation that stalls XCUITest.
   private static let ageTick: TimeInterval = 30
 
-  /// The caption row above the transcript; see `ProvenanceRow`.
+  /// The caption row at the top of the transcript, its first cell; see `ProvenanceRow`.
   ///
   /// The age ticks on its own `TimelineView`, because an unchanged re-read writes no state and
   /// would otherwise freeze it. Scoped to this row, because a `TimelineView` around the whole
@@ -1006,7 +1054,7 @@ struct PaneChatView: View {
           contextUsage: contextUsage,
           asOf: context.date
         ),
-        horizontalInset: chatGutter
+        horizontalInset: 0
       )
     }
   }

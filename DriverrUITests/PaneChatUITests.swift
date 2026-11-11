@@ -668,6 +668,16 @@ final class PaneChatUITests: XCTestCase {
       .element(matching: NSPredicate(format: "label CONTAINS %@", "Review the config loader"))
     XCTAssertTrue(prompt.exists, "Expected the teammate's own prompt, not the pane's turns")
     requireGone(app, "composer.text", "The composer must go while a sub-agent is shown")
+    // The provenance row is the conversation's first cell, so a header scrolled out of sight
+    // is absent too. Back to the start first, so its absence means it is not there.
+    let subagentChat = require(app, "pane.chat", "Expected the sub-agent's conversation")
+    for _ in 0..<4 { subagentChat.swipeDown() }
+    XCTAssertTrue(
+      app.descendants(matching: .any).matching(identifier: "pane.chat.paging.startOfFile")
+        .firstMatch.waitForExistence(timeout: 5)
+        || parent.isHittable,
+      "Expected the start of the sub-agent's conversation on screen.\nTree was:\n"
+        + app.debugDescription)
     requireGone(app, "pane.chat.header", "The back bar takes the provenance row's place")
     let opened = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
     opened.name = "subagent-opened"
@@ -1117,7 +1127,8 @@ final class PaneChatUITests: XCTestCase {
 
     tapPane(app, titled: "needs a decision")
 
-    let header = require(app, "pane.chat.header", "Expected the provenance header")
+    // The first row of a conversation taller than the screen, so off screen at rest.
+    let header = revealChatHeader(app)
     XCTAssertTrue(
       header.label.hasPrefix("Claude session · reported by herdr"),
       "Expected the exact variant, got '\(header.label)'"

@@ -5,8 +5,9 @@ import UIKit
 
 @testable import Driverr
 
-/// `PaneComposerBar` as the two-row card (focused, or holding a draft), the same 115 the other
-/// chat layout suites use, so their numbers compare. At rest the bar is the 62 pt pill.
+/// A fixture value standing in for `PaneComposerBar` as the two-row card (focused, or holding a
+/// draft), not a measurement of it: the same 115 the other chat layout suites use, so their
+/// numbers compare. At rest the bar is the 62 pt pill.
 private let composerHeight: CGFloat = 115
 
 /// Long enough that both windows have a scroll to rest at the end of, and no longer.
@@ -194,7 +195,7 @@ private func spikeRow(
       .frame(height: 1)
       .padding(.vertical, 9)
       .frame(maxWidth: .infinity, alignment: .leading)
-  case .paging, .activity, .reply:
+  case .provenance, .paging, .activity, .reply:
     EmptyView()
   }
 }
@@ -1110,8 +1111,9 @@ struct ChatCollectionViewTests {
     withExtendedLifetime(window) {}
   }
 
-  /// `ChatTopFade` is drawn over the slot's top, so the collection view's top inset decides
-  /// whether the first row's content starts under the fade or where it ends.
+  /// `ChatTopFade` is drawn over the slot's top while a row is pinned above it, as here, with no
+  /// `topExtension`, so the collection view's top inset decides whether the first row's content
+  /// starts under the fade or where it ends. Under the bar, `ChatUnderBarLayoutTests`.
   @Test("at the top of the conversation the first row starts where the top fade ends")
   func theFirstRowStartsWhereTheTopFadeEnds() {
     let (_, window) = measure(
@@ -1150,6 +1152,16 @@ struct ChatCollectionViewTests {
       \(first.frame.minY), so the first section carries a top margin of its own.
       """
     #expect(abs(contentTop - ChatTopFade.height) < 0.5, "\(below)")
+
+    // The fixture hands in no provenance, as a sub-agent's chat does, so the conversation
+    // holds no provenance row at all, not one scrolled out of sight.
+    let items =
+      (collection.dataSource as? UICollectionViewDiffableDataSource<ChatSection, ChatItem>)?
+      .snapshot().itemIdentifiers ?? []
+    #expect(!items.isEmpty, "No items under the fixture.")
+    #expect(
+      !items.contains(.provenance),
+      "With no provenance handed in, the items still hold one: \(items.prefix(3))…")
 
     withExtendedLifetime(window) {}
   }

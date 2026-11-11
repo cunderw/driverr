@@ -8,6 +8,9 @@ import UIKit
 /// not supplementary views, so they lay out like cells and the anchor arithmetic in
 /// `ChatCollectionView.Coordinator.reconcile` does not depend on which are present.
 enum ChatItem: Hashable, Sendable {
+  /// Where the conversation came from, as its first row, so it scrolls away with the turns
+  /// instead of standing between them and the bar. See `ProvenanceRow`.
+  case provenance
   /// The paging bill and its priced control, above the oldest turn, where older turns arrive.
   case paging
   case turn(TranscriptTurn.ID)
@@ -32,6 +35,7 @@ enum ChatItem: Hashable, Sendable {
   /// `TranscriptTurn.ID`. A turn's id is a record uuid, so the literals below cannot collide.
   var anchorKey: TranscriptTurn.ID {
     switch self {
+    case .provenance: Self.provenanceKey
     case .paging: Self.pagingKey
     case .turn(let id): id
     case .reply(let id): Self.replyPrefix + id
@@ -40,6 +44,7 @@ enum ChatItem: Hashable, Sendable {
     }
   }
 
+  static let provenanceKey = "pane.chat.provenance"
   static let pagingKey = "pane.chat.paging"
   static let activityKey = "pane.chat.activity"
   static let tailKey = "pane.chat.tail"
@@ -47,6 +52,7 @@ enum ChatItem: Hashable, Sendable {
 
   init(anchorKey: TranscriptTurn.ID) {
     switch anchorKey {
+    case Self.provenanceKey: self = .provenance
     case Self.pagingKey: self = .paging
     case Self.activityKey: self = .activity
     case Self.tailKey: self = .tail
@@ -59,6 +65,7 @@ enum ChatItem: Hashable, Sendable {
 
 /// One section each, so section insets can give the first and last rows their end margin.
 enum ChatSection: Hashable, Sendable {
+  case provenance
   case paging
   case turns
   case activity
@@ -73,6 +80,16 @@ enum ChatSection: Hashable, Sendable {
 struct ChatReaderState: Equatable {
   var showsJumpToLatest = false
   var isNearStart = false
+}
+
+/// What the provenance row draws from. Its own value, not part of `ChatRowInputs`, because the
+/// file's age and the context count change on most polls, and a change there must reconfigure
+/// only that row, not every cell under the reader's finger.
+struct ChatProvenance: Equatable {
+  var agentName: String
+  var source: TranscriptSource
+  var session: AgentSession?
+  var contextUsage: ContextUsage?
 }
 
 /// Everything a row draws from that is not part of its own `TranscriptTurn`.
@@ -105,20 +122,21 @@ struct ChatRowInputs: Equatable {
   var activity: ChatActivity?
 }
 
-/// Fades the conversation out as it scrolls under the rows above it, instead of cutting it
-/// square.
+/// Fades the conversation out as it scrolls under a row pinned above it (the sub-agent list,
+/// the stop notice, Show the Screen, the back bar), instead of cutting it square.
 ///
-/// Drawn by hand because the system cannot draw it here. `topEdgeEffect.style = .soft` shows
-/// nothing, with or without a top inset: a scroll edge effect takes its shape from views that
-/// overlay the scroll view's edge, such as a bar or a `UIScrollEdgeElementContainerInteraction`,
-/// and the provenance row and sub-agent card stand above the collection view, not over it.
-/// An overlay on the slot, not a mask over the conversation; see the bottom edge's comment in
-/// `makeCollection`.
+/// Drawn only while such a row stands above the slot. With none, the conversation reaches up
+/// under the navigation bar and the collection view's own `topEdgeEffect` softens it, because
+/// a scroll edge effect takes its shape from views that overlay the scroll view's edge, such
+/// as a bar. A row standing above the collection view does not overlay it, so there
+/// `topEdgeEffect` shows nothing and this is drawn by hand. An overlay on the slot, not a mask
+/// over the conversation; see the bottom edge's comment in `makeCollection`.
 struct ChatTopFade: View {
   static let height: CGFloat = 16
-  /// The collection view's `contentInset.top`: the fade's height less the first row's own
-  /// `ChatColumn.rowPadding`, so at the top of the conversation the first row's content starts
-  /// where the fade ends.
+  /// The collection view's `contentInset.top` below the bar or the pinned row: the fade's
+  /// height less the first row's own `ChatColumn.rowPadding`, so at the top of the
+  /// conversation the first row's content starts where the fade ends. Under the bar it is
+  /// added to `ChatCollectionView.topExtension`; see `Coordinator.applyInsets`.
   static var contentInset: CGFloat { height - ChatColumn.rowPadding }
 
   var body: some View {
@@ -146,13 +164,15 @@ struct ChatTopFade: View {
 /// SwiftUI never tells a `UIViewRepresentable` the height of a `safeAreaBar`. It shrinks the
 /// representable's frame instead (the same for a `UIViewControllerRepresentable`). So the
 /// inset is read on the SwiftUI side and the coordinator sets `contentInset.bottom` from it.
-/// Which reading to use is not obvious; see `Coordinator.applyBottomInset`.
+/// Which reading to use is not obvious; see `Coordinator.applyInsets`.
 ///
 /// Generic over the row, so the caller builds the real rows and `ChatCollectionViewTests`
 /// can drive production rows.
 struct ChatCollectionView<Row: View>: UIViewRepresentable {
   /// The conversation, oldest first.
   var turns: [TranscriptTurn]
+  /// What the `.provenance` row draws from, or `nil` for no such row.
+  var provenance: ChatProvenance? = nil
   /// Whether `.paging` leads the list.
   var showsPaging: Bool
   /// Whether `.activity` sits between the turns and the tail.
@@ -164,8 +184,12 @@ struct ChatCollectionView<Row: View>: UIViewRepresentable {
   /// `ChatReplyAnchor.headroom(screenBandTop:bandTop:)`.
   var replyHeadroom: CGFloat = 0
   /// The height of the SwiftUI slot the conversation is placed in. The coordinator derives
-  /// `contentInset.bottom` from it; see `Coordinator.applyBottomInset`.
+  /// `contentInset.bottom` from it; see `Coordinator.applyInsets`.
   var visibleHeight: CGFloat
+  /// How far above the slot the representable reaches: the slot's top safe-area inset, which
+  /// `.ignoresSafeArea(.container, edges: .top)` gives it, so rows pass under the bar. 0 when
+  /// something stands between the slot and the bar. See `Coordinator.applyInsets`.
+  var topExtension: CGFloat = 0
   /// `\.themeAccent`, handed across the hosting boundary because it cannot cross on its own.
   var accent: Color
   /// `\.themeAccentForeground`, for the same reason. See `Theme.accent(for:)`.
@@ -201,8 +225,9 @@ struct ChatCollectionView<Row: View>: UIViewRepresentable {
   /// The extra margin the last row gets beyond its own `ChatColumn.rowPadding`.
   ///
   /// Rows carry 9 points above and below, giving 18 between rows, and the end gets 14 in all.
-  /// The start gets `ChatTopFade.contentInset` instead, as `contentInset.top`: the fade's height
-  /// less the row padding, so the first row's content starts where the fade ends.
+  /// The start gets `ChatTopFade.contentInset` instead, in `contentInset.top` below the bar or
+  /// the pinned row: the fade's height less the row padding, so the first row's content starts
+  /// where the fade ends.
   /// It goes on the section, because `contentInset.bottom` belongs to the composer. It shows at
   /// rest with the keyboard down, which is the posture a reader meets first. Do not make it
   /// depend on the keyboard.
@@ -223,11 +248,12 @@ struct ChatCollectionView<Row: View>: UIViewRepresentable {
     let view = Self.makeCollection(wiredTo: coordinator)
     view.keyboardDismissMode = dismissesKeyboardImmediately ? .onDrag : .interactive
     coordinator.visibleHeight = visibleHeight
+    coordinator.topExtension = topExtension
     coordinator.replyHeadroom = replyHeadroom
-    coordinator.applyBottomInset()
+    coordinator.applyInsets()
     coordinator.apply(
-      turns: turns, showsPaging: showsPaging, showsActivity: showsActivity,
-      replyAfter: replyAfter, inputs: rowInputs)
+      turns: turns, provenance: provenance, showsPaging: showsPaging,
+      showsActivity: showsActivity, replyAfter: replyAfter, inputs: rowInputs)
     return view
   }
 
@@ -287,11 +313,9 @@ struct ChatCollectionView<Row: View>: UIViewRepresentable {
     // composer's material loses its backdrop. A per-row `.scrollTransition` cannot do it
     // either, because its phase is relative to each row's own height.
     view.bottomEdgeEffect.style = .soft
-    // Under `ChatTopFade`. `contentInset.bottom` belongs to the composer and is set on every
-    // update; these are fixed. The indicator stays out of the whole fade, as the bottom one
-    // stays out of the composer.
-    view.contentInset.top = ChatTopFade.contentInset
-    view.verticalScrollIndicatorInsets.top = ChatTopFade.height
+    // The same softening under the navigation bar's glass, which the conversation now passes
+    // under. Both insets are set in `Coordinator.applyInsets`.
+    view.topEdgeEffect.style = .soft
     // UIKit, unlike SwiftUI, does not propagate an identifier to children, so the rows keep
     // their own `pane.chat.turn.*` identifiers.
     view.accessibilityIdentifier = "pane.chat"
@@ -355,10 +379,12 @@ struct ChatCollectionView<Row: View>: UIViewRepresentable {
     coordinator.onPlaceChange = onPlaceChange
     view.keyboardDismissMode = dismissesKeyboardImmediately ? .onDrag : .interactive
     coordinator.visibleHeight = visibleHeight
+    coordinator.topExtension = topExtension
     coordinator.replyHeadroom = replyHeadroom
-    coordinator.applyBottomInset()
+    coordinator.applyInsets()
     coordinator.apply(
       turns: turns,
+      provenance: provenance,
       showsPaging: showsPaging,
       showsActivity: showsActivity,
       replyAfter: replyAfter,
@@ -437,6 +463,9 @@ struct ChatCollectionView<Row: View>: UIViewRepresentable {
     /// measuring. `-1` before the first pass.
     private var heightAtLastWalk: CGFloat = -1
 
+    /// What the `.provenance` row was last built from, so a change reconfigures that row alone.
+    private var provenance: ChatProvenance?
+
     /// What each id currently holds, so items whose content changed under the same id can be
     /// reconfigured.
     private var turnsByID: [TranscriptTurn.ID: TranscriptTurn] = [:]
@@ -451,8 +480,10 @@ struct ChatCollectionView<Row: View>: UIViewRepresentable {
     /// The last value sent to `onReaderState`, so SwiftUI hears only transitions.
     private var reportedReaderState: ChatReaderState?
 
-    /// The SwiftUI slot's height. See `applyBottomInset`.
+    /// The SwiftUI slot's height. See `applyInsets`.
     var visibleHeight: CGFloat = 0
+    /// How far above the slot this view reaches. See `ChatCollectionView.topExtension`.
+    var topExtension: CGFloat = 0
 
 
     init(
@@ -468,24 +499,38 @@ struct ChatCollectionView<Row: View>: UIViewRepresentable {
 
     // MARK: - What SwiftUI hands in
 
-    /// Sets `contentInset.bottom` to the strip of this scroll view behind the composer.
+    /// Sets `contentInset` to the strips of this scroll view behind the bar above and the
+    /// composer below.
     ///
-    /// The representable ignores the bottom safe area, so its frame includes the composer and
-    /// the conversation passes behind the glass. This inset rests the newest row on the
-    /// composer's top edge, which a SwiftUI `ScrollView` would get from `safeAreaBar`.
+    /// The representable ignores the top and bottom safe areas, so its frame includes the bar
+    /// and the composer and the conversation passes behind both. These insets rest the first
+    /// row just below the bar and the newest on the composer's top edge, which a SwiftUI
+    /// `ScrollView` would get from the safe area.
     ///
-    /// It is `bounds.height - visibleHeight`. The obvious readings are wrong:
+    /// The top is `topExtension`, the slot's top safe-area inset, plus `ChatTopFade.contentInset`.
+    /// The bottom is what is left: `bounds.height - visibleHeight - topExtension`. The obvious
+    /// readings are wrong:
     ///
     /// - `GeometryProxy.safeAreaInsets.bottom` includes the keyboard, so with the keyboard up
-    ///   it rests the whole conversation above the visible region.
+    ///   it rests the whole conversation above the visible region. The top inset has no such
+    ///   term, which is why it can be read directly.
     /// - A frame read after `.ignoresSafeArea(.container, edges: .bottom)` reports the
     ///   unexpanded height (see CLAUDE.md on `GeometryReader` probes).
     ///
     /// Re-applied after every layout pass, because `bounds.height` changes without SwiftUI
-    /// saying so.
-    func applyBottomInset() {
-      guard let collection, visibleHeight > 0, collection.bounds.height > 0 else { return }
-      let inset = max(0, collection.bounds.height - visibleHeight)
+    /// saying so. A change moves no row by itself: the reconcile that follows every layout
+    /// pass re-applies the reader's place against the new inset.
+    func applyInsets() {
+      guard let collection else { return }
+      let top = topExtension + ChatTopFade.contentInset
+      if abs(collection.contentInset.top - top) > 0.5 {
+        collection.contentInset.top = top
+        // The indicator stays out from under the bar and the fade, as the bottom one stays
+        // out of the composer.
+        collection.verticalScrollIndicatorInsets.top = topExtension + ChatTopFade.height
+      }
+      guard visibleHeight > 0, collection.bounds.height > 0 else { return }
+      let inset = max(0, collection.bounds.height - visibleHeight - topExtension)
       guard abs(collection.contentInset.bottom - inset) > 0.5 else { return }
       collection.contentInset.bottom = inset
       // Otherwise the indicator stops short of the composer, as if the conversation did.
@@ -515,6 +560,7 @@ struct ChatCollectionView<Row: View>: UIViewRepresentable {
 
     func apply(
       turns: [TranscriptTurn],
+      provenance: ChatProvenance? = nil,
       showsPaging: Bool,
       showsActivity: Bool,
       replyAfter: TranscriptTurn.ID? = nil,
@@ -533,7 +579,14 @@ struct ChatCollectionView<Row: View>: UIViewRepresentable {
       let inputsChanged = rowInputs != inputs
       rowInputs = inputs
 
+      let provenanceChanged = provenance != self.provenance
+      self.provenance = provenance
+
       var snapshot = NSDiffableDataSourceSnapshot<ChatSection, ChatItem>()
+      if provenance != nil {
+        snapshot.appendSections([.provenance])
+        snapshot.appendItems([.provenance], toSection: .provenance)
+      }
       if showsPaging {
         snapshot.appendSections([.paging])
         snapshot.appendItems([.paging], toSection: .paging)
@@ -567,7 +620,9 @@ struct ChatCollectionView<Row: View>: UIViewRepresentable {
       if reconfigureAll || inputsChanged {
         reconfigure = snapshot.itemIdentifiers
       } else {
-        reconfigure = changed.map { ChatItem.turn($0.id) }.filter { present.contains($0) }
+        reconfigure =
+          (changed.map { ChatItem.turn($0.id) } + (provenanceChanged ? [.provenance] : []))
+          .filter { present.contains($0) }
       }
       if !reconfigure.isEmpty {
         snapshot.reconfigureItems(reconfigure)
@@ -659,11 +714,18 @@ struct ChatCollectionView<Row: View>: UIViewRepresentable {
     func scrollViewDidScroll(_ scrollView: UIScrollView) { report() }
 
     /// A scroll that has come to rest either returns the reader to the end, within
-    /// `ChatEndProximity.jumpTolerance`, or re-anchors them to what they see now.
+    /// `ChatEndProximity.settleTolerance(scrollRange:)`, or re-anchors them to what they see now.
+    ///
+    /// The tolerance is capped at half the scroll range, or a conversation that overflows by
+    /// less than `jumpTolerance` snaps every scroll back to the end and its provenance row can
+    /// never be read. It only narrows the return-to-end band; a settle still never makes a
+    /// follower a reader.
     private func settle() {
       guard let collection else { return }
+      let scrollRange = endOffset(in: collection) + collection.adjustedContentInset.top
       place = place.applying(
-        .settled(distanceFromEnd: distanceFromEnd(in: collection), at: currentAnchor()))
+        .settled(distanceFromEnd: distanceFromEnd(in: collection), at: currentAnchor()),
+        tolerance: ChatEndProximity.settleTolerance(scrollRange: Double(scrollRange)))
       reconcile()
       report()
     }
@@ -699,7 +761,7 @@ struct ChatCollectionView<Row: View>: UIViewRepresentable {
     /// wrong end. Each pass measures more, so reapplying the place every pass converges. It also
     /// keeps the reader in place when the keyboard or composer changes the inset.
     func didLayOut() {
-      applyBottomInset()
+      applyInsets()
       // First, a scroll the reader made without a pan gesture. Until it shows, neither the walk
       // nor the reconcile may write an offset.
       if isWaitingForANonPanScroll() {

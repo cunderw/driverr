@@ -61,6 +61,16 @@ struct TerminalScreen: View {
   /// edges, so the top says by how much. Read in the same `onGeometryChange` as the bottom,
   /// because two probes can report from different layout passes.
   @State private var surfacesTop: Double = 0
+  /// The surfaces' safe-area insets. The top is the status bar and the navigation bar when no
+  /// banner stands above the surfaces, 0 when one does. The bottom is the home indicator with
+  /// the keyboard down, and the keyboard's overlap with it up. The slot's clip opens by these
+  /// so a conversation can pass under the bar and run to the screen's bottom edge; see
+  /// `slotClip`. A layout input to the clip only, which is a render mask and cannot move the
+  /// frame it is read from.
+  @State private var surfacesInsets = EdgeInsets()
+  /// Whether the chat is drawing a conversation, the one surface that reaches outside the slot.
+  /// Reported by `PaneChatView.onDrawsConversation`. See `slotClip`.
+  @State private var chatDrawsConversation = false
   /// The region the whole pane stack is laid out in: the safe area below the navigation
   /// bar. Nothing inside the stack moves it, so the surfaces' maximum height is safe to
   /// derive from it, and it is the baseline for spotting an overflow.
@@ -269,6 +279,28 @@ struct TerminalScreen: View {
 
   private var settings: TerminalSettings { settingsModel.settings }
 
+  /// The surfaces' clip, opened past the slot only for the conversation.
+  ///
+  /// The conversation reaches under the navigation bar and the home indicator
+  /// (`PaneChatView`), and a clip at the slot would cut it flat at the bar's bottom edge and a
+  /// home indicator's height above the screen's edge. So the clip opens upward by the top
+  /// safe-area inset, which is 0 whenever a banner stands above, so the banners stay covered,
+  /// and downward by the home indicator.
+  ///
+  /// - **Only for a drawn conversation.** `PaneScreenView`, the notices and the file picker
+  ///   are SwiftUI scroll views, which draw into the safe area on their own; opened for them,
+  ///   a character grid would scroll under the glass. They keep the slot's clip.
+  /// - **Never by the keyboard.** With the keyboard up, the bottom inset is the keyboard's
+  ///   overlap, and the clip stays at the slot's bottom. The keyboard covers that strip anyway.
+  /// - The terminals cannot paint there: they are not current while the chat shows, so they
+  ///   are drawn at zero opacity, and they never ignore the safe area.
+  private var slotClip: SlotClip {
+    guard isShowingChat, chatDrawsConversation else { return SlotClip() }
+    return SlotClip(
+      topOutset: surfacesInsets.top,
+      bottomOutset: keyboardTop == nil ? surfacesInsets.bottom : 0)
+  }
+
   @ViewBuilder
   private var content: some View {
     ZStack(alignment: .bottom) {
@@ -340,6 +372,9 @@ struct TerminalScreen: View {
             )
           )
 
+          .onGeometryChange(for: EdgeInsets.self, of: { $0.safeAreaInsets }) {
+            surfacesInsets = $0
+          }
           // **A clip over the whole slot.** Content that does not fit is centred and would
           // paint over the banners above it. In portrait nothing overflows and this does
           // nothing.
@@ -348,7 +383,9 @@ struct TerminalScreen: View {
           // above the bar would cut the conversation at the card's top edge, leaving the glass
           // nothing to blur. `ChatGlassLayoutTests` cannot see that, because a clip on an
           // ancestor is a render mask, not a frame change; only a capture shows it.
-          .clipped()
+          //
+          // Opened past the slot's ends while a conversation is drawn; see `slotClip`.
+          .clipShape(slotClip)
           // The last frame stays, dimmed, while the link is down. A blank surface would read as
           // the pane being gone.
           .opacity(isLinkDown ? 0.45 : 1)
@@ -564,8 +601,8 @@ struct TerminalScreen: View {
       + "chatContentWidth=\(String(format: "%.2f", chatScroll.contentWidth)) "
       + "chatContainerWidth=\(String(format: "%.2f", chatScroll.containerWidth)) "
       + "chatContentHeight=\(String(format: "%.2f", chatScroll.contentHeight)) "
-      // The conversation's inset and the two numbers it derives from. See
-      // `ChatCollectionView.Coordinator.applyBottomInset`.
+      // The conversation's bottom inset and two of the numbers it derives from. See
+      // `ChatCollectionView.Coordinator.applyInsets`.
       + "chatInsetBottom=\(String(format: "%.2f", chatScroll.insetBottom)) "
       + "chatBoundsHeight=\(String(format: "%.2f", chatScroll.boundsHeight)) "
       + "chatSlotHeight=\(String(format: "%.2f", chatScroll.slotHeight)) "
@@ -712,7 +749,9 @@ struct TerminalScreen: View {
             isComposerCollapsed: isComposerCollapsed,
             // `nil` unless the readout was asked for. See `ChatScrollProbe`.
             onScrollGeometry: Self.isReportingKeyboardMetrics ? { chatScroll = $0 } : nil,
-            onPlaceChange: Self.isReportingKeyboardMetrics ? { chatPlace = $0 } : nil
+            onPlaceChange: Self.isReportingKeyboardMetrics ? { chatPlace = $0 } : nil,
+            // Opens the surfaces' clip; see `slotClip`.
+            onDrawsConversation: { chatDrawsConversation = $0 }
           )
           // A readable measure on the detail route, centred by the `ZStack`. Never on the
           // terminal: its width is the remote pane's, and narrowing it would reflow the PTY.
@@ -1256,6 +1295,20 @@ extension View {
     } else {
       self
     }
+  }
+}
+
+/// The pane surfaces' clip: their own frame, extended upward by `topOutset` and downward by
+/// `bottomOutset`. See `TerminalScreen.slotClip`.
+private struct SlotClip: Shape {
+  var topOutset: CGFloat = 0
+  var bottomOutset: CGFloat = 0
+
+  func path(in rect: CGRect) -> Path {
+    Path(
+      CGRect(
+        x: rect.minX, y: rect.minY - topOutset,
+        width: rect.width, height: rect.height + topOutset + bottomOutset))
   }
 }
 
