@@ -384,6 +384,185 @@ import UIKit
     try? await Task.sleep(for: .milliseconds(100))
     #expect(handed.get().isEmpty)
   }
+
+  // MARK: - A picked file
+
+  private nonisolated static let unique =
+    UUID(uuidString: "A1B2C3D4-0000-4000-8000-000000000000")!
+
+  /// A file goes up as it is, under its sanitised name behind the token, and the pane is
+  /// handed the path the host answered with.
+  @Test func aFileUploadsItsOwnBytesUnderItsSanitisedName() async {
+    let uploaded = Mutex<[Data]>([])
+    let names = Mutex<[String]>([])
+    let handed = Mutex<[String]>([])
+    let model = PaneAttachmentModel(
+      makeUpload: { bytes, name in
+        uploaded.set(uploaded.get() + [bytes])
+        names.append(name)
+        return StubUpload(
+          outcome: .success(
+            ImageUploadOutcome(hostPath: "/home/c/.driverr/inbox/" + name, bytesSent: bytes.count)))
+      },
+      handOff: { handed.append($0) },
+      makeUnique: { Self.unique }
+    )
+    // Not an image, so a downscale would have failed it.
+    let bytes = Data("error: linker command failed\n".utf8)
+
+    model.attach(fileNamed: "build log.txt") { .contents(bytes) }
+    #expect(model.kind == .file(name: "build log.txt"))
+    #expect(model.phase == .preparing)
+    await waitFor("the hand-off") { model.phase == .handedOver }
+
+    #expect(model.byteCount == bytes.count)
+    #expect(uploaded.get() == [bytes])
+    #expect(names.get() == ["a1b2c3d4-build-log.txt"])
+    #expect(handed.get() == ["/home/c/.driverr/inbox/a1b2c3d4-build-log.txt"])
+    #expect(model.thumbnail == nil)
+  }
+
+  /// A file's failures say "file".
+  @Test func aFilesFailureSaysFile() async {
+    let model = PaneAttachmentModel(
+      place: .machine("box"),
+      makeUpload: { _, _ in StubUpload(outcome: .failure(ImageUploadFailure.noHostPath)) })
+
+    model.attach(fileNamed: "a.bin") { .contents(Data([1, 2, 3])) }
+    await waitFor("the failure") {
+      if case .failed = model.phase { return true }
+      return false
+    }
+    #expect(model.phase == .failed("The file was saved on box, but Driverr was not told where."))
+  }
+
+  @Test func aFilesHandOffFailureSaysTheHostHasTheFile() async {
+    struct Refused: Error {}
+    let model = PaneAttachmentModel(
+      makeUpload: { _, name in
+        StubUpload(outcome: .success(ImageUploadOutcome(hostPath: "/x/" + name, bytesSent: 1)))
+      },
+      handOff: { _ in throw Refused() }
+    )
+
+    model.attach(fileNamed: "a.bin") { .contents(Data([1])) }
+    await waitFor("the failure") {
+      if case .failed = model.phase { return true }
+      return false
+    }
+    #expect(
+      model.phase == .failed("The host has the file, but the pane could not be told where it is."))
+  }
+
+  /// A file refused by the read still gets a row, saying why with the place's limit, and
+  /// nothing is sent. Remove clears it.
+  @Test func aFileOverTheLimitShowsARowAndSendsNothing() async {
+    let built = Mutex(false)
+    let model = PaneAttachmentModel(
+      place: .machine("box"),
+      makeUpload: { _, _ in
+        built.set(true)
+        return nil
+      })
+
+    model.attach(fileNamed: "huge.mov") { .tooLarge(limit: AttachmentLimit.machine) }
+    await waitFor("the refusal") {
+      if case .failed = model.phase { return true }
+      return false
+    }
+
+    #expect(model.phase == .failed("The file is over the 8.4 MB limit for box."))
+    #expect(model.kind == .file(name: "huge.mov"))
+    #expect(!built.get())
+
+    model.remove()
+    #expect(!model.isAttached)
+    #expect(model.kind == .image)
+  }
+
+  @Test func anUnreadableFileSaysSo() async {
+    let model = PaneAttachmentModel(makeUpload: { _, _ in nil })
+    model.attach(fileNamed: "folder") { .unreadable }
+    await waitFor("the failure") {
+      if case .failed = model.phase { return true }
+      return false
+    }
+    #expect(model.phase == .failed("That file could not be read."))
+  }
+
+  /// A read the test lets finish, run detached as the scene runs it, so a cancel does not end
+  /// it early: what drops its result has to be the generation.
+  private func heldRead(
+    _ gate: HandOffGate, finished: Mutex<Bool>, outcome: PickedFileOutcome
+  ) -> @Sendable () async -> PickedFileOutcome {
+    {
+      await Task.detached { await gate.hold() }.value
+      finished.set(true)
+      return outcome
+    }
+  }
+
+  /// Remove while a large file is still being read: the read lands afterwards and is dropped,
+  /// so no row comes back and nothing is sent.
+  @Test func aRemoveDuringTheReadDropsItsResult() async {
+    let gate = HandOffGate()
+    let finished = Mutex(false)
+    let built = Mutex(false)
+    let model = PaneAttachmentModel(makeUpload: { _, _ in
+      built.set(true)
+      return nil
+    })
+
+    model.attach(
+      fileNamed: "big.mov",
+      reading: heldRead(gate, finished: finished, outcome: .contents(Data([1, 2]))))
+    #expect(model.phase == .preparing)
+    #expect(model.kind == .file(name: "big.mov"))
+
+    model.remove()
+    gate.release()
+    await waitFor("the read to land") { finished.get() }
+    // A few turns for anything the landed read might have scheduled.
+    for _ in 0..<20 { await Task.yield() }
+
+    #expect(model.phase == nil)
+    #expect(model.kind == .image)
+    #expect(!built.get())
+  }
+
+  /// A photo picked while a file is still being read wins, and the file's late result does
+  /// not overwrite it.
+  @Test func aPhotoPickedDuringTheReadIsNotOverwritten() async throws {
+    let gate = HandOffGate()
+    let finished = Mutex(false)
+    let names = Mutex<[String]>([])
+    let model = PaneAttachmentModel(makeUpload: { _, name in
+      names.append(name)
+      return nil
+    })
+
+    model.attach(
+      fileNamed: "big.mov",
+      reading: heldRead(gate, finished: finished, outcome: .contents(Data([1, 2]))))
+    model.attach(try pngBytes())
+    await waitFor("the photo's run to settle") { model.phase?.isSettled == true }
+
+    gate.release()
+    await waitFor("the read to land") { finished.get() }
+    for _ in 0..<20 { await Task.yield() }
+
+    #expect(model.kind == .image)
+    #expect(names.get().count == 1)
+    #expect(names.get().allSatisfy { $0.hasSuffix(".png") })
+  }
+
+  /// A photo after a file is an image again.
+  @Test func anImageAfterAFileIsAnImage() async throws {
+    let model = PaneAttachmentModel(makeUpload: { _, _ in nil })
+    model.attach(fileNamed: "a.bin") { .contents(Data([1])) }
+    model.attach(try pngBytes())
+    #expect(model.kind == .image)
+  }
 }
 
 /// A tiny lock, because the `makeUpload` closure is `@MainActor` but the counters it touches

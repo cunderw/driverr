@@ -36,6 +36,8 @@ public enum KeyCommand: Hashable, Sendable {
   case closeSettings
   /// ⌘W while the Photos picker is up: closes it.
   case closePhotos
+  /// ⌘W while the Files picker is up: closes it.
+  case closeFiles
   /// ⌘W on the host screen with no pane scene: back to the host list. The connection stays
   /// up, hence "Leave". See `commandWWithoutAScene(hasSelectedHost:)`.
   case leaveHost
@@ -70,7 +72,7 @@ public enum KeyCommand: Hashable, Sendable {
     [.addHost, .settings]
     + (1...9).map { KeyCommand.goToPlace($0) }
     + [.nextPane, .previousPane, .showTerminal, .showChat]
-    + [.leavePane, .closeSwitcher, .closeSettings, .closePhotos, .leaveHost, .close]
+    + [.leavePane, .closeSwitcher, .closeSettings, .closePhotos, .closeFiles, .leaveHost, .close]
     + [.dismiss, .send]
 
   /// What the system lists for this command.
@@ -87,6 +89,7 @@ public enum KeyCommand: Hashable, Sendable {
     case .closeSwitcher: "Close Switcher"
     case .closeSettings: "Close Settings"
     case .closePhotos: "Close Photos"
+    case .closeFiles: "Close Files"
     case .leaveHost: "Leave Host"
     case .close: "Close"
     case .dismiss: "Dismiss"
@@ -102,7 +105,8 @@ public enum KeyCommand: Hashable, Sendable {
     case .nextPane: .character("]")
     case .previousPane: .character("[")
     case .showTerminal, .showChat: .character("t")
-    case .leavePane, .closeSwitcher, .closeSettings, .closePhotos, .leaveHost, .close:
+    case .leavePane, .closeSwitcher, .closeSettings, .closePhotos, .closeFiles, .leaveHost,
+      .close:
       .character("w")
     case .dismiss: .escape
     case .send: .return
@@ -122,10 +126,10 @@ public enum KeyCommand: Hashable, Sendable {
   ///
   /// ⌘⇧T is one key whose title follows the surface it will show. ⌘W closes whatever the
   /// scene has up over itself, and leaves the pane only when there is nothing up; see
-  /// `commandW(isShowingPaneSheet:isShowingSettings:isShowingPhotoPicker:)`.
+  /// `commandW(isShowingPaneSheet:isShowingSettings:isShowingPhotoPicker:isShowingFileImporter:)`.
   public static let exclusiveGroups: [Set<KeyCommand>] = [
     [.showTerminal, .showChat],
-    [.leavePane, .closeSwitcher, .closeSettings, .closePhotos, .leaveHost, .close],
+    [.leavePane, .closeSwitcher, .closeSettings, .closePhotos, .closeFiles, .leaveHost, .close],
   ]
 
   /// What ⌘W does in a pane scene right now: the frontmost thing closes, and the pane is left
@@ -138,11 +142,13 @@ public enum KeyCommand: Hashable, Sendable {
   public static func commandW(
     isShowingPaneSheet: Bool,
     isShowingSettings: Bool,
-    isShowingPhotoPicker: Bool
+    isShowingPhotoPicker: Bool,
+    isShowingFileImporter: Bool
   ) -> KeyCommand {
     if isShowingPaneSheet { return .closeSwitcher }
     if isShowingSettings { return .closeSettings }
     if isShowingPhotoPicker { return .closePhotos }
+    if isShowingFileImporter { return .closeFiles }
     return .leavePane
   }
 

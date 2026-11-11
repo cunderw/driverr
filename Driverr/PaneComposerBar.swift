@@ -149,10 +149,11 @@ struct PaneComposerBar: View {
     return isResting ? .pill : .card
   }
 
-  /// Asked for an image.
+  /// Asked for a photo or a file, by the Attach menu's item.
   ///
-  /// A closure, not a `PhotosPicker` here; see `ComposerPhotosPicker`. `nil` hides the button.
-  var onAttach: (() -> Void)?
+  /// A closure, not a picker here; see `ComposerPhotosPicker` and `ComposerFileImporter`.
+  /// `nil` hides the button.
+  var onAttach: ((AttachmentSource) -> Void)?
 
   var body: some View {
     withSlashKeyHandling(barContent)
@@ -782,15 +783,25 @@ struct PaneComposerBar: View {
 
   // MARK: - The pending image
 
-  /// The way into Photos, at the leading edge: ahead of the field in the pill, under it in
-  /// the card.
+  /// The way into Photos and Files, at the leading edge: ahead of the field in the pill,
+  /// under it in the card.
   ///
-  /// `plus`, not a photo glyph, because more than images will come through it. Away from
-  /// Send, so the two controls that send stay together. The target stays 44 pt and only the
-  /// circle changes size with the shape, which a button style cannot do, so this is `.plain`.
+  /// `plus`, a menu of the two pickers. Away from Send, so the two controls that send stay
+  /// together. The target stays 44 pt and only the circle changes size with the shape, which
+  /// a button style cannot do, so the label draws it.
+  ///
+  /// The items are not in a `Section`: on iOS 27 a button inside one loses its accessibility
+  /// identifier. The menu only says which picker; the scene's root presents it.
   private func attachButton(in shape: CardShape) -> some View {
-    Button {
-      onAttach?()
+    Menu {
+      Button(PaneAttachmentCopy.photosItem, systemImage: "photo.on.rectangle") {
+        onAttach?(.photos)
+      }
+      .accessibilityIdentifier("composer.attach.photos")
+      Button(PaneAttachmentCopy.filesItem, systemImage: "folder") {
+        onAttach?(.files)
+      }
+      .accessibilityIdentifier("composer.attach.files")
     } label: {
       Image(systemName: "plus")
         .font(.system(size: shape == .card ? 17 : 15, weight: .semibold))
@@ -800,6 +811,7 @@ struct PaneComposerBar: View {
         .frame(width: 44, height: 44)
         .contentShape(Rectangle())
     }
+    .menuIndicator(.hidden)
     .buttonStyle(.plain)
     // The glyph has no words, so the label is all VoiceOver has.
     .accessibilityLabel(PaneAttachmentCopy.attachButton)
@@ -808,12 +820,13 @@ struct PaneComposerBar: View {
 
   /// The staged image: what it is, how far it has got, and a way to remove it.
   ///
-  /// One line, because the collapsed landscape region has no room for two. No identifier on
-  /// the stack; each child carries its own.
+  /// One line while collapsed, because the collapsed landscape region has no room for two; a
+  /// file's name takes a second line otherwise. No identifier on the stack; each child carries
+  /// its own.
   private var attachmentRow: some View {
     HStack(spacing: 10) {
       attachmentThumbnail
-      attachmentStatus
+      attachmentText
       Spacer(minLength: 8)
       Button {
         model.attachment.remove()
@@ -848,17 +861,18 @@ struct PaneComposerBar: View {
   }
 
   /// A picture of the prepared PNG, so it shows exactly what will be sent. A glyph stands in
-  /// during the downscale.
+  /// during the downscale, and for a file, which has no picture.
   @ViewBuilder
   private var attachmentThumbnail: some View {
     let side: CGFloat = isCollapsed ? 24 : 32
+    let kind = model.attachment.kind
     Group {
       if let image = model.attachment.thumbnail {
         Image(uiImage: image)
           .resizable()
           .scaledToFill()
       } else {
-        Image(systemName: "photo")
+        Image(systemName: kind == .image ? "photo" : "doc")
           .font(.system(size: isCollapsed ? 12 : 14))
           .foregroundStyle(.secondary)
           .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -867,9 +881,35 @@ struct PaneComposerBar: View {
     }
     .frame(width: side, height: side)
     .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-    // Labelled, because the sentence beside it says everything about the image.
-    .accessibilityLabel(PaneAttachmentCopy.imageLabel)
+    // Labelled, because the text beside it says everything about the image or file.
+    .accessibilityLabel(PaneAttachmentCopy.label(for: kind))
     .accessibilityIdentifier("composer.attachment.row")
+  }
+
+  /// The status, and for a file its name above it, because a `doc` glyph cannot say which
+  /// file it is the way a photo's thumbnail does.
+  ///
+  /// The name is the original, as picked, cut in the middle so the extension stays. Collapsed,
+  /// the row is one 36 pt line, so the name and the status share it.
+  @ViewBuilder
+  private var attachmentText: some View {
+    if case .file(let name) = model.attachment.kind {
+      let layout =
+        isCollapsed
+        ? AnyLayout(HStackLayout(alignment: .firstTextBaseline, spacing: 6))
+        : AnyLayout(VStackLayout(alignment: .leading, spacing: 1))
+      layout {
+        Text(name)
+          .font(.caption.weight(.semibold))
+          .foregroundStyle(.primary)
+          .lineLimit(1)
+          .truncationMode(.middle)
+          .accessibilityIdentifier("composer.attachment.name")
+        attachmentStatus
+      }
+    } else {
+      attachmentStatus
+    }
   }
 
   /// What the row says: preparing, a size, bytes sent, done, or the failure.

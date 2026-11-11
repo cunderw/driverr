@@ -414,6 +414,24 @@ struct AppEnvironment {
     return image.pngData()
   }
 
+  /// `-uiTestingPickedFile`: the file the Files picker would have handed over.
+  ///
+  /// XCUITest cannot drive the out-of-process document picker either. The app writes the file
+  /// itself, so the read, the size check and the remote name all run on it. "build log.txt",
+  /// with a space, so the name is sanitised on the way out. Generated text, for the reason
+  /// `seededPickedImage` is.
+  static var seededPickedFile: URL? {
+    guard isUITesting,
+      ProcessInfo.processInfo.arguments.contains("-uiTestingPickedFile")
+    else { return nil }
+    let url = FileManager.default.temporaryDirectory.appendingPathComponent("build log.txt")
+    let lines = (1...400).map { "[\($0)] cargo test: session::opens_a_session ok" }
+    guard (try? Data(lines.joined(separator: "\n").utf8).write(to: url)) != nil else {
+      return nil
+    }
+    return url
+  }
+
   /// The fixture's runner, optionally slowed to a real host's speed.
   ///
   /// `FakeTranscriptHost` answers instantly, so the chat is `.ready` on its first frame. On a
@@ -2764,6 +2782,7 @@ struct AppEnvironment {
   static var isDemoTranscript: Bool { false }
   static var isForcingHardwareKeyboardNotice: Bool { false }
   static var seededPickedImage: Data? { nil }
+  static var seededPickedFile: URL? { nil }
   #endif
 }
 

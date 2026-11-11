@@ -218,7 +218,10 @@ import Testing
     #expect(
       PaneAttachmentFailureCopy.sentence(
         for: MachineImageRefusal.tooLarge(limit: 2_000_000), at: Self.box)
-        == "The image is over the \(PaneAttachmentCopy.size(2_000_000)) limit for box.")
+        == "The image is over the "
+        + PaneAttachmentFailureCopy.limitSize(2_000_000) + " limit for box.")
+    // A round limit drops its `.0`.
+    #expect(PaneAttachmentFailureCopy.limitSize(2_000_000) == "2 MB")
   }
 
   /// The core's own words name its terminal, `t7 has finished`, which says nothing about what
@@ -274,5 +277,95 @@ import Testing
     ]
     #expect(Set(sentences).count == sentences.count)
     #expect(sentences.allSatisfy { $0.contains("box") })
+  }
+
+  // MARK: - A file
+
+  private let file = PaneAttachmentKind.file(name: "build log.txt")
+
+  @Test func theAttachControlOffersPhotosAndFiles() {
+    #expect(PaneAttachmentCopy.attachButton == "Attach a photo or file")
+    #expect(PaneAttachmentCopy.photosItem == "Photos")
+    #expect(PaneAttachmentCopy.filesItem == "Files")
+  }
+
+  /// The glyph says "File". The name is beside it on the row, so VoiceOver reads it once.
+  @Test func aFileGlyphIsLabelledFile() {
+    #expect(PaneAttachmentCopy.label(for: file) == "File")
+    #expect(PaneAttachmentCopy.fileLabel == "File")
+    #expect(PaneAttachmentCopy.label(for: .image) == PaneAttachmentCopy.imageLabel)
+  }
+
+  @Test func anImagesSentencesAreUnchangedWhenTheKindIsSaid() {
+    #expect(PaneAttachmentFailureCopy.unreadable(.image) == PaneAttachmentFailureCopy.unreadable)
+    #expect(
+      PaneAttachmentFailureCopy.handOffFailed(at: .host, kind: .image)
+        == PaneAttachmentFailureCopy.handOffFailed)
+    #expect(
+      PaneAttachmentFailureCopy.sentence(for: MachineImageRefusal.unsupported, at: .machine("studio"))
+        == "Driverr can't send images to studio.")
+  }
+
+  @Test func aFilesSentencesSayFile() {
+    #expect(PaneAttachmentFailureCopy.unreadable(file) == "That file could not be read.")
+    #expect(
+      PaneAttachmentFailureCopy.handOffFailed(at: .host, kind: file)
+        == "The host has the file, but the pane could not be told where it is.")
+    #expect(
+      PaneAttachmentFailureCopy.handOffFailed(at: .machine("studio"), kind: file)
+        == "The file is on studio, but the pane could not be told where it is.")
+    #expect(
+      PaneAttachmentFailureCopy.sentence(for: ImageUploadFailure.noHostPath, kind: file)
+        == "The host saved the file but did not say where.")
+    #expect(
+      PaneAttachmentFailureCopy.sentence(
+        for: ImageUploadFailure.sizeMismatch(expectedBytes: 4), kind: file)
+        == "The file arrived incomplete, so nothing was saved. Try again.")
+    #expect(
+      PaneAttachmentFailureCopy.sentence(for: URLError(.unknown), kind: file)
+        == "The file could not be sent to the host.")
+  }
+
+  @Test func aFilesMachineSentencesSayFile() {
+    let studio = PaneAttachmentPlace.machine("studio")
+    #expect(
+      PaneAttachmentFailureCopy.sentence(for: MachineImageRefusal.unsupported, at: studio, kind: file)
+        == "Driverr can't send files to studio.")
+    #expect(
+      PaneAttachmentFailureCopy.sentence(
+        for: MachineImageRefusal.tooLarge(limit: AttachmentLimit.machine), at: studio, kind: file)
+        == "The file is over the 8.4 MB limit for studio.")
+    #expect(
+      PaneAttachmentFailureCopy.sentence(for: URLError(.unknown), at: studio, kind: file)
+        == "The file could not be sent to studio.")
+    #expect(
+      PaneAttachmentFailureCopy.sentence(
+        for: ImageUploadFailure.commandFailed(exitStatus: 1, standardError: ""), at: studio,
+        kind: file)
+        == "Driverr could not save the file on studio. Check its disk space and permissions.")
+    #expect(
+      PaneAttachmentFailureCopy.sentence(for: ImageUploadFailure.noHostPath, at: studio, kind: file)
+        == "The file was saved on studio, but Driverr was not told where.")
+  }
+
+  /// Refused before the read, with the limit for where the file was going.
+  @Test func aFileOverTheLimitNamesTheLimitAndThePlace() {
+    #expect(
+      PaneAttachmentFailureCopy.tooLarge(limit: AttachmentLimit.host, at: .host, kind: file)
+        == "The file is over the 50 MB limit for the host.")
+    #expect(
+      PaneAttachmentFailureCopy.tooLarge(
+        limit: AttachmentLimit.machine, at: .machine("studio"), kind: file)
+        == "The file is over the 8.4 MB limit for studio.")
+  }
+
+  /// A round limit drops its `.0`. Only the limit: a moving count keeps its decimal.
+  @Test func aRoundLimitReadsWithoutADecimal() {
+    #expect(PaneAttachmentFailureCopy.limitSize(50_000_000) == "50 MB")
+    #expect(PaneAttachmentFailureCopy.limitSize(8 << 20) == "8.4 MB")
+    #expect(PaneAttachmentFailureCopy.limitSize(1000) == "1 KB")
+    #expect(PaneAttachmentFailureCopy.limitSize(999) == "999 bytes")
+    #expect(PaneAttachmentFailureCopy.limitSize(150_000_000) == "150 MB")
+    #expect(PaneAttachmentCopy.size(50_000_000) == "50.0 MB")
   }
 }

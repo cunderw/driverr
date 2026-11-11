@@ -111,8 +111,9 @@ public struct CoreControl: HerdrControl {
     return try commandResult(of: answer, on: machine)
   }
 
-  /// The most raw bytes one `terminal.put` takes, as the core's own `put::MAX_BYTES` has it.
-  public static let putByteLimit = 8 << 20
+  /// The most raw bytes one `terminal.put` takes. `AttachmentLimit.machine` owns the number,
+  /// so a picked file is checked against the same one before it is read.
+  public static let putByteLimit = AttachmentLimit.machine
 
   /// A put's deadline: `execCallDeadline`, and 10 s for every MiB, started or not. The bytes go
   /// as base64 in one message, over the SSH link and then the core's own link to the machine,

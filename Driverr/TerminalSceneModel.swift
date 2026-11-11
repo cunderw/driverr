@@ -420,6 +420,47 @@ final class TerminalSceneModel {
     model.composers?.model(for: pane).attachment.attach(data)
   }
 
+  /// Whether the system Files picker is up. Attached at the root beside the Photos picker,
+  /// for the same reason.
+  private(set) var isShowingFileImporter = false
+
+  /// The composer asked for a file.
+  ///
+  /// The document picker runs out of process too. A launch with `-uiTestingPickedFile` skips
+  /// to a file the app wrote itself, and everything after the pick runs on it, the read
+  /// included.
+  func requestFileAttachment() {
+    if let seeded = AppEnvironment.seededPickedFile {
+      attachPickedFile(url: seeded)
+      return
+    }
+    isShowingFileImporter = true
+  }
+
+  /// The Files picker closed, chosen from or not.
+  func hideFileImporter() {
+    isShowingFileImporter = false
+  }
+
+  /// Reads a picked file and routes it to the current pane's composer, as
+  /// ``attachPickedImage(_:)`` does an image.
+  ///
+  /// The read is detached, because a file can be tens of megabytes and this type is
+  /// `@MainActor`. It runs inside the attachment's own run, so a Remove or another pick while
+  /// it reads drops its result. The limit is the one for where the file is going, checked
+  /// before the read. A file that cannot be sent still gets a row, saying why.
+  func attachPickedFile(url: URL) {
+    isShowingFileImporter = false
+    guard let pane = currentPane, let attachment = model.composers?.model(for: pane).attachment
+    else { return }
+    let limit = AttachmentLimit.limit(for: attachment.place)
+    attachment.attach(fileNamed: url.lastPathComponent) {
+      await Task.detached(priority: .userInitiated) {
+        PickedFileReader.read(url: url, limit: limit)
+      }.value
+    }
+  }
+
   /// Built when the pane sheet first opens, so nothing polls for a sheet nobody asked for.
   /// Kept afterwards, because discarding it mid-dismissal pulls the tiles from under the
   /// animation.

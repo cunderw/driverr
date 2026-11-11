@@ -508,9 +508,14 @@ struct TerminalScreen: View {
         // `nil` in shipping builds. See `composerFrame`.
         onLayoutProbe: Self.isReportingKeyboardMetrics ? { composerFrame = $0 } : nil,
         isCollapsed: isComposerCollapsed,
-        // The bar cannot present a `PhotosPicker` from the detail column, so the scene asks
+        // The bar cannot present a picker from the detail column, so the scene asks
         // `ContentView`'s root to.
-        onAttach: { scene.requestImageAttachment() }
+        onAttach: { source in
+          switch source {
+          case .photos: scene.requestImageAttachment()
+          case .files: scene.requestFileAttachment()
+          }
+        }
       )
     }
   }
@@ -945,7 +950,7 @@ struct TerminalScreen: View {
       // A `focusedSceneValue` is scene-wide, so the menu is still live while the scene
       // presents over itself. The pane's own keys go quiet then; see `PaneKeyActions`.
       isPresenting: scene.isShowingPaneSheet || scene.isShowingSettings
-        || scene.isShowingPhotoPicker,
+        || scene.isShowingPhotoPicker || scene.isShowingFileImporter,
       isBehindRootPresentation: isBehindRootPresentation,
       commandW: commandW,
       // ⌘W closes what is up over the scene, or else leaves it, through
@@ -955,6 +960,7 @@ struct TerminalScreen: View {
         case .closeSwitcher: scene.hidePaneSheet()
         case .closeSettings: scene.hideSettings()
         case .closePhotos: scene.hidePhotoPicker()
+        case .closeFiles: scene.hideFileImporter()
         default: presenter.dismiss()
         }
       }
@@ -966,7 +972,8 @@ struct TerminalScreen: View {
     KeyCommand.commandW(
       isShowingPaneSheet: scene.isShowingPaneSheet,
       isShowingSettings: scene.isShowingSettings,
-      isShowingPhotoPicker: scene.isShowingPhotoPicker
+      isShowingPhotoPicker: scene.isShowingPhotoPicker,
+      isShowingFileImporter: scene.isShowingFileImporter
     )
   }
 
