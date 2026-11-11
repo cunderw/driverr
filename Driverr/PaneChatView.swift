@@ -211,7 +211,8 @@ struct PaneChatView: View {
   /// The slot's top safe-area inset: the status bar, the navigation bar and the floating
   /// capsules' bar when the slot meets them, 0 when the back bar stands between. The
   /// representable reaches up by this much, and the coordinator rests the first row below it.
-  /// Unlike the bottom, the top inset carries no keyboard, so it can be read directly. See `ChatCollectionView.Coordinator.applyInsets`.
+  /// Unlike the bottom, the top inset carries no keyboard, so it can be read directly.
+  /// See `ChatCollectionView.Coordinator.applyInsets`.
   @State private var chatSlotTopInset: CGFloat = 0
 
   /// Show the Screen capsule's vertical padding, 8 pt at the default text size.
