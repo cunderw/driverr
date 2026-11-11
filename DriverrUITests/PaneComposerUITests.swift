@@ -1045,6 +1045,9 @@ extension PaneComposerUITests {
       "A file's row is labelled with the name it was picked as.\nTree was:\n"
         + app.debugDescription
     )
+    // On screen, not only in the label: a `doc` glyph cannot say which file it is.
+    let name = require(app, "composer.attachment.name", "Expected the row to show the file's name")
+    XCTAssertEqual(name.label, "build log.txt", "The row shows the name the file was picked as")
     let progress = require(app, "composer.attachment.progress", "Expected the row's status")
     let deadline = Date().addingTimeInterval(15)
     while Date() < deadline && !progress.label.contains(Self.handedOverNotice) {

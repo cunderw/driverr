@@ -820,12 +820,13 @@ struct PaneComposerBar: View {
 
   /// The staged image: what it is, how far it has got, and a way to remove it.
   ///
-  /// One line, because the collapsed landscape region has no room for two. No identifier on
-  /// the stack; each child carries its own.
+  /// One line while collapsed, because the collapsed landscape region has no room for two; a
+  /// file's name takes a second line otherwise. No identifier on the stack; each child carries
+  /// its own.
   private var attachmentRow: some View {
     HStack(spacing: 10) {
       attachmentThumbnail
-      attachmentStatus
+      attachmentText
       Spacer(minLength: 8)
       Button {
         model.attachment.remove()
@@ -884,6 +885,32 @@ struct PaneComposerBar: View {
     // labelled with its name, which nothing else on the row shows.
     .accessibilityLabel(PaneAttachmentCopy.label(for: kind))
     .accessibilityIdentifier("composer.attachment.row")
+  }
+
+  /// The status, and for a file its name above it, because a `doc` glyph cannot say which
+  /// file it is the way a photo's thumbnail does.
+  ///
+  /// The name is the original, as picked, cut in the middle so the extension stays. Collapsed,
+  /// the row is one 36 pt line, so the name and the status share it.
+  @ViewBuilder
+  private var attachmentText: some View {
+    if case .file(let name) = model.attachment.kind {
+      let layout =
+        isCollapsed
+        ? AnyLayout(HStackLayout(alignment: .firstTextBaseline, spacing: 6))
+        : AnyLayout(VStackLayout(alignment: .leading, spacing: 1))
+      layout {
+        Text(name)
+          .font(.caption.weight(.semibold))
+          .foregroundStyle(.primary)
+          .lineLimit(1)
+          .truncationMode(.middle)
+          .accessibilityIdentifier("composer.attachment.name")
+        attachmentStatus
+      }
+    } else {
+      attachmentStatus
+    }
   }
 
   /// What the row says: preparing, a size, bytes sent, done, or the failure.
