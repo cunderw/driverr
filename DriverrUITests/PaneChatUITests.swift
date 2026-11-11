@@ -2322,6 +2322,70 @@ final class PaneChatUITests: XCTestCase {
 
   // MARK: - Scrolling with the keyboard up
 
+  /// A drag down the conversation that carries the thumb onto the composer takes the keyboard
+  /// down with it, and the composer goes back to its resting pill. A draft keeps the card.
+  ///
+  /// The composer floats between the conversation and the keys, so an interactive dismissal
+  /// that waits for the finger to reach the keys lets the thumb cross the whole composer with
+  /// nothing following it. The drag ends over the composer's card, never on the keys, and is
+  /// still moving when it lifts. The pill is told from the card by height: the pill is one row.
+  func testDraggingOntoTheComposerTakesTheKeyboardDown() {
+    let app = connectedHost(boundedTranscript: true, slowTranscript: true)
+    tapPane(app, titled: "needs a decision")
+    require(app, "pane.chat", "Expected the conversation")
+    require(app, "pane.chat.turn.assistant", "Expected the agent's turn")
+    let field = require(app, "composer.text", "Expected the composer field")
+    let card = app.descendants(matching: .any).matching(identifier: "composer.card").firstMatch
+    XCTAssertTrue(card.waitForExistence(timeout: 5), "Expected 'composer.card'")
+    let pillHeight = card.frame.height
+    let window = app.windows.firstMatch.frame
+    func at(_ y: CGFloat) -> XCUICoordinate {
+      app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: window.midX, dy: y))
+    }
+    func keyboardIsUp() -> Bool {
+      app.keyboards.count > 0 && app.keyboards.firstMatch.frame.height > 0
+    }
+    func dragOntoTheComposer() -> CGRect {
+      let focused = card.frame
+      at(focused.minY - 200).press(
+        forDuration: 0.1, thenDragTo: at(focused.midY), withVelocity: 300,
+        thenHoldForDuration: 0)
+      usleep(1_500_000)
+      return focused
+    }
+
+    for draft in ["", "draft"] {
+      field.tap()
+      XCTAssertTrue(
+        app.keyboards.firstMatch.waitForExistence(timeout: 10), "The keyboard never came up")
+      if !draft.isEmpty { field.typeText(draft) }
+      // Focus scrolls to the newest turn, and a correction follows.
+      usleep(1_500_000)
+      XCTAssertTrue(keyboardIsUp(), "The keyboard is not up, so the drag below proves nothing")
+      let focused = dragOntoTheComposer()
+
+      XCTAssertFalse(
+        keyboardIsUp(),
+        """
+        A drag down the conversation that ended on the composer's card \(focused) left the \
+        keyboard up at \(app.keyboards.count > 0 ? "\(app.keyboards.firstMatch.frame)" : "-"). \
+        The keyboard follows the finger only once it reaches the keys, so the thumb crosses \
+        the composer and nothing moves. Draft '\(draft)'.
+        """)
+      if draft.isEmpty {
+        XCTAssertEqual(
+          card.frame.height, pillHeight, accuracy: 1,
+          "With the keyboard down and no draft the composer should be its resting pill "
+            + "(\(pillHeight) pt) and is \(card.frame).")
+      } else {
+        XCTAssertGreaterThan(
+          card.frame.height, pillHeight + 10,
+          "A draft keeps the composer a card, and it is \(card.frame) against the pill's "
+            + "\(pillHeight) pt.")
+      }
+    }
+  }
+
   /// Scrolling back through the conversation in portrait keeps the keyboard up.
   ///
   /// Scroll-to-dismiss exists so a landscape reader can bring back the full composer and the
@@ -2363,8 +2427,11 @@ final class PaneChatUITests: XCTestCase {
         + "enough to drag inside. Chat \(chatFrame), keyboard \(opened).")
     let start = chat.coordinate(
       withNormalizedOffset: CGVector(dx: 0.5, dy: (visibleHeight * 0.15) / chatFrame.height))
+    // And above the composer: a drag that reaches the composer's card starts the keyboard's
+    // interactive dismissal (`testDraggingOntoTheComposerTakesTheKeyboardDown`).
+    let endY = min(visibleHeight * 0.85, (composerTop(in: app) ?? opened.minY) - chatFrame.minY - 12)
     let end = chat.coordinate(
-      withNormalizedOffset: CGVector(dx: 0.5, dy: (visibleHeight * 0.85) / chatFrame.height))
+      withNormalizedOffset: CGVector(dx: 0.5, dy: endY / chatFrame.height))
 
     // Drag until the jump control proves the reader left the end. A gesture the scroll view
     // never saw cannot dismiss a keyboard either, so the assertion needs that proof. A turn's

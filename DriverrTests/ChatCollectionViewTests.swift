@@ -715,6 +715,20 @@ struct ChatCollectionViewTests {
         """
       #expect(abs(measured.insetBottom - composerHeight) < 0.5, "\(inset)")
 
+      // The composer floats between the conversation and the keyboard, so an interactive
+      // dismissal that waits for the finger to reach the keys never starts while the thumb
+      // crosses the composer. `keyboardDismissPadding` starts it at the composer's top edge.
+      let padding = """
+        On the \(device), the collection view's keyboardLayoutGuide.keyboardDismissPadding is \
+        \(collection.keyboardLayoutGuide.keyboardDismissPadding) against the composer strip \
+        \(measured.insetBottom). With the keyboard up a drag down the conversation starts \
+        pulling the keyboard only once the finger reaches the keys, so the thumb crosses the \
+        whole composer and nothing follows it.
+        """
+      #expect(
+        abs(collection.keyboardLayoutGuide.keyboardDismissPadding - measured.insetBottom) < 0.5,
+        "\(padding)")
+
       let resting = """
         Resting at the end on the \(device), the conversation's content ends at y \
         \(measured.contentBottom) and the composer's card starts at \
