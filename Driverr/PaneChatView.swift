@@ -1379,7 +1379,13 @@ struct PaneChatView: View {
   }
 
   /// Show the Screen over a readable chat, as a capsule in the stop notice's glass. The
-  /// visible capsule is 34 pt; its target is 44, as `jumpToLatest`'s circle sits in one.
+  /// visible capsule is 34 pt at the default size; its target is 44, as `jumpToLatest`'s
+  /// circle sits in one.
+  ///
+  /// The target is a fixed 5 pt either side of the glass, not a 44 pt frame. A frame stops
+  /// adding room once the glass outgrows it at accessibility sizes, and the gap to the stop
+  /// card above, which is that room, closed to 3 pt. Padding keeps the gap 5 pt at every size,
+  /// and at the default size it lays out exactly as the frame did.
   private var showScreenCapsule: some View {
     Button { isShowingScreen = true } label: {
       BorderedButtonLabel(TranscriptNotice.showScreenTitle)
@@ -1390,7 +1396,7 @@ struct PaneChatView: View {
         .padding(.vertical, showScreenCapsulePadding)
         .frame(minHeight: 2 * ChatCapsuleGlass.radius)
         .chatCapsuleGlass(Capsule())
-        .frame(minHeight: 44)
+        .padding(.vertical, (44 - 2 * ChatCapsuleGlass.radius) / 2)
         .contentShape(Capsule())
     }
     .buttonStyle(.plain)
