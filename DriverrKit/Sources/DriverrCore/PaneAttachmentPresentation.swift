@@ -3,8 +3,9 @@ import Foundation
 /// Where the composer's pending attachment is. The phases, sizes and failure sentences are
 /// here so `swift test` asserts them.
 public enum PaneAttachmentPhase: Equatable, Sendable {
-  /// The bytes are being converted to PNG. Not instant for a large photo, so the row appears
-  /// now and the tap on Attach is visibly acknowledged.
+  /// A photo's bytes are being converted to PNG, or a picked file is being read, which converts
+  /// nothing. Not instant for a large photo or file, so the row appears now and the tap on
+  /// Attach is visibly acknowledged.
   case preparing
   /// Prepared and waiting. Nothing has been sent.
   case ready
@@ -101,7 +102,7 @@ public enum PaneAttachmentCopy {
     case .file: fileLabel
     }
   }
-  /// While the picked bytes are being read down to PNG.
+  /// While a photo's bytes are being read down to PNG, or a picked file is being read as it is.
   public static let preparing = "Preparing…"
   /// Once the host has it, for a pane on the SSH host. Not the path, a UUID file name that
   /// tells a reader nothing. ``uploaded(at:)`` names the place.

@@ -290,7 +290,7 @@ import Testing
   }
 
   /// The glyph says "File". The name is beside it on the row, so VoiceOver reads it once.
-  @Test func aFileRowIsLabelledWithTheFilesOwnName() {
+  @Test func aFileGlyphIsLabelledFile() {
     #expect(PaneAttachmentCopy.label(for: file) == "File")
     #expect(PaneAttachmentCopy.fileLabel == "File")
     #expect(PaneAttachmentCopy.label(for: .image) == PaneAttachmentCopy.imageLabel)
