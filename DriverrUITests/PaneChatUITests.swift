@@ -1193,6 +1193,7 @@ final class PaneChatUITests: XCTestCase {
       + "\(String(describing: screen)), first agent turn \(String(describing: turn)) in "
       + "\(order.filter { $0.hasPrefix("pane.chat") })"
     XCTAssertNotNil(stop, readOrder)
+    XCTAssertNotNil(screen, readOrder)
     XCTAssertNotNil(turn, readOrder)
     if let stop, let turn { XCTAssertLessThan(stop, turn, readOrder) }
     if let screen, let turn { XCTAssertLessThan(screen, turn, readOrder) }

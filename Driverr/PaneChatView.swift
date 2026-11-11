@@ -209,9 +209,9 @@ struct PaneChatView: View {
   @State private var chatSlotHeight: CGFloat = 0
 
   /// The slot's top safe-area inset: the status bar, the navigation bar and the floating
-  /// capsules' bar when the slot meets them, 0 when the back bar stands between. The representable reaches up by this much, and
-  /// the coordinator rests the first row below it. Unlike the bottom, the top inset carries no
-  /// keyboard, so it can be read directly. See `ChatCollectionView.Coordinator.applyInsets`.
+  /// capsules' bar when the slot meets them, 0 when the back bar stands between. The
+  /// representable reaches up by this much, and the coordinator rests the first row below it.
+  /// Unlike the bottom, the top inset carries no keyboard, so it can be read directly. See `ChatCollectionView.Coordinator.applyInsets`.
   @State private var chatSlotTopInset: CGFloat = 0
 
 
@@ -651,10 +651,9 @@ struct PaneChatView: View {
   /// The gutter every row kind shares. See `ChatColumn.gutter(forColumnWidth:)`.
   ///
   /// Turn cards and the provenance row get it from their section. Views that are not cells,
-  /// such as the floating capsules and the back bar, must ask for it here, or they draw
-  /// inside the edge
-  /// the cards and the composer share. `contentWidthEstimate` is 0 until measured, so the
-  /// phone's answer applies until then.
+  /// such as the floating capsules and the back bar, must ask for it here, or they draw inside
+  /// the edge the cards and the composer share. `contentWidthEstimate` is 0 until measured, so
+  /// the phone's answer applies until then.
   private var chatGutter: CGFloat {
     ChatColumn.gutter(forColumnWidth: contentWidthEstimate)
   }

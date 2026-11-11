@@ -209,11 +209,11 @@ struct ChatUnderBarLayoutTests {
 
     let indicatorTop = frame.minY + collection.verticalScrollIndicatorInsets.top
     let indicator = """
-      The scroll indicator starts at y \(indicatorTop), against the bar's bottom at \
-      \(barBottom). It must stay out from under the glass, as the bottom one stays out of the \
-      composer.
+      The scroll indicator starts at y \(indicatorTop), against \(rest), the bar's bottom or \
+      the capsules' foot where they float. It must stay out from under the glass, as the \
+      bottom one stays out of the composer.
       """
-    #expect(indicatorTop >= barBottom - 0.5, "\(indicator)")
+    #expect(indicatorTop >= rest - 0.5, "\(indicator)")
 
     let strip = frame.maxY - composer.minY
     let bottom = """

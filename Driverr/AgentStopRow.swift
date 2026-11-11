@@ -21,6 +21,10 @@ struct AgentStopRow: View {
   /// `wifi.exclamationmark`, the widest, is about 19 pt. Scaled with Dynamic Type.
   @ScaledMetric private var glyphWidth: CGFloat = 20
 
+  /// At accessibility sizes two lines hold little more than the title, so the reset time
+  /// would be cut. The limit is lifted there.
+  @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
   var body: some View {
     // Read the clock here, not `context.date`: an explicit schedule renders its first frame
     // with the entry's date, which would show the reset as passed too early. The entry is one
@@ -32,9 +36,11 @@ struct AgentStopRow: View {
           .foregroundStyle(notice.isStale ? Color.secondary : Color.orange)
           .frame(width: glyphWidth, alignment: .center)
           .accessibilityHidden(true)
-        // Two lines at most. VoiceOver still reads the whole detail through the label.
+        // Two lines at most, so a long error does not cover the conversation; none at
+        // accessibility sizes, where two would cut the reset time. VoiceOver reads the whole
+        // detail through the label either way.
         text(for: notice)
-          .lineLimit(2)
+          .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
           .fixedSize(horizontal: false, vertical: true)
       }
       .font(.footnote)
