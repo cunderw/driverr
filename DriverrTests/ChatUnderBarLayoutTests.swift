@@ -9,12 +9,15 @@ import UIKit
 ///
 /// The real `PaneChatView` on the seeded transcript, inside a real `NavigationStack` whose bar
 /// carries one glass button, with a stand-in composer as the `safeAreaBar` `TerminalScreen`
-/// attaches. Three claims, all in one window (see `ChatCollectionViewTests.pump(until:)` for why
+/// attaches. Four claims, all in one window (see `ChatCollectionViewTests.pump(until:)` for why
 /// windows are scarce):
 ///
 /// - the collection view reaches the window's top, so rows pass under the bar;
 /// - at the top of the conversation its first row starts just below the bar, not under it;
-/// - the bottom inset is still the composer's strip, with the top extension taken out of it.
+/// - the bottom inset is still the composer's strip, with the top extension taken out of it;
+/// - on a blocked pane Show the Screen floats over the conversation just below the bar, read
+///   through `PaneChatView.onCapsulesFrame`, pins nothing above it, and at the top of the
+///   conversation the first row rests below it rather than under it.
 ///
 /// It reads the `UICollectionView` and the `UINavigationBar` directly, because a SwiftUI frame
 /// read after `.ignoresSafeArea` reports the unexpanded slot (CLAUDE.md, `GeometryReader`
@@ -25,9 +28,8 @@ struct ChatUnderBarLayoutTests {
   /// A stand-in for the resting composer pill. A fixture value, not a measurement.
   private static let composer: CGFloat = 62
 
-  /// The seed's one pane with a reported session, `needs a decision`, set to working. Blocked,
-  /// it pins Show the Screen above the conversation, and a pinned row keeps the conversation
-  /// out from under the bar by design (`PaneChatView.chat`).
+  /// The seed's one pane with a reported session, `needs a decision`, set to working, so no
+  /// capsule floats over the conversation.
   private static var workingPane: DriverrCore.Pane {
     let pane = PreviewSupport.agentPane
     return DriverrCore.Pane(
@@ -45,10 +47,12 @@ struct ChatUnderBarLayoutTests {
     let model: PaneTranscriptModel
     let screen: PaneScreenModel
     var onComposer: @MainActor (CGRect) -> Void
+    var onCapsules: @MainActor (CGRect) -> Void
 
     var body: some View {
       NavigationStack {
-        PaneChatView(model: model, agentName: "Claude", screen: screen)
+        PaneChatView(
+          model: model, agentName: "Claude", screen: screen, onCapsulesFrame: onCapsules)
           // As `TerminalScreen.paneSurfaces` attaches the composer.
           .safeAreaBar(edge: .bottom, spacing: 0) {
             Color.green
@@ -93,31 +97,37 @@ struct ChatUnderBarLayoutTests {
     let model = PreviewSupport.transcript(for: Self.workingPane)
     await model.currentLoad?.value
     await model.subagentListLoad?.value
-    expectTheConversation(model: model, pane: Self.workingPane, underTheBar: true)
+    expectTheConversation(model: model, pane: Self.workingPane, floatsCapsules: false)
   }
 
-  /// A blocked pane pins Show the Screen above the conversation, so the conversation stays
-  /// under that row, and the provenance row is still its first row.
-  @Test("under a pinned row the conversation stays below it and still opens on its provenance")
-  func aPinnedRowKeepsTheConversationBelowIt() async {
+  /// A blocked pane offers Show the Screen as a capsule floating over the conversation, not as
+  /// a row pinned above it, so the conversation still reaches under the bar, and its first row
+  /// rests just below the capsule, whose bar adds to the slot's top safe area.
+  @Test("Show the Screen floats over the conversation, which still reaches under the bar")
+  func showTheScreenFloatsOverTheConversation() async {
     let model = PreviewSupport.transcript(for: PreviewSupport.agentPane)
     await model.currentLoad?.value
     await model.subagentListLoad?.value
-    expectTheConversation(model: model, pane: PreviewSupport.agentPane, underTheBar: false)
+    expectTheConversation(model: model, pane: PreviewSupport.agentPane, floatsCapsules: true)
   }
 
   /// The synchronous half: `RunLoop` cannot be pumped from an `async` context.
   private func expectTheConversation(
-    model: PaneTranscriptModel, pane: DriverrCore.Pane, underTheBar: Bool
+    model: PaneTranscriptModel, pane: DriverrCore.Pane, floatsCapsules: Bool
   ) {
     var composer = CGRect.zero
+    var capsules: CGRect?
     let window = HostedProbe.window(
       Fixture(
         model: model,
         screen: PreviewSupport.paneScreen(for: pane),
-        onComposer: { composer = $0 }),
+        onComposer: { composer = $0 },
+        onCapsules: { capsules = $0 }),
       size: HostedProbe.phone)
-    pump(until: { first(UICollectionView.self, in: window) != nil && composer.width > 100 })
+    pump(until: {
+      first(UICollectionView.self, in: window) != nil && composer.width > 100
+        && (!floatsCapsules || capsules != nil)
+    })
     guard let collection = first(UICollectionView.self, in: window),
       let bar = first(UINavigationBar.self, in: window)
     else {
@@ -141,24 +151,43 @@ struct ChatUnderBarLayoutTests {
     let under = """
       The conversation's scroll view starts at y \(frame.minY) in the window, against the bar's \
       bottom at \(barBottom). Rows can pass under the glass only if it reaches the window's top, \
-      and must not while a row is pinned above them.
+      and nothing may be pinned above them.
       """
-    if underTheBar {
-      #expect(frame.minY < 0.5, "\(under)")
+    #expect(frame.minY < 0.5, "\(under)")
+
+    // The capsules float over the conversation: inside the scroll view's frame, and below the
+    // bar rather than under its glass.
+    if floatsCapsules {
+      let floating = """
+        The floating capsules are at \(String(describing: capsules)), against the bar's bottom \
+        at \(barBottom) and the scroll view \(frame.minY)..\(frame.maxY). They must sit over the \
+        conversation, just below the bar.
+        """
+      if let capsules {
+        #expect(capsules.minY >= barBottom - 0.5, "\(floating)")
+        #expect(capsules.minY <= barBottom + 12, "\(floating)")
+        #expect(capsules.maxY < frame.maxY, "\(floating)")
+        #expect(capsules.height > 30, "\(floating)")
+      } else {
+        Issue.record("\(floating)")
+      }
     } else {
-      #expect(frame.minY > barBottom, "\(under)")
+      #expect(
+        capsules == nil,
+        "Nothing floats over a working pane's chat, got \(String(describing: capsules)).")
     }
 
-    // The top of the conversation, where a reader who scrolled all the way back rests.
-    collection.contentOffset = CGPoint(x: 0, y: -collection.adjustedContentInset.top)
-    collection.layoutIfNeeded()
+    // The top of the conversation, where a reader who scrolled all the way back rests:
+    // `contentOffset.y == -adjustedContentInset.top`. Worked out rather than scrolled to,
+    // because the place is `followingLatest` and the owner's reconcile writes the end back over
+    // any offset this test sets, which is the top only while the content fits.
     guard let first = collection.layoutAttributesForItem(at: IndexPath(item: 0, section: 0))
     else {
       Issue.record("No first item in the conversation.")
       withExtendedLifetime(window) {}
       return
     }
-    let firstTop = collection.convert(first.frame, to: window).minY
+    let firstTop = frame.minY + collection.adjustedContentInset.top + first.frame.minY
     let items = (collection.dataSource as? UICollectionViewDiffableDataSource<ChatSection, ChatItem>)?
       .snapshot().itemIdentifiers ?? []
     let provenance = """
@@ -167,26 +196,24 @@ struct ChatUnderBarLayoutTests {
       """
     #expect(items.first == .provenance, "\(provenance)")
     #expect(first.frame.height > 10, "\(provenance)")
-    // The rest of the claims are about the conversation under the bar.
-    guard underTheBar else {
-      withExtendedLifetime(window) {}
-      return
-    }
+    // Below the bar, or below the capsules where they float: at rest they cover nothing.
+    let rest = floatsCapsules ? (capsules?.maxY ?? barBottom) : barBottom
     let below = """
       At the top of the conversation the first row starts at y \(firstTop), against the bar's \
-      bottom at \(barBottom). Above the bar it is drawn under the glass at rest; more than \
-      \(ChatTopFade.height) below, the provenance row is still standing above the conversation.
+      bottom at \(barBottom) and the capsules' foot at \(String(describing: capsules?.maxY)). \
+      Above \(rest) it is drawn under the glass at rest, so the provenance row cannot be read; \
+      more than \(ChatTopFade.height) below, something is still pinned above the conversation.
       """
-    #expect(firstTop >= barBottom - 0.5, "\(below)")
-    #expect(firstTop <= barBottom + ChatTopFade.height, "\(below)")
+    #expect(firstTop >= rest - 0.5, "\(below)")
+    #expect(firstTop <= rest + ChatTopFade.height, "\(below)")
 
     let indicatorTop = frame.minY + collection.verticalScrollIndicatorInsets.top
     let indicator = """
-      The scroll indicator starts at y \(indicatorTop), against the bar's bottom at \
-      \(barBottom). It must stay out from under the glass, as the bottom one stays out of the \
-      composer.
+      The scroll indicator starts at y \(indicatorTop), against \(rest), the bar's bottom or \
+      the capsules' foot where they float. It must stay out from under the glass, as the \
+      bottom one stays out of the composer.
       """
-    #expect(indicatorTop >= barBottom - 0.5, "\(indicator)")
+    #expect(indicatorTop >= rest - 0.5, "\(indicator)")
 
     let strip = frame.maxY - composer.minY
     let bottom = """

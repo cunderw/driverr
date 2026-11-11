@@ -122,8 +122,8 @@ struct ChatRowInputs: Equatable {
   var activity: ChatActivity?
 }
 
-/// Fades the conversation out as it scrolls under a row pinned above it (the stop notice,
-/// Show the Screen, the back bar), instead of cutting it square.
+/// Fades the conversation out as it scrolls under a row pinned above it (the sub-agent back
+/// bar), instead of cutting it square.
 ///
 /// Drawn only while such a row stands above the slot. With none, the conversation reaches up
 /// under the navigation bar and the collection view's own `topEdgeEffect` softens it, because
@@ -485,7 +485,6 @@ struct ChatCollectionView<Row: View>: UIViewRepresentable {
     /// How far above the slot this view reaches. See `ChatCollectionView.topExtension`.
     var topExtension: CGFloat = 0
 
-
     init(
       row: @escaping (ChatItem) -> Row,
       accent: Color,
@@ -520,6 +519,13 @@ struct ChatCollectionView<Row: View>: UIViewRepresentable {
     /// Re-applied after every layout pass, because `bounds.height` changes without SwiftUI
     /// saying so. A change moves no row by itself: the reconcile that follows every layout
     /// pass re-applies the reader's place against the new inset.
+    ///
+    /// The floating capsules are a bar under the navigation bar's (`PaneChatView`), so one
+    /// arriving grows `topExtension` and shrinks `visibleHeight` by its height, and the bottom
+    /// inset is unchanged. A follower at the end moves not at all, because the end is measured
+    /// from the bottom. A reader in the history moves down by exactly the capsule's height,
+    /// because their place is measured from the top of the visible region, which is now below
+    /// the capsule: the line they were reading stays the first line not under glass.
     func applyInsets() {
       guard let collection else { return }
       let top = topExtension + ChatTopFade.contentInset

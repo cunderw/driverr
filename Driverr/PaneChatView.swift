@@ -158,7 +158,7 @@ struct PaneChatView: View {
 
   /// Whether the composer is collapsed: compact vertical size class with the keyboard up, as in
   /// `TerminalScreen.isComposerCollapsed`. There is no height to spare then, so it hides the
-  /// agent-stop row and the Show the Screen row, and it picks the keyboard dismissal mode.
+  /// stop notice and Show the Screen capsules, and it picks the keyboard dismissal mode.
   var isComposerCollapsed = false
 
   /// Reports the conversation's scroll geometry, `nil` unless `-uiTestingKeyboardMetrics` is
@@ -173,6 +173,11 @@ struct PaneChatView: View {
   /// bar and the home indicator. `TerminalScreen.slotClip` opens the surfaces' clip for it and
   /// for nothing else. See `drawsConversation`.
   var onDrawsConversation: ((Bool) -> Void)?
+
+  /// Where a hosted layout test reads the floating capsules' frame, in global coordinates.
+  /// Installs nothing when `nil`. The in-app form of `HostedProbe`'s `measuredFrame(into:)`,
+  /// as `ProvenanceRow.onCaptionFrame` is. See `floatingCapsules(for:)`.
+  var onCapsulesFrame: (@MainActor (CGRect) -> Void)?
 
   /// VoiceOver focus, moved to the newest turn when the transcript first renders, where a
   /// sighted reader's eye lands anyway.
@@ -203,12 +208,15 @@ struct PaneChatView: View {
   /// not what SwiftUI proposes to this view, so it cannot move the measurement.
   @State private var chatSlotHeight: CGFloat = 0
 
-  /// The slot's top safe-area inset: the status bar and the navigation bar when the slot meets
-  /// them, 0 when a pinned row stands between. The representable reaches up by this much, and
-  /// the coordinator rests the first row below it. Unlike the bottom, the top inset carries no
-  /// keyboard, so it can be read directly. See `ChatCollectionView.Coordinator.applyInsets`.
+  /// The slot's top safe-area inset: the status bar, the navigation bar and the floating
+  /// capsules' bar when the slot meets them, 0 when the back bar stands between. The
+  /// representable reaches up by this much, and the coordinator rests the first row below it.
+  /// Unlike the bottom, the top inset carries no keyboard, so it can be read directly.
+  /// See `ChatCollectionView.Coordinator.applyInsets`.
   @State private var chatSlotTopInset: CGFloat = 0
 
+  /// Show the Screen capsule's vertical padding, 8 pt at the default text size.
+  @ScaledMetric private var showScreenCapsulePadding: CGFloat = 8
 
   /// Whether the last automatic fetch failed, which disarms it.
   ///
@@ -441,28 +449,10 @@ struct PaneChatView: View {
   private func chat(source: TranscriptSource, transcript: Transcript) -> some View {
     // The provenance row is not here: it is the conversation's first row, so it scrolls away
     // and the conversation meets the bar. See `ChatItem.provenance`. The session's sub-agents
-    // are not here either: the bar's sub-agents button lists them (`SubagentSheetView`).
-    // The agent stopped on a failed API request. Hidden while the composer is collapsed, like
-    // the row below, and over a sub-agent's chat, whose stop is not the pane's.
-    if let stop = transcript.agentStop, !isComposerCollapsed, !isShowingSubagent {
-      AgentStopRow(stop: stop, horizontalInset: chatGutter)
-    }
-    // Show the Screen is reachable from a readable chat on a blocked pane, not only from a
-    // failure, so the reader never has to switch to Terminal to see a prompt.
+    // are not here either: the bar's sub-agents button lists them (`SubagentSheetView`). Nor
+    // are the stop notice and Show the Screen: they float over the conversation; see
+    // `floatingCapsules(for:)`.
     //
-    // Not while the composer is collapsed, like the agent-stop row above.
-    // A landscape phone with the keyboard up leaves this surface about 100 pt, and without
-    // this row the rest fits. The row returns with the keyboard's dismissal or rotation.
-    if agentStatus == .blocked && !isComposerCollapsed {
-      HStack {
-        Spacer(minLength: 0)
-        showScreenButton(isProminent: false)
-      }
-      // `chatGutter`, because this row is a sibling of the collection view and section insets
-      // do not reach it.
-      .padding(.horizontal, chatGutter)
-      .padding(.top, 4)
-    }
     // `Color.clear` takes the safe-area slot and the two overlays cannot change it, as in
     // `TerminalScreen.paneSurfaces`. The conversation draws into the top and bottom safe areas
     // so it passes behind the bar's glass and the composer's. The jump-to-latest control is
@@ -523,14 +513,14 @@ struct PaneChatView: View {
         // The composer's height arrives through `chatSlotHeight`.
         //
         // The top too, so rows pass under the navigation bar's glass and the status bar. It
-        // acts only where the slot meets the safe area's top edge: with a pinned row above it
-        // (the stop notice, Show the Screen, the back bar) the slot's top
-        // inset is 0 and the conversation stops under that row as before. Never on the
-        // terminals; see `TerminalScreen.terminals`.
+        // acts only where the slot meets the safe area's top edge: with the sub-agent back bar
+        // pinned above it the slot's top inset is 0 and the conversation stops under that bar.
+        // Never on the terminals; see `TerminalScreen.terminals`.
         .ignoresSafeArea(.container, edges: [.top, .bottom])
       }
-      // Above the collection view, so rows fade out under the rows above the slot. Only where
-      // such a row stands: under the bar, the collection view's own `topEdgeEffect` softens it.
+      // Above the collection view, so rows fade out under the back bar above the slot. Only
+      // where it stands: under the navigation bar, the collection view's own `topEdgeEffect`
+      // softens it.
       .overlay(alignment: .top) {
         if chatSlotTopInset < 0.5 { ChatTopFade() }
       }
@@ -543,6 +533,13 @@ struct PaneChatView: View {
           jumpToLatest { jumpToken += 1 }
         }
       }
+      // The capsules, as a bar under the navigation bar's, so they take no height from the
+      // conversation: the bar adds to the slot's top safe area, which `chatSlotTopInset` reads
+      // and the conversation reaches up through. At the top of the conversation the first row
+      // rests below them, rows scroll under them, and the collection view's `topEdgeEffect`
+      // softens the rows down to their foot, which an overlay does not get. Outside the
+      // overlays and the slot's geometry reads, so it wraps them all.
+      .safeAreaBar(edge: .top, spacing: 0) { floatingCapsules(for: transcript) }
       // Once per appearance of a ready transcript. This branch's identity is stable across
       // scrolls and expansions, so a later refresh does not steal focus back.
       .onAppear { focusedTurnID = transcript.turns.last?.id }
@@ -656,11 +653,10 @@ struct PaneChatView: View {
 
   /// The gutter every row kind shares. See `ChatColumn.gutter(forColumnWidth:)`.
   ///
-  /// Turn cards and the provenance row get it from their section. Rows that are not cells,
-  /// such as the stop notice and the Show the Screen row, must ask for it here, or they draw
-  /// inside the edge
-  /// the cards and the composer share. `contentWidthEstimate` is 0 until measured, so the
-  /// phone's answer applies until then.
+  /// Turn cards and the provenance row get it from their section. Views that are not cells,
+  /// such as the floating capsules and the back bar, must ask for it here, or they draw inside
+  /// the edge the cards and the composer share. `contentWidthEstimate` is 0 until measured, so
+  /// the phone's answer applies until then.
   private var chatGutter: CGFloat {
     ChatColumn.gutter(forColumnWidth: contentWidthEstimate)
   }
@@ -1330,6 +1326,80 @@ struct PaneChatView: View {
     .accessibilityLabel(candidate.accessibilityLabel)
     .accessibilityAddTraits(.isButton)
     .accessibilityIdentifier("pane.chat.picker.candidate.\(index)")
+  }
+
+  /// The stop notice and Show the Screen, as glass capsules floating over the top of the
+  /// conversation, stacked when both apply. Nothing is pinned over the chat, so they take no
+  /// height from it and the conversation passes under them as it does under the bar.
+  ///
+  /// Neither while the composer is collapsed: a landscape phone with the keyboard up leaves
+  /// this surface about 100 pt, and a capsule would cover most of it. They return with the
+  /// keyboard's dismissal or rotation. Neither over a sub-agent's chat: its stop is not the
+  /// pane's, and the captured screen is the pane's (`agentStatus` is `nil` there).
+  ///
+  /// The stack hugs its capsules and carries no background or content shape, so the
+  /// conversation around them still takes touches. First in VoiceOver's order, ahead of the
+  /// conversation, as the pinned rows were.
+  @ViewBuilder
+  private func floatingCapsules(for transcript: Transcript) -> some View {
+    let stop = floatingStop(in: transcript)
+    if stop != nil || offersScreenCapsule {
+      VStack(spacing: 0) {
+        if let stop { AgentStopRow(stop: stop) }
+        if offersScreenCapsule { showScreenCapsule }
+      }
+      .frame(maxWidth: ChatColumn.width)
+      // The gutter, because the stack is not a cell and section insets do not reach it.
+      .padding(.horizontal, chatGutter)
+      .padding(.top, 6)
+      .frame(maxWidth: .infinity)
+      .accessibilitySortPriority(1)
+      .background {
+        // `onGeometryChange`, not `onAppear`: in a `NavigationStack` the first frame is laid
+        // out before the stack has its size.
+        if let onCapsulesFrame {
+          Color.clear.onGeometryChange(for: CGRect.self, of: { $0.frame(in: .global) }) {
+            onCapsulesFrame($0)
+          }
+        }
+      }
+    }
+  }
+
+  /// The stop the stop capsule shows, or `nil`. See `floatingCapsules(for:)`.
+  private func floatingStop(in transcript: Transcript) -> AgentStop? {
+    isComposerCollapsed || isShowingSubagent ? nil : transcript.agentStop
+  }
+
+  /// Show the Screen is reachable from a readable chat on a blocked pane, not only from a
+  /// failure, so the reader never has to switch to Terminal to see a prompt.
+  private var offersScreenCapsule: Bool {
+    agentStatus == .blocked && !isComposerCollapsed
+  }
+
+  /// Show the Screen over a readable chat, as a capsule in the stop notice's glass. The
+  /// visible capsule is 34 pt at the default size; its target is 44, as `jumpToLatest`'s
+  /// circle sits in one.
+  ///
+  /// The target is a fixed 5 pt either side of the glass, not a 44 pt frame. A frame stops
+  /// adding room once the glass outgrows it at accessibility sizes, and the gap to the stop
+  /// card above, which is that room, closed to 3 pt. Padding keeps the gap 5 pt at every size,
+  /// and at the default size it lays out exactly as the frame did.
+  private var showScreenCapsule: some View {
+    Button { isShowingScreen = true } label: {
+      BorderedButtonLabel(TranscriptNotice.showScreenTitle)
+        .font(.footnote.weight(.semibold))
+        .padding(.horizontal, 14)
+        // Scaled, so the label is not tight against the glass at accessibility sizes. At the
+        // default size the 34 pt minimum decides the height either way.
+        .padding(.vertical, showScreenCapsulePadding)
+        .frame(minHeight: 2 * ChatCapsuleGlass.radius)
+        .chatCapsuleGlass(Capsule())
+        .padding(.vertical, (44 - 2 * ChatCapsuleGlass.radius) / 2)
+        .contentShape(Capsule())
+    }
+    .buttonStyle(.plain)
+    .accessibilityIdentifier("pane.chat.showScreen")
   }
 
   /// The exit that needs nothing installed and always works where it is drawn. It shows the
