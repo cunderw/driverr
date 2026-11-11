@@ -678,7 +678,9 @@ struct ChatCollectionViewTests {
   /// 2. At rest the content's bottom is on the composer's top edge.
   /// 3. `contentOffset.x` stays 0. A list layout has no horizontal extent to drift along.
   /// 4. A `reading` place restores the item and the depth inside it (`offsetWithinItem`), so a
-  ///    reader two thirds down a tall answer is not snapped to its first line.
+  ///    reader two thirds down a tall answer is not snapped to its first line. A floating
+  ///    capsule's `topClearance` moves that reader by exactly the clearance, and a follower at
+  ///    the end not at all (checked under 6).
   /// 5. A prepend re-anchors the reader where they are, not where the drag began. The kit suite
   ///    asserts the rule; only a real layout shows when the owner takes the anchor.
   /// 6. A scroll that did not come through the pan gesture holds the reader too. XCUITest
@@ -792,6 +794,36 @@ struct ChatCollectionViewTests {
         """
       #expect(abs(collection.contentOffset.y - before) < 1, "\(held)")
 
+      // A capsule arriving over a reader in the history, through `topClearance` as production
+      // hands it in. The place is measured from the top of the visible region, so the content
+      // moves down by exactly the clearance and the line being read stays the first one not
+      // under glass. Going away moves it back.
+      guard let reader = collection.delegate as? ChatCollectionView<SpikeRow>.Coordinator else {
+        Issue.record("The collection view's delegate is not the coordinator on the \(device).")
+        withExtendedLifetime(window) {}
+        continue
+      }
+      let clearance: CGFloat = 80
+      let readBefore = collection.contentOffset.y
+      reader.topClearance = clearance
+      reader.applyInsets()
+      collection.setNeedsLayout()
+      settle(collection)
+      let readWith = collection.contentOffset.y
+      reader.topClearance = 0
+      reader.applyInsets()
+      collection.setNeedsLayout()
+      settle(collection)
+      let readAfter = collection.contentOffset.y
+      let readerMoved = """
+        On the \(device) a reader holding turn \(item.anchorKey) at \(depth) pt into it was at \
+        contentOffset.y \(readBefore); with \(clearance) pt of capsule clearance they are at \
+        \(readWith), and with it gone again at \(readAfter). The text under their eye must move \
+        by the clearance and no more, and come back when it goes. The place is \(reader.place).
+        """
+      #expect(abs((readBefore - readWith) - clearance) < 1, "\(readerMoved)")
+      #expect(abs(readAfter - readBefore) < 1, "\(readerMoved)")
+
       // MARK: - 5. A prepend holds them where they are, not where the drag began
 
       // A prepend reconciles past a live gesture, because the page fetch happens during the
@@ -882,6 +914,29 @@ struct ChatCollectionViewTests {
         follower. contentOffset.y is \(rested).
         """
       #expect(!coordinator.place.isPositionedByReader, "\(following)")
+
+      // A capsule arriving or going while the reader follows the end moves nothing: the end is
+      // measured from the bottom, and the place stays followingLatest.
+      coordinator.topClearance = 80
+      coordinator.applyInsets()
+      collection.setNeedsLayout()
+      settle(collection)
+      let followedWith = collection.contentOffset.y
+      let followedPlace = coordinator.place
+      coordinator.topClearance = 0
+      coordinator.applyInsets()
+      collection.setNeedsLayout()
+      settle(collection)
+      let followedAfter = collection.contentOffset.y
+      let followerMoved = """
+        On the \(device) a follower resting at contentOffset.y \(rested) was at \(followedWith) \
+        with 80 pt of capsule clearance (place \(followedPlace)) and at \(followedAfter) once it \
+        went. A capsule appearing over the end must not move it or lose the end.
+        """
+      #expect(abs(followedWith - rested) < 1, "\(followerMoved)")
+      #expect(abs(followedAfter - rested) < 1, "\(followerMoved)")
+      #expect(!followedPlace.isPositionedByReader, "\(followerMoved)")
+      #expect(!coordinator.place.isPositionedByReader, "\(followerMoved)")
 
       // `scrollRectToVisible` is driven here; `accessibilityScroll` cannot be. With no
       // assistive technology running, UIKit's accessibility bundle is not loaded, so

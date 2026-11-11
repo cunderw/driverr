@@ -190,6 +190,11 @@ struct ChatCollectionView<Row: View>: UIViewRepresentable {
   /// `.ignoresSafeArea(.container, edges: .top)` gives it, so rows pass under the bar. 0 when
   /// something stands between the slot and the bar. See `Coordinator.applyInsets`.
   var topExtension: CGFloat = 0
+  /// Room left at the top of the conversation for the capsules floating over it (the stop
+  /// notice, Show the Screen), so the first row rests below them instead of under them. Rows
+  /// still scroll under them. Only `contentInset.top`: the bottom inset's arithmetic is about
+  /// where the representable's frame is, and this moves no frame. See `Coordinator.applyInsets`.
+  var topClearance: CGFloat = 0
   /// `\.themeAccent`, handed across the hosting boundary because it cannot cross on its own.
   var accent: Color
   /// `\.themeAccentForeground`, for the same reason. See `Theme.accent(for:)`.
@@ -249,6 +254,7 @@ struct ChatCollectionView<Row: View>: UIViewRepresentable {
     view.keyboardDismissMode = dismissesKeyboardImmediately ? .onDrag : .interactive
     coordinator.visibleHeight = visibleHeight
     coordinator.topExtension = topExtension
+    coordinator.topClearance = topClearance
     coordinator.replyHeadroom = replyHeadroom
     coordinator.applyInsets()
     coordinator.apply(
@@ -380,6 +386,7 @@ struct ChatCollectionView<Row: View>: UIViewRepresentable {
     view.keyboardDismissMode = dismissesKeyboardImmediately ? .onDrag : .interactive
     coordinator.visibleHeight = visibleHeight
     coordinator.topExtension = topExtension
+    coordinator.topClearance = topClearance
     coordinator.replyHeadroom = replyHeadroom
     coordinator.applyInsets()
     coordinator.apply(
@@ -484,7 +491,8 @@ struct ChatCollectionView<Row: View>: UIViewRepresentable {
     var visibleHeight: CGFloat = 0
     /// How far above the slot this view reaches. See `ChatCollectionView.topExtension`.
     var topExtension: CGFloat = 0
-
+    /// Room for the floating capsules. See `ChatCollectionView.topClearance`.
+    var topClearance: CGFloat = 0
 
     init(
       row: @escaping (ChatItem) -> Row,
@@ -507,8 +515,8 @@ struct ChatCollectionView<Row: View>: UIViewRepresentable {
     /// row just below the bar and the newest on the composer's top edge, which a SwiftUI
     /// `ScrollView` would get from the safe area.
     ///
-    /// The top is `topExtension`, the slot's top safe-area inset, plus `ChatTopFade.contentInset`.
-    /// The bottom is what is left: `bounds.height - visibleHeight - topExtension`. The obvious
+    /// The top is `topExtension`, the slot's top safe-area inset, plus `topClearance` and
+    /// `ChatTopFade.contentInset`. The bottom is what is left: `bounds.height - visibleHeight - topExtension`. The obvious
     /// readings are wrong:
     ///
     /// - `GeometryProxy.safeAreaInsets.bottom` includes the keyboard, so with the keyboard up
@@ -520,13 +528,18 @@ struct ChatCollectionView<Row: View>: UIViewRepresentable {
     /// Re-applied after every layout pass, because `bounds.height` changes without SwiftUI
     /// saying so. A change moves no row by itself: the reconcile that follows every layout
     /// pass re-applies the reader's place against the new inset.
+    ///
+    /// So a capsule arriving moves a follower at the end not at all, because the end is
+    /// measured from the bottom. A reader in the history moves down by exactly the clearance,
+    /// because their place is measured from the top of the visible region, which is now below
+    /// the capsule: the line they were reading stays the first line not under glass.
     func applyInsets() {
       guard let collection else { return }
-      let top = topExtension + ChatTopFade.contentInset
+      let top = topExtension + topClearance + ChatTopFade.contentInset
       if abs(collection.contentInset.top - top) > 0.5 {
         collection.contentInset.top = top
         // The indicator stays out from under the bar and the fade, as the bottom one stays
-        // out of the composer.
+        // out of the composer. Not the capsules: they are over the conversation, not a bar.
         collection.verticalScrollIndicatorInsets.top = topExtension + ChatTopFade.height
       }
       guard visibleHeight > 0, collection.bounds.height > 0 else { return }

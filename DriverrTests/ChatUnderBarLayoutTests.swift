@@ -16,7 +16,8 @@ import UIKit
 /// - at the top of the conversation its first row starts just below the bar, not under it;
 /// - the bottom inset is still the composer's strip, with the top extension taken out of it;
 /// - on a blocked pane Show the Screen floats over the conversation just below the bar, read
-///   through `PaneChatView.onCapsulesFrame`, and pins nothing above it.
+///   through `PaneChatView.onCapsulesFrame`, pins nothing above it, and at the top of the
+///   conversation the first row rests below it rather than under it.
 ///
 /// It reads the `UICollectionView` and the `UINavigationBar` directly, because a SwiftUI frame
 /// read after `.ignoresSafeArea` reports the unexpanded slot (CLAUDE.md, `GeometryReader`
@@ -100,8 +101,8 @@ struct ChatUnderBarLayoutTests {
   }
 
   /// A blocked pane offers Show the Screen as a capsule floating over the conversation, not as
-  /// a row pinned above it, so the conversation still reaches under the bar and its first row
-  /// still rests just below the bar.
+  /// a row pinned above it, so the conversation still reaches under the bar, and its first row
+  /// rests just below the capsule, through `ChatCollectionView.topClearance`.
   @Test("Show the Screen floats over the conversation, which still reaches under the bar")
   func showTheScreenFloatsOverTheConversation() async {
     let model = PreviewSupport.transcript(for: PreviewSupport.agentPane)
@@ -194,13 +195,16 @@ struct ChatUnderBarLayoutTests {
       """
     #expect(items.first == .provenance, "\(provenance)")
     #expect(first.frame.height > 10, "\(provenance)")
+    // Below the bar, or below the capsules where they float: at rest they cover nothing.
+    let rest = floatsCapsules ? (capsules?.maxY ?? barBottom) : barBottom
     let below = """
       At the top of the conversation the first row starts at y \(firstTop), against the bar's \
-      bottom at \(barBottom). Above the bar it is drawn under the glass at rest; more than \
-      \(ChatTopFade.height) below, something is still pinned above the conversation.
+      bottom at \(barBottom) and the capsules' foot at \(String(describing: capsules?.maxY)). \
+      Above \(rest) it is drawn under the glass at rest, so the provenance row cannot be read; \
+      more than \(ChatTopFade.height) below, something is still pinned above the conversation.
       """
-    #expect(firstTop >= barBottom - 0.5, "\(below)")
-    #expect(firstTop <= barBottom + ChatTopFade.height, "\(below)")
+    #expect(firstTop >= rest - 0.5, "\(below)")
+    #expect(firstTop <= rest + ChatTopFade.height, "\(below)")
 
     let indicatorTop = frame.minY + collection.verticalScrollIndicatorInsets.top
     let indicator = """

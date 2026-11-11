@@ -214,6 +214,10 @@ struct PaneChatView: View {
   /// keyboard, so it can be read directly. See `ChatCollectionView.Coordinator.applyInsets`.
   @State private var chatSlotTopInset: CGFloat = 0
 
+  /// The floating capsules' height, from the slot's top to the last capsule's foot. See
+  /// `floatingCapsules(for:)` and `ChatCollectionView.topClearance`.
+  @State private var capsulesHeight: CGFloat = 0
+
 
   /// Whether the last automatic fetch failed, which disarms it.
   ///
@@ -479,6 +483,9 @@ struct PaneChatView: View {
               screenBandTop: screenBandTop.map(Double.init), bandTop: Double(bandTop))),
           visibleHeight: chatSlotHeight,
           topExtension: chatSlotTopInset,
+          // Read only while a capsule stands: the measured height outlives the stack.
+          topClearance: floatingStop(in: transcript) != nil || offersScreenCapsule
+            ? capsulesHeight : 0,
           accent: themeAccent,
           accentForeground: themeAccentForeground,
           // What decides whether an existing cell is reconfigured. See `ChatRowInputs`.
@@ -1332,22 +1339,21 @@ struct PaneChatView: View {
   /// pane's, and the captured screen is the pane's (`agentStatus` is `nil` there).
   ///
   /// The stack hugs its capsules and carries no background or content shape, so the
-  /// conversation around them still takes touches.
+  /// conversation around them still takes touches. Its height is the conversation's
+  /// `topClearance`, so at the top of the conversation the first row rests below them.
   @ViewBuilder
   private func floatingCapsules(for transcript: Transcript) -> some View {
-    let stop = isComposerCollapsed || isShowingSubagent ? nil : transcript.agentStop
-    // Show the Screen is reachable from a readable chat on a blocked pane, not only from a
-    // failure, so the reader never has to switch to Terminal to see a prompt.
-    let offersScreen = agentStatus == .blocked && !isComposerCollapsed
-    if stop != nil || offersScreen {
+    let stop = floatingStop(in: transcript)
+    if stop != nil || offersScreenCapsule {
       VStack(spacing: 0) {
         if let stop { AgentStopRow(stop: stop) }
-        if offersScreen { showScreenCapsule }
+        if offersScreenCapsule { showScreenCapsule }
       }
       .frame(maxWidth: ChatColumn.width)
       // The gutter, because the stack is not a cell and section insets do not reach it.
       .padding(.horizontal, chatGutter)
       .padding(.top, 6)
+      .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { capsulesHeight = $0 }
       .background {
         // `onGeometryChange`, not `onAppear`: in a `NavigationStack` the first frame is laid
         // out before the stack has its size.
@@ -1358,6 +1364,17 @@ struct PaneChatView: View {
         }
       }
     }
+  }
+
+  /// The stop the stop capsule shows, or `nil`. See `floatingCapsules(for:)`.
+  private func floatingStop(in transcript: Transcript) -> AgentStop? {
+    isComposerCollapsed || isShowingSubagent ? nil : transcript.agentStop
+  }
+
+  /// Show the Screen is reachable from a readable chat on a blocked pane, not only from a
+  /// failure, so the reader never has to switch to Terminal to see a prompt.
+  private var offersScreenCapsule: Bool {
+    agentStatus == .blocked && !isComposerCollapsed
   }
 
   /// Show the Screen over a readable chat, as a capsule in the stop notice's glass. The
