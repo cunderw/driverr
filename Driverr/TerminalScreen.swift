@@ -134,7 +134,25 @@ struct TerminalScreen: View {
           //
           // **Nothing on the phone's stack.** A custom leading item disables the edge-swipe
           // pop (CLAUDE.md). `leavePaneScene` finds the system back button by position.
-          if route == .detailColumn {
+          //
+          // While a sub-agent is open in place, the way back is to the pane's own chat, named
+          // by the pane. The phone pushes the sub-agent instead and its system back button does
+          // this. Its own identifier, so `leavePaneScene` still finds `terminal.back` to leave.
+          if route == .detailColumn, let chatModel, isShowingSubagentInPlace {
+            Button {
+              chatModel.closeSubagent()
+            } label: {
+              // An `HStack`, for the reason below.
+              HStack(spacing: 4) {
+                Image(systemName: "chevron.backward")
+                Text(scene.title)
+              }
+            }
+            // Styled exactly as `terminal.back`: the same control, one level down.
+            .tint(Color.primary)
+            .accessibilityLabel("Back to \(scene.title)")
+            .accessibilityIdentifier("pane.subagent.back")
+          } else if route == .detailColumn {
             Button {
               presenter.dismiss()
             } label: {
@@ -438,12 +456,8 @@ struct TerminalScreen: View {
       if let previous { model.transcripts?.existingModel(for: previous)?.closeAllSubagents() }
     }
     .onChange(of: isShowingChat) { viewingImage = nil }
-    // Leaving the scene closes a sub-agent too, so a return finds the pane's own chat.
-    .onDisappear {
-      if let pane = scene.currentPane {
-        model.transcripts?.existingModel(for: pane.id)?.closeAllSubagents()
-      }
-    }
+    // Leaving the scene closes a sub-agent too, in `TerminalPresenter.endPresentation`, not in
+    // an `onDisappear` here: the phone's push of the sub-agent fires it.
   }
 
   // MARK: - Chat or terminal
@@ -487,8 +501,10 @@ struct TerminalScreen: View {
   /// An ordinary bar that presents nothing.
   @ViewBuilder
   private var paneComposer: some View {
-    // No composer while a sub-agent's chat is shown: a reply would go to the pane's agent.
-    if isShowingChat, chatModel?.isShowingSubagent != true, let composerModel,
+    // No composer while a sub-agent's chat is shown in place: a reply would go to the pane's
+    // agent. On the phone the sub-agent is pushed over this, and the pane's chat keeps its
+    // composer, so a back-swipe reveals it whole.
+    if isShowingChat, !isShowingSubagentInPlace, let composerModel,
       let pane = scene.currentPane
     {
       PaneComposerBar(
@@ -715,11 +731,18 @@ struct TerminalScreen: View {
       destination == .terminal ? "pane.surface.terminal" : "pane.surface.chat")
   }
 
+  /// Whether a sub-agent replaces the pane's chat on this screen: the iPad's detail column,
+  /// which cannot push. The phone pushes `SubagentChatScreen` over this screen instead, which
+  /// keeps the pane's own chat, so nothing here changes for it.
+  private var isShowingSubagentInPlace: Bool {
+    route == .detailColumn && chatModel?.isShowingSubagent == true
+  }
+
   /// The session's sub-agents while the bar offers them: the chat is up with the pane's own
-  /// conversation, and the session spawned at least one. `nil` otherwise. A sub-agent's chat
-  /// has its back bar instead.
+  /// conversation, and the session spawned at least one. `nil` otherwise. A sub-agent shown in
+  /// place has `pane.subagent.back` in the bar instead.
   private var shownSubagentList: SubagentList? {
-    guard isShowingChat, let chatModel, !chatModel.isShowingSubagent,
+    guard isShowingChat, let chatModel, !isShowingSubagentInPlace,
       !chatModel.subagentList.isEmpty
     else { return nil }
     return chatModel.subagentList
@@ -796,7 +819,9 @@ struct TerminalScreen: View {
             onScrollGeometry: Self.isReportingKeyboardMetrics ? { chatScroll = $0 } : nil,
             onPlaceChange: Self.isReportingKeyboardMetrics ? { chatPlace = $0 } : nil,
             // Opens the surfaces' clip; see `slotClip`.
-            onDrawsConversation: { chatDrawsConversation = $0 }
+            onDrawsConversation: { chatDrawsConversation = $0 },
+            // In place on the detail column; pushed over this chat on the phone.
+            followsSubagents: route == .detailColumn
           )
           // A readable measure on the detail route, centred by the `ZStack`. Never on the
           // terminal: its width is the remote pane's, and narrowing it would reflow the PTY.

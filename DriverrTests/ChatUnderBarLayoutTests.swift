@@ -202,10 +202,10 @@ struct ChatUnderBarLayoutTests {
       At the top of the conversation the first row starts at y \(firstTop), against the bar's \
       bottom at \(barBottom) and the capsules' foot at \(String(describing: capsules?.maxY)). \
       Above \(rest) it is drawn under the glass at rest, so the provenance row cannot be read; \
-      more than \(ChatTopFade.height) below, something is still pinned above the conversation.
+      more than \(ChatColumn.topGap) below, something is still pinned above the conversation.
       """
     #expect(firstTop >= rest - 0.5, "\(below)")
-    #expect(firstTop <= rest + ChatTopFade.height, "\(below)")
+    #expect(firstTop <= rest + ChatColumn.topGap, "\(below)")
 
     let indicatorTop = frame.minY + collection.verticalScrollIndicatorInsets.top
     let indicator = """

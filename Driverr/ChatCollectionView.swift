@@ -122,36 +122,6 @@ struct ChatRowInputs: Equatable {
   var activity: ChatActivity?
 }
 
-/// Fades the conversation out as it scrolls under a row pinned above it (the sub-agent back
-/// bar), instead of cutting it square.
-///
-/// Drawn only while such a row stands above the slot. With none, the conversation reaches up
-/// under the navigation bar and the collection view's own `topEdgeEffect` softens it, because
-/// a scroll edge effect takes its shape from views that overlay the scroll view's edge, such
-/// as a bar. A row standing above the collection view does not overlay it, so there
-/// `topEdgeEffect` shows nothing and this is drawn by hand. An overlay on the slot, not a mask
-/// over the conversation; see the bottom edge's comment in `makeCollection`.
-struct ChatTopFade: View {
-  static let height: CGFloat = 16
-  /// The collection view's `contentInset.top` below the bar or the pinned row: the fade's
-  /// height less the first row's own `ChatColumn.rowPadding`, so at the top of the
-  /// conversation the first row's content starts where the fade ends. Under the bar it is
-  /// added to `ChatCollectionView.topExtension`; see `Coordinator.applyInsets`.
-  static var contentInset: CGFloat { height - ChatColumn.rowPadding }
-
-  var body: some View {
-    // To the ground at zero opacity, not to `.clear`, which is black at zero opacity and greys
-    // the midpoint.
-    LinearGradient(
-      colors: [ChatColumn.ground, ChatColumn.ground.opacity(0)],
-      startPoint: .top, endPoint: .bottom
-    )
-    .frame(height: Self.height)
-    .allowsHitTesting(false)
-    .accessibilityHidden(true)
-  }
-}
-
 /// The chat's scroll position, with one writer and one reader.
 ///
 /// Neither SwiftUI scroller can own it. `proxy.scrollTo` resolves only against targets that
@@ -218,6 +188,9 @@ struct ChatCollectionView<Row: View>: UIViewRepresentable {
   var onScrollGeometry: ((ChatScrollProbe) -> Void)?
   /// Debug place numbers, on the same terms. See `ChatPlaceProbe`.
   var onPlaceChange: ((ChatPlaceProbe) -> Void)?
+  /// The collection view's own identifier. UIKit, unlike SwiftUI, does not propagate it to
+  /// children, so the rows keep their `pane.chat.turn.*` identifiers either way.
+  var accessibilityIdentifier = "pane.chat"
   /// Builds one row. The caller owns the column cap and horizontal inset, because it also
   /// owns them for the composer.
   @ViewBuilder var row: (ChatItem) -> Row
@@ -225,9 +198,8 @@ struct ChatCollectionView<Row: View>: UIViewRepresentable {
   /// The extra margin the last row gets beyond its own `ChatColumn.rowPadding`.
   ///
   /// Rows carry 9 points above and below, giving 18 between rows, and the end gets 14 in all.
-  /// The start gets `ChatTopFade.contentInset` instead, in `contentInset.top` below the bar or
-  /// the pinned row: the fade's height less the row padding, so the first row's content starts
-  /// where the fade ends.
+  /// The start gets `ChatColumn.topContentInset` instead, in `contentInset.top` below the bar:
+  /// `ChatColumn.topGap` less the row padding, so the first row's content starts `topGap` down.
   /// It goes on the section, because `contentInset.bottom` belongs to the composer. It shows at
   /// rest with the keyboard down, which is the posture a reader meets first. Do not make it
   /// depend on the keyboard.
@@ -246,6 +218,7 @@ struct ChatCollectionView<Row: View>: UIViewRepresentable {
     coordinator.onScrollGeometry = onScrollGeometry
     coordinator.onPlaceChange = onPlaceChange
     let view = Self.makeCollection(wiredTo: coordinator)
+    view.accessibilityIdentifier = accessibilityIdentifier
     view.keyboardDismissMode = dismissesKeyboardImmediately ? .onDrag : .interactive
     coordinator.visibleHeight = visibleHeight
     coordinator.topExtension = topExtension
@@ -317,7 +290,7 @@ struct ChatCollectionView<Row: View>: UIViewRepresentable {
     // under. Both insets are set in `Coordinator.applyInsets`.
     view.topEdgeEffect.style = .soft
     // UIKit, unlike SwiftUI, does not propagate an identifier to children, so the rows keep
-    // their own `pane.chat.turn.*` identifiers.
+    // their own `pane.chat.turn.*` identifiers. `makeUIView` sets the caller's.
     view.accessibilityIdentifier = "pane.chat"
     view.preservesSuperviewLayoutMargins = false
     view.insetsLayoutMarginsFromSafeArea = false
@@ -367,6 +340,10 @@ struct ChatCollectionView<Row: View>: UIViewRepresentable {
 
   func updateUIView(_ view: UICollectionView, context: Context) {
     let coordinator = context.coordinator
+    // The iPad's detail column swaps a sub-agent in and out of the same collection view.
+    if view.accessibilityIdentifier != accessibilityIdentifier {
+      view.accessibilityIdentifier = accessibilityIdentifier
+    }
     // The closure captures this SwiftUI view's `self`, so a stale one draws stale rows. Every
     // reconfigure reads it from here.
     coordinator.row = row
@@ -506,7 +483,7 @@ struct ChatCollectionView<Row: View>: UIViewRepresentable {
     /// row just below the bar and the newest on the composer's top edge, which a SwiftUI
     /// `ScrollView` would get from the safe area.
     ///
-    /// The top is `topExtension`, the slot's top safe-area inset, plus `ChatTopFade.contentInset`.
+    /// The top is `topExtension`, the slot's top safe-area inset, plus `ChatColumn.topContentInset`.
     /// The bottom is what is left: `bounds.height - visibleHeight - topExtension`. The obvious
     /// readings are wrong:
     ///
@@ -528,12 +505,12 @@ struct ChatCollectionView<Row: View>: UIViewRepresentable {
     /// the capsule: the line they were reading stays the first line not under glass.
     func applyInsets() {
       guard let collection else { return }
-      let top = topExtension + ChatTopFade.contentInset
+      let top = topExtension + ChatColumn.topContentInset
       if abs(collection.contentInset.top - top) > 0.5 {
         collection.contentInset.top = top
-        // The indicator stays out from under the bar and the fade, as the bottom one stays
-        // out of the composer.
-        collection.verticalScrollIndicatorInsets.top = topExtension + ChatTopFade.height
+        // The indicator stays out from under the bar, as the bottom one stays out of the
+        // composer.
+        collection.verticalScrollIndicatorInsets.top = topExtension + ChatColumn.topGap
       }
       guard visibleHeight > 0, collection.bounds.height > 0 else { return }
       let inset = max(0, collection.bounds.height - visibleHeight - topExtension)

@@ -541,11 +541,12 @@ struct ContentView: View {
 
   // MARK: - The phone's stack
 
-  /// The host list, the host screen pushed on it, and the pane scene pushed on that.
+  /// The host list, the host screen pushed on it, the pane scene pushed on that, and a
+  /// sub-agent's chat pushed over the pane.
   ///
-  /// Neither level owns state. Level one derives from `selectedHostID`, level two from
-  /// `TerminalPresenter.request`. `PhoneStackPath` in `DriverrCore` holds the rule, so
-  /// `swift test` covers it. A push is not a presentation, so everything here inherits the
+  /// No level owns state. Level one derives from `selectedHostID`, level two from
+  /// `TerminalPresenter.request`, level three from the scene's pane having a sub-agent open.
+  /// `PhoneStackPath` in `DriverrCore` holds the rule, so `swift test` covers it. A push is not a presentation, so everything here inherits the
   /// root's `.environment` values normally.
   ///
   /// This route binds no ⌘,. Under XCUITest no placement delivers the key behind a
@@ -554,13 +555,14 @@ struct ContentView: View {
   private var phoneStack: some View {
     NavigationStack(path: phonePath) {
       hostListScreen
-        // Both levels resolved here, from one typed path. See CLAUDE.md and
+        // Every level resolved here, from one typed path. See CLAUDE.md and
         // `PhoneStackPath.Route`: a pane level declared inside the host screen loses the pane
         // on a cross-host pick.
         .navigationDestination(for: PhoneStackPath.Route.self) { route in
           switch route {
           case .host(let id): hostScreen(for: id)
           case .pane: paneScene
+          case .subagent: subagentScene
           }
         }
     }
@@ -595,6 +597,32 @@ struct ContentView: View {
         scene: request.scene, route: .stack, isBehindRootPresentation: hasRootPresentation
       )
     }
+  }
+
+  /// The sub-agent's chat, level three. Like the pane level, it reads the scene rather than
+  /// the path, so it carries no link of its own.
+  @ViewBuilder
+  private var subagentScene: some View {
+    if let scene = terminalPresenter.request?.scene, let pane = scene.currentPane,
+      let screen = scene.model.paneScreens?.model(for: pane)
+    {
+      SubagentChatScreen(
+        opened: scene.model.transcripts?.existingModel(for: pane.id)?.subagents.top,
+        agentName: pane.agent?.name ?? "Agent",
+        screen: screen
+      )
+    }
+  }
+
+  /// The pane's transcript model while the scene's pane has a sub-agent open: what the phone's
+  /// third level derives from, and what a pop of it closes. Read live from the presenter, never
+  /// from captured view state, for the reason on `phonePath`.
+  private var paneWithOpenSubagent: PaneTranscriptModel? {
+    guard let scene = terminalPresenter.request?.scene, let pane = scene.currentPane,
+      let transcript = scene.model.transcripts?.existingModel(for: pane.id),
+      transcript.isShowingSubagent
+    else { return nil }
+    return transcript
   }
 
   // MARK: - The host list, on both routes
@@ -686,7 +714,8 @@ struct ContentView: View {
     )
   }
 
-  /// The phone stack's path: the chosen host, and the pane scene on top of it.
+  /// The phone stack's path: the chosen host, the pane scene on top of it, and an open
+  /// sub-agent on top of that.
   ///
   /// Derived, never stored. A second copy of `selectedHostID` in a `NavigationPath` would
   /// disagree with it the first time a notification tap wrote one. The rule is
@@ -706,17 +735,23 @@ struct ContentView: View {
       get: {
         PhoneStackPath.path(
           selectedHostID: selectedHostID,
-          hasRequest: terminalPresenter.request != nil
+          hasRequest: terminalPresenter.request != nil,
+          showsSubagent: paneWithOpenSubagent != nil
         )
       },
       set: { newPath in
+        let subagentOwner = paneWithOpenSubagent
         switch PhoneStackPath.effect(
           ofWrite: newPath,
-          hadRequest: terminalPresenter.request != nil
+          hadRequest: terminalPresenter.request != nil,
+          hadSubagent: subagentOwner != nil
         ) {
         case .none, .deselect:
           break
+        case .closeSubagent:
+          subagentOwner?.closeAllSubagents()
         case .endScene, .endSceneAndDeselect:
+          // Closes the sub-agent too; see `TerminalPresenter.endPresentation`.
           terminalPresenter.dismiss()
         }
         // SwiftUI writes the path only for the user's own push or pop.

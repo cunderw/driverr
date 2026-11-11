@@ -242,8 +242,14 @@ final class PaneTranscriptModel {
   /// Opens the sub-agent a spawn line or a list row links to, on top of this conversation.
   /// Needs a page on screen, because the directory and session come from the file holding
   /// the spawn.
+  ///
+  /// **At most one is open.** A sub-agent's own chat cannot open another (its spawn lines
+  /// carry no link, and `subagent != nil` refuses), and a second pick from the list, which
+  /// the iPad's bar still offers over a sub-agent, replaces the one open. The phone pushes one
+  /// level for it (`PhoneStackPath.Route.subagent`), and a second would have no level.
   func openSubagent(link: SubagentLink, title: String) {
     guard subagent == nil, case .ready(let source, _) = state else { return }
+    closeAllSubagents()
     let session = Self.session(of: source.file)
     let child = PaneTranscriptModel(
       pane: pane,
@@ -532,7 +538,12 @@ final class PaneTranscriptModel {
   /// The sleep comes first, because appearance has just read the file. `PaneChatView` runs
   /// this from a `.task` keyed on the pane, the sub-agent shown and scene activity, so its
   /// cancellation is the only exit. `Task.sleep` throws on cancellation.
-  func watch(every interval: Duration = PaneTranscriptModel.watchInterval) async {
+  ///
+  /// `followsSubagents: false` probes this conversation whatever is open on it: the phone's
+  /// pane chat stays under a pushed sub-agent, whose own screen watches the sub-agent.
+  func watch(
+    every interval: Duration = PaneTranscriptModel.watchInterval, followsSubagents: Bool = true
+  ) async {
     while !Task.isCancelled {
       do {
         try await Task.sleep(for: interval)
@@ -540,7 +551,7 @@ final class PaneTranscriptModel {
         return
       }
       guard !Task.isCancelled else { return }
-      await checkShownForGrowth()
+      if followsSubagents { await checkShownForGrowth() } else { await checkForGrowth() }
     }
   }
 
