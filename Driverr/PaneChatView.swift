@@ -1166,7 +1166,8 @@ struct PaneChatView: View {
       .padding(.horizontal, 16)
       .padding(.vertical, 10)
       .frame(maxWidth: .infinity, alignment: .leading)
-      .background(.thinMaterial)
+      // No safe-area edges, as on the picker's bar: the default runs under the composer.
+      .background(.thinMaterial, ignoresSafeAreaEdges: [])
       .overlay(alignment: .top) { Divider() }
   }
 
