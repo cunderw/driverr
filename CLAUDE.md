@@ -331,8 +331,8 @@ printed value instead.
   `.tint(Color.primary)`, because no usable blue reads 4.5:1 on the toolbar glass; glyphs
   keep the accent. **One exception: the pane screen's bar.** Its glyphs (the sub-agents
   button, the chat or terminal toggle, Panes, ⋯) take `.tint(Color.primary)` too, as does
-  the iPad's `terminal.back`, because that bar has no background and accent glyphs on its
-  glass fell below 3:1 in dark. The phone's back button is the system one and carries no tint; it draws
+  the iPad's `terminal.back` and `pane.subagent.back`, because that bar has no background
+  and accent glyphs on its glass fell below 3:1 in dark. The phone's back button is the system one and carries no tint; it draws
   label-coloured on its own. The Panes count stays red. Nowhere else. A label on an accent
   fill takes `\.themeAccentForeground` (black or white by measured contrast; a fixed white
   reads at 3.42:1 on the default light blue). Never dim the accent or fall back to the

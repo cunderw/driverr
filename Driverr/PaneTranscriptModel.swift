@@ -244,9 +244,11 @@ final class PaneTranscriptModel {
   /// the spawn.
   ///
   /// **At most one is open.** A sub-agent's own chat cannot open another (its spawn lines
-  /// carry no link, and `subagent != nil` refuses), and a second pick from the list, which
-  /// the iPad's bar still offers over a sub-agent, replaces the one open. The phone pushes one
-  /// level for it (`PhoneStackPath.Route.subagent`), and a second would have no level.
+  /// carry no link, and `subagent != nil` refuses). No route offers a second open while one is
+  /// shown either: the phone's pushed screen has no list or spawn links of its own, and the
+  /// iPad's bar drops the list while a sub-agent is in place. `closeAllSubagents()` first is a
+  /// guard, because the phone pushes one level for it (`PhoneStackPath.Route.subagent`) and a
+  /// second would have no level.
   func openSubagent(link: SubagentLink, title: String) {
     guard subagent == nil, case .ready(let source, _) = state else { return }
     closeAllSubagents()

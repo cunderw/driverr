@@ -2097,6 +2097,8 @@ private final class SubagentCommandLog: @unchecked Sendable {
     lock.lock()
     sent.append(command)
     lock.unlock()
+    // Observation cannot see a locked log, so a wait on it is woken here.
+    Waker.signalShared()
   }
 
   var commands: [String] {
@@ -2317,8 +2319,9 @@ struct PaneSubagentModelTests {
     #expect(model.lastAssistantMessage == "The pane's own last words.")
   }
 
-  /// The phone pushes one level for a sub-agent (`PhoneStackPath.Route.subagent`), so a second
-  /// pick, which the iPad's sub-agent list still offers, replaces the one open.
+  /// The phone pushes one level for a sub-agent (`PhoneStackPath.Route.subagent`). No route
+  /// offers a second open while one is shown today, so this pins the guard: a second open
+  /// replaces the first rather than stacking.
   @Test("opening a second sub-agent replaces the first, so at most one is open")
   func aSecondOpenReplacesTheFirst() async {
     let model = await model()
@@ -2342,11 +2345,10 @@ struct PaneSubagentModelTests {
     grown.turnOn()
     log.clear()
     let watcher = Task { await model.watch(every: .milliseconds(10), followsSubagents: false) }
-    let deadline = Date().addingTimeInterval(5)
-    while !log.commands.contains(where: { $0.contains("\(Self.sessionID).jsonl") }),
-      Date() < deadline
-    {
-      try await Task.sleep(for: .milliseconds(10))
+    // Woken by `SubagentCommandLog.record`; the suite's time limit catches a probe that never
+    // comes.
+    await waitUntil("the pane's own file is probed") {
+      log.commands.contains { $0.contains("\(Self.sessionID).jsonl") }
     }
     watcher.cancel()
     #expect(log.commands.contains { $0.contains("\(Self.sessionID).jsonl") })

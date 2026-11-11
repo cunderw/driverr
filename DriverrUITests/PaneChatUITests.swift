@@ -662,6 +662,24 @@ final class PaneChatUITests: XCTestCase {
     requireGone(app, "subagent.chat", "Back must leave the sub-agent", file: file, line: line)
   }
 
+  /// Pops the phone's pushed sub-agent with the edge swipe, which a custom leading item would
+  /// disable (CLAUDE.md). On the iPad, where nothing is pushed, it falls back to
+  /// `leaveSubagent`.
+  private func swipeBackFromSubagent(
+    _ app: XCUIApplication, file: StaticString = #filePath, line: UInt = #line
+  ) {
+    guard !element(app, "pane.subagent.back").exists else {
+      leaveSubagent(app, file: file, line: line)
+      return
+    }
+    let edge = app.coordinate(withNormalizedOffset: CGVector(dx: 0.01, dy: 0.5))
+    edge.press(
+      forDuration: 0.05,
+      thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)))
+    requireGone(
+      app, "subagent.chat", "The edge swipe must pop the sub-agent", file: file, line: line)
+  }
+
   /// A spawn line opens that sub-agent's conversation: a push on the phone, with the system
   /// back button, and in place on the iPad, with `pane.subagent.back`. The sub-agent's chat
   /// has no provenance row and labels its opening prompt as the parent's. Back restores the
@@ -713,7 +731,9 @@ final class PaneChatUITests: XCTestCase {
     opened.lifetime = .keepAlways
     add(opened)
 
-    leaveSubagent(app)
+    // The edge swipe on the phone, so the gesture path is covered as well as the button,
+    // which the other sub-agent tests use.
+    swipeBackFromSubagent(app)
     require(app, "composer.text", "The composer must come back with the pane's chat")
     require(app, "pane.chat.header", "The provenance row must come back with the pane's chat")
     XCTAssertTrue(
@@ -812,7 +832,8 @@ final class PaneChatUITests: XCTestCase {
   /// Opening a sub-agent with the keyboard up and coming Back must not leave the composer under
   /// the keyboard. Back restores the composer's focus, and the pane screen did not lay out for
   /// a keyboard rising during the pop, so the phone takes the keyboard down before it pushes.
-  /// Measured device-only, so a UI test. The slow transcript, as on a phone.
+  /// The draft typed before the push survives it. Measured device-only, so a UI test. The slow
+  /// transcript, as on a phone.
   func testBackFromASubagentLeavesTheComposerClearOfTheKeyboard() {
     let app = connectedHost(slowTranscript: true, subagents: true)
 
@@ -824,9 +845,12 @@ final class PaneChatUITests: XCTestCase {
     XCTAssertTrue(
       verifier.waitForExistence(timeout: 20),
       "Expected the teammate's spawn line.\nTree was:\n\(app.debugDescription)")
-    require(app, "composer.text", "Expected the composer field").tap()
+    let field = require(app, "composer.text", "Expected the composer field")
+    field.tap()
     XCTAssertTrue(
       app.keyboards.firstMatch.waitForExistence(timeout: 10), "The keyboard never came up")
+    let draft = "keep this draft"
+    field.typeText(draft)
     XCTAssertTrue(verifier.isHittable, "The spawn line is under the keyboard")
     verifier.tap()
     require(app, "subagent.chat", "Expected the sub-agent's conversation")
@@ -851,6 +875,8 @@ final class PaneChatUITests: XCTestCase {
         """)
     }
     XCTAssertTrue(composer.isHittable, "After Back the composer cannot be reached")
+    XCTAssertEqual(
+      composer.value as? String, draft, "The draft typed before the push must survive Back")
   }
 
   /// A raw prompt with no structured options gets an Approve/Deny pair under the turn, not a

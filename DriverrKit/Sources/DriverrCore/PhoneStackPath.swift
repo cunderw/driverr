@@ -5,8 +5,8 @@ import Foundation
 /// On compact width `ContentView` is a `NavigationStack` with three levels: the host screen,
 /// derived from `selectedHostID`, the pane scene, derived from `TerminalPresenter.request`,
 /// and a sub-agent's chat, derived from whether the scene's pane has one open. No level has
-/// state of its own. A wrong answer here
-/// strands the reader or ends a shell on Back, so `PhoneStackPathTests` asserts it.
+/// state of its own. A wrong answer here strands the reader or ends a shell on Back, so
+/// `PhoneStackPathTests` asserts it.
 public enum PhoneStackPath {
   /// One level of the phone's stack.
   ///

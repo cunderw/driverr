@@ -546,8 +546,9 @@ struct ContentView: View {
   ///
   /// No level owns state. Level one derives from `selectedHostID`, level two from
   /// `TerminalPresenter.request`, level three from the scene's pane having a sub-agent open.
-  /// `PhoneStackPath` in `DriverrCore` holds the rule, so `swift test` covers it. A push is not a presentation, so everything here inherits the
-  /// root's `.environment` values normally.
+  /// `PhoneStackPath` in `DriverrCore` holds the rule, so `swift test` covers it. A push is
+  /// not a presentation, so everything here inherits the root's `.environment` values
+  /// normally.
   ///
   /// This route binds no ⌘,. Under XCUITest no placement delivers the key behind a
   /// `NavigationStack`, although ⌘N works. `PaneKeyCommandUITests`' class comment lists the
