@@ -120,7 +120,9 @@ struct PaneScreenView: View {
     .onGeometryChange(for: CGFloat.self, of: \.size.width) { measuredWidth = $0 }
     // On the scroll view, not the stack: a container's identifier overwrites its children's.
     .accessibilityIdentifier("pane.screen")
-    .background(settings.theme.surfaceColor(for: appearance))
+    // No safe-area edges: by default the fill runs on into the composer's `safeAreaBar` inset,
+    // below the border, and paints a band behind the pill.
+    .background(settings.theme.surfaceColor(for: appearance), ignoresSafeAreaEdges: [])
     // In light appearance the default theme's background matches the chat page. A border
     // marks the surface under every theme.
     .overlay {

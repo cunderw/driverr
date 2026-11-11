@@ -14,7 +14,16 @@ enum ChatColumn {
   /// Every row's padding above and below, so rows sit twice this apart.
   static let rowPadding: CGFloat = 9
   /// The colour the chat side is painted. `ChatTopFade` fades to it, so the two must not differ.
-  static let ground = Color(.secondarySystemBackground)
+  ///
+  /// In dark it is #151515, the dark ground of Claude's iOS app, so the floating glass (the
+  /// bar's buttons, the composer's pill) reads against it. In light it is
+  /// `secondarySystemBackground`.
+  static let ground = Color(
+    UIColor { traits in
+      traits.userInterfaceStyle == .dark
+        ? UIColor(red: 0x15 / 255, green: 0x15 / 255, blue: 0x15 / 255, alpha: 1)
+        : UIColor.secondarySystemBackground.resolvedColor(with: traits)
+    })
 
   /// The gutter for a conversation of `columnWidth`: 0 where the readable column's cap binds,
   /// `inset` where it does not.
@@ -336,8 +345,9 @@ struct PaneChatView: View {
     .onChange(of: drawsConversation, initial: true) { _, draws in onDrawsConversation?(draws) }
     // Feeds `contentWidthEstimate`.
     .onGeometryChange(for: CGFloat.self, of: \.size.width) { contentWidthEstimate = $0 }
-    // Not `systemBackground`, which is pure black in dark, where a translucent card reads as a
-    // grey box. `TerminalScreen` paints the same colour behind the whole chat side.
+    // #151515 in dark, not `systemBackground`'s pure black, so the floating glass reads
+    // against it (see `ChatColumn.ground`). `TerminalScreen` paints the same colour behind the
+    // whole chat side.
     .background(ChatColumn.ground)
     // Load when the chat appears, so a pane whose chat is never opened is never read.
     // `loadIfNeeded()` is not `async`: the model owns the load task, so cancelling this task
@@ -1156,7 +1166,8 @@ struct PaneChatView: View {
       .padding(.horizontal, 16)
       .padding(.vertical, 10)
       .frame(maxWidth: .infinity, alignment: .leading)
-      .background(.thinMaterial)
+      // No safe-area edges, as on the picker's bar: the default runs under the composer.
+      .background(.thinMaterial, ignoresSafeAreaEdges: [])
       .overlay(alignment: .top) { Divider() }
   }
 
@@ -1289,7 +1300,9 @@ struct PaneChatView: View {
       .padding(.horizontal, 16)
       .padding(.vertical, 10)
       .frame(maxWidth: .infinity)
-      .background(.thinMaterial)
+      // No safe-area edges: by default the material runs on into the composer's `safeAreaBar`
+      // inset and puts the pill on a grey slab.
+      .background(.thinMaterial, ignoresSafeAreaEdges: [])
       .overlay(alignment: .top) { Divider() }
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -1330,7 +1343,8 @@ struct PaneChatView: View {
       .frame(maxWidth: .infinity, alignment: .leading)
       .padding(.vertical, 10)
       .padding(.horizontal, 12)
-      .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 8))
+      // Tertiary, so the row reads as a row on `ChatColumn.ground` in both appearances.
+      .background(Color(.tertiarySystemBackground), in: RoundedRectangle(cornerRadius: 8))
     }
     .buttonStyle(.plain)
     .accessibilityElement(children: .ignore)

@@ -407,8 +407,8 @@ struct TerminalScreen: View {
     // the stack, and `alignment: .bottom` then aligns to the screen's edge, putting the
     // composer behind the keyboard's accessory row.
     //
-    // The chat side gets the system background, not the terminal theme, because the chat's
-    // translucent chrome blends with what is behind it.
+    // The chat side is painted `ChatColumn.ground` (a fixed #151515 in dark), not the terminal
+    // theme, because the chat's translucent chrome blends with what is behind it.
     .background {
       (isShowingChat
         ? ChatColumn.ground
