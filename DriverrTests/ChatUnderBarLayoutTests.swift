@@ -102,7 +102,7 @@ struct ChatUnderBarLayoutTests {
 
   /// A blocked pane offers Show the Screen as a capsule floating over the conversation, not as
   /// a row pinned above it, so the conversation still reaches under the bar, and its first row
-  /// rests just below the capsule, through `ChatCollectionView.topClearance`.
+  /// rests just below the capsule, whose bar adds to the slot's top safe area.
   @Test("Show the Screen floats over the conversation, which still reaches under the bar")
   func showTheScreenFloatsOverTheConversation() async {
     let model = PreviewSupport.transcript(for: PreviewSupport.agentPane)

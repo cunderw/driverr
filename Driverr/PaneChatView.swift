@@ -208,15 +208,11 @@ struct PaneChatView: View {
   /// not what SwiftUI proposes to this view, so it cannot move the measurement.
   @State private var chatSlotHeight: CGFloat = 0
 
-  /// The slot's top safe-area inset: the status bar and the navigation bar when the slot meets
-  /// them, 0 when a pinned row stands between. The representable reaches up by this much, and
+  /// The slot's top safe-area inset: the status bar, the navigation bar and the floating
+  /// capsules' bar when the slot meets them, 0 when the back bar stands between. The representable reaches up by this much, and
   /// the coordinator rests the first row below it. Unlike the bottom, the top inset carries no
   /// keyboard, so it can be read directly. See `ChatCollectionView.Coordinator.applyInsets`.
   @State private var chatSlotTopInset: CGFloat = 0
-
-  /// The floating capsules' height, from the slot's top to the last capsule's foot. See
-  /// `floatingCapsules(for:)` and `ChatCollectionView.topClearance`.
-  @State private var capsulesHeight: CGFloat = 0
 
 
   /// Whether the last automatic fetch failed, which disarms it.
@@ -483,9 +479,6 @@ struct PaneChatView: View {
               screenBandTop: screenBandTop.map(Double.init), bandTop: Double(bandTop))),
           visibleHeight: chatSlotHeight,
           topExtension: chatSlotTopInset,
-          // Read only while a capsule stands: the measured height outlives the stack.
-          topClearance: floatingStop(in: transcript) != nil || offersScreenCapsule
-            ? capsulesHeight : 0,
           accent: themeAccent,
           accentForeground: themeAccentForeground,
           // What decides whether an existing cell is reconfigured. See `ChatRowInputs`.
@@ -528,9 +521,6 @@ struct PaneChatView: View {
       .overlay(alignment: .top) {
         if chatSlotTopInset < 0.5 { ChatTopFade() }
       }
-      // Over the conversation, so they never take height from it. Inside the slot's safe
-      // area, which already starts at the navigation bar's bottom edge.
-      .overlay(alignment: .top) { floatingCapsules(for: transcript) }
       // A new turn while the reader is up in the history shows a control instead of moving
       // them. `ChatEndProximity.showsJumpToLatest` is the rule; the tail marker can only hide
       // the control.
@@ -540,6 +530,13 @@ struct PaneChatView: View {
           jumpToLatest { jumpToken += 1 }
         }
       }
+      // The capsules, as a bar under the navigation bar's, so they take no height from the
+      // conversation: the bar adds to the slot's top safe area, which `chatSlotTopInset` reads
+      // and the conversation reaches up through. At the top of the conversation the first row
+      // rests below them, rows scroll under them, and the collection view's `topEdgeEffect`
+      // softens the rows down to their foot, which an overlay does not get. Outside the
+      // overlays and the slot's geometry reads, so it wraps them all.
+      .safeAreaBar(edge: .top, spacing: 0) { floatingCapsules(for: transcript) }
       // Once per appearance of a ready transcript. This branch's identity is stable across
       // scrolls and expansions, so a later refresh does not steal focus back.
       .onAppear { focusedTurnID = transcript.turns.last?.id }
@@ -1339,8 +1336,8 @@ struct PaneChatView: View {
   /// pane's, and the captured screen is the pane's (`agentStatus` is `nil` there).
   ///
   /// The stack hugs its capsules and carries no background or content shape, so the
-  /// conversation around them still takes touches. Its height is the conversation's
-  /// `topClearance`, so at the top of the conversation the first row rests below them.
+  /// conversation around them still takes touches. First in VoiceOver's order, ahead of the
+  /// conversation, as the pinned rows were.
   @ViewBuilder
   private func floatingCapsules(for transcript: Transcript) -> some View {
     let stop = floatingStop(in: transcript)
@@ -1353,7 +1350,8 @@ struct PaneChatView: View {
       // The gutter, because the stack is not a cell and section insets do not reach it.
       .padding(.horizontal, chatGutter)
       .padding(.top, 6)
-      .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { capsulesHeight = $0 }
+      .frame(maxWidth: .infinity)
+      .accessibilitySortPriority(1)
       .background {
         // `onGeometryChange`, not `onAppear`: in a `NavigationStack` the first frame is laid
         // out before the stack has its size.

@@ -1172,6 +1172,30 @@ final class PaneChatUITests: XCTestCase {
       labels.contains { $0.contains("session limit") },
       "The limit record's own turn must not draw beside the notice. Saw \(labels)."
     )
+
+    // VoiceOver reaches the floating capsules before the conversation, as it reached the rows
+    // they replaced. One snapshot, walked in accessibility order, rather than a query per
+    // element.
+    guard let tree = try? app.snapshot() else {
+      XCTFail("Could not snapshot the accessibility tree")
+      return
+    }
+    var order: [String] = []
+    func walk(_ node: XCUIElementSnapshot) {
+      if !node.identifier.isEmpty { order.append(node.identifier) }
+      node.children.forEach(walk)
+    }
+    walk(tree)
+    let stop = order.firstIndex(of: "pane.chat.agentStop")
+    let screen = order.firstIndex(of: "pane.chat.showScreen")
+    let turn = order.firstIndex(of: "pane.chat.turn.assistant")
+    let readOrder = "Accessibility order: stop \(String(describing: stop)), Show the Screen "
+      + "\(String(describing: screen)), first agent turn \(String(describing: turn)) in "
+      + "\(order.filter { $0.hasPrefix("pane.chat") })"
+    XCTAssertNotNil(stop, readOrder)
+    XCTAssertNotNil(turn, readOrder)
+    if let stop, let turn { XCTAssertLessThan(stop, turn, readOrder) }
+    if let screen, let turn { XCTAssertLessThan(screen, turn, readOrder) }
   }
 
   /// `w1:p1` has no reported session, so its file is matched by directory and the header

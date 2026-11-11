@@ -679,8 +679,8 @@ struct ChatCollectionViewTests {
   /// 3. `contentOffset.x` stays 0. A list layout has no horizontal extent to drift along.
   /// 4. A `reading` place restores the item and the depth inside it (`offsetWithinItem`), so a
   ///    reader two thirds down a tall answer is not snapped to its first line. A floating
-  ///    capsule's `topClearance` moves that reader by exactly the clearance, and a follower at
-  ///    the end not at all (checked under 6).
+  ///    capsule, which grows `topExtension` and shrinks `visibleHeight` by its height, moves
+  ///    that reader by exactly its height, and a follower at the end not at all (under 6).
   /// 5. A prepend re-anchors the reader where they are, not where the drag began. The kit suite
   ///    asserts the rule; only a real layout shows when the owner takes the anchor.
   /// 6. A scroll that did not come through the pan gesture holds the reader too. XCUITest
@@ -794,8 +794,9 @@ struct ChatCollectionViewTests {
         """
       #expect(abs(collection.contentOffset.y - before) < 1, "\(held)")
 
-      // A capsule arriving over a reader in the history, through `topClearance` as production
-      // hands it in. The place is measured from the top of the visible region, so the content
+      // A capsule arriving over a reader in the history. It is a bar under the navigation bar's,
+      // so production hands it in as `topExtension` grown and `visibleHeight` shrunk by its
+      // height. The place is measured from the top of the visible region, so the content
       // moves down by exactly the clearance and the line being read stays the first one not
       // under glass. Going away moves it back.
       guard let reader = collection.delegate as? ChatCollectionView<SpikeRow>.Coordinator else {
@@ -805,12 +806,14 @@ struct ChatCollectionViewTests {
       }
       let clearance: CGFloat = 80
       let readBefore = collection.contentOffset.y
-      reader.topClearance = clearance
+      reader.topExtension += clearance
+      reader.visibleHeight -= clearance
       reader.applyInsets()
       collection.setNeedsLayout()
       settle(collection)
       let readWith = collection.contentOffset.y
-      reader.topClearance = 0
+      reader.topExtension -= clearance
+      reader.visibleHeight += clearance
       reader.applyInsets()
       collection.setNeedsLayout()
       settle(collection)
@@ -917,13 +920,15 @@ struct ChatCollectionViewTests {
 
       // A capsule arriving or going while the reader follows the end moves nothing: the end is
       // measured from the bottom, and the place stays followingLatest.
-      coordinator.topClearance = 80
+      coordinator.topExtension += 80
+      coordinator.visibleHeight -= 80
       coordinator.applyInsets()
       collection.setNeedsLayout()
       settle(collection)
       let followedWith = collection.contentOffset.y
       let followedPlace = coordinator.place
-      coordinator.topClearance = 0
+      coordinator.topExtension -= 80
+      coordinator.visibleHeight += 80
       coordinator.applyInsets()
       collection.setNeedsLayout()
       settle(collection)
