@@ -939,6 +939,23 @@ public actor FakeControl: HerdrControl {
     )
   }
 
+  /// `seededTree` with `w1:p2` titled long enough to truncate in a bar: the iPad's
+  /// `pane.subagent.back` names the pane, and must not run into the toggle beside it.
+  public static let treeWithALongPaneTitle: SessionTree = mapPanes(seededTree) { pane in
+    guard pane.id == "w1:p2" else { return pane }
+    return Pane(
+      id: pane.id,
+      tabID: pane.tabID,
+      workspaceID: pane.workspaceID,
+      title: "needs a decision on the config loader's error reporting",
+      agent: pane.agent,
+      terminalID: pane.terminalID,
+      directory: pane.directory,
+      isFocused: pane.isFocused,
+      viewportRows: pane.viewportRows
+    )
+  }
+
   /// `seededTree` with `w1:p2`'s Claude never yet spoken to, with no `agent_session`.
   ///
   /// Its chat resolves `.noSessionFiles`. The pane stays blocked, as a new Claude on its

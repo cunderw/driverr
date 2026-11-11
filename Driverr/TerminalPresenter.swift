@@ -362,8 +362,15 @@ final class TerminalPresenter {
   /// `scene.close()` returns the controller and observers and ends the shell. Otherwise a
   /// channel stays open in the background with nothing on screen to close it, and a held
   /// controller locks the pane on the user's desk.
+  ///
+  /// A sub-agent opened in the scene's pane closes here too, so a return finds the pane's own
+  /// chat. Not in `TerminalScreen`'s `onDisappear`, which also fires when the phone pushes the
+  /// sub-agent over the pane and would pop it at once. Read before `close()`.
   private func endPresentation() {
     guard let scene = request?.scene else { return }
+    if let pane = scene.currentPane {
+      scene.model.transcripts?.existingModel(for: pane.id)?.closeAllSubagents()
+    }
     connections?.sceneClosed(for: scene.host.id)
     scene.model.session?.stopLiveUpdates()
     scene.close()

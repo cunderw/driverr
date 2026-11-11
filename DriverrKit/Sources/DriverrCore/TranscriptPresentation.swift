@@ -386,7 +386,7 @@ public struct TranscriptNotice: Equatable, Sendable {
         symbolName: "desktopcomputer"
       )
     case .subagentFileNotFound:
-      // No `Show the Screen`: the pane's screen is the parent's. The back bar is the exit.
+      // No `Show the Screen`: the pane's screen is the parent's. Back is the exit.
       self.init(
         title: "No file for this agent yet",
         message:
@@ -623,9 +623,6 @@ public enum TranscriptChatCopy {
   public static let human = "You"
   /// The label over a sub-agent's opening prompt, which the parent agent wrote.
   public static let parentPrompt = "Prompt from the parent agent"
-  /// The back bar over a sub-agent's chat. Words, because a chevron would read as the
-  /// system back button.
-  public static let subagentBack = "Back to the pane's chat"
   /// Spoken after a spawn line's words when it opens a sub-agent's chat.
   public static let opensSubagent = "Opens this agent's conversation"
   /// The floating down button. Spoken, because VoiceOver reads an arrow glyph as its shape.

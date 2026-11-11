@@ -631,14 +631,64 @@ final class PaneChatUITests: XCTestCase {
     add(shot)
   }
 
-  /// A spawn line opens that sub-agent's conversation in the same chat. Nothing is pushed: a
-  /// back bar replaces the provenance row, the composer goes, and the opening prompt is
-  /// labelled as the parent's. Back restores the pane's chat and the composer.
+  /// The sub-agent's conversation: pushed over the pane on the phone, in place of the pane's
+  /// chat on the iPad. Either way it is the collection view named `subagent.chat`, because
+  /// XCUITest sees through a push and the pane's own `pane.chat` is still in the tree under it.
+  private func subagentChat(_ app: XCUIApplication) -> XCUIElement {
+    element(app, "subagent.chat")
+  }
+
+  /// Returns from a sub-agent to the pane's chat by whichever control the route offers: the
+  /// iPad's `pane.subagent.back`, or the phone's system back button on the pushed screen. That
+  /// button carries no identifier, so it is the first button of the navigation bar that does
+  /// not hold the pane scene's ⋯ menu, which the pushed screen does not draw.
+  private func leaveSubagent(
+    _ app: XCUIApplication, file: StaticString = #filePath, line: UInt = #line
+  ) {
+    let inPlace = element(app, "pane.subagent.back")
+    if inPlace.exists {
+      inPlace.tap()
+    } else {
+      let bars = app.navigationBars.allElementsBoundByIndex
+      let pushed = bars.first { !$0.descendants(matching: .any)["pane.actions"].exists }
+      let back = (pushed ?? app.navigationBars.firstMatch).buttons.element(boundBy: 0)
+      XCTAssertTrue(
+        back.waitForExistence(timeout: 10),
+        "No way back from the sub-agent: no 'pane.subagent.back' and no back button on the "
+          + "pushed screen's bar. Tree was:\n\(app.debugDescription)",
+        file: file, line: line)
+      back.tap()
+    }
+    requireGone(app, "subagent.chat", "Back must leave the sub-agent", file: file, line: line)
+  }
+
+  /// Pops the phone's pushed sub-agent with the edge swipe, which a custom leading item would
+  /// disable (CLAUDE.md). On the iPad, where nothing is pushed, it falls back to
+  /// `leaveSubagent`.
+  private func swipeBackFromSubagent(
+    _ app: XCUIApplication, file: StaticString = #filePath, line: UInt = #line
+  ) {
+    guard !element(app, "pane.subagent.back").exists else {
+      leaveSubagent(app, file: file, line: line)
+      return
+    }
+    let edge = app.coordinate(withNormalizedOffset: CGVector(dx: 0.01, dy: 0.5))
+    edge.press(
+      forDuration: 0.05,
+      thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)))
+    requireGone(
+      app, "subagent.chat", "The edge swipe must pop the sub-agent", file: file, line: line)
+  }
+
+  /// A spawn line opens that sub-agent's conversation: a push on the phone, with the system
+  /// back button, and in place on the iPad, with `pane.subagent.back`. The sub-agent's chat
+  /// has no provenance row and labels its opening prompt as the parent's. Back restores the
+  /// pane's chat and the composer.
   ///
-  /// The claim is wiring from a tap in the collection view to the pane's model and back to
-  /// `TerminalScreen`. The slow transcript makes the sub-agent's page arrive after its chat
-  /// is up, as on a phone.
-  func testASpawnLineOpensItsSubagentAndTheBackBarReturns() {
+  /// The claim is wiring from a tap in the collection view to the pane's model, the phone's
+  /// derived path and back. The slow transcript makes the sub-agent's page arrive after its
+  /// chat is up, as on a phone.
+  func testASpawnLineOpensItsSubagentAndBackReturns() {
     let app = connectedHost(slowTranscript: true, subagents: true)
 
     tapPane(app, titled: "needs a decision")
@@ -655,37 +705,35 @@ final class PaneChatUITests: XCTestCase {
     XCTAssertTrue(verifier.isHittable, "The teammate's spawn line is not tappable")
     verifier.tap()
 
-    let back = require(app, "pane.chat.subagent.back", "Expected the back bar over the sub-agent")
-    XCTAssertEqual(
-      require(app, "pane.chat.subagent.title", "Expected the sub-agent's name").label,
-      "verifier-7")
-    let parent = app.staticTexts["Prompt from the parent agent"]
+    let chat = require(app, "subagent.chat", "Expected the sub-agent's conversation")
+    let parent = chat.staticTexts["Prompt from the parent agent"]
     XCTAssertTrue(
       parent.waitForExistence(timeout: 20),
       "Expected the teammate's opening prompt, labelled as the parent's.\nTree was:\n"
         + app.debugDescription)
-    let prompt = app.descendants(matching: .any).matching(identifier: "pane.chat.turn.human")
+    let prompt = chat.descendants(matching: .any).matching(identifier: "pane.chat.turn.human")
       .element(matching: NSPredicate(format: "label CONTAINS %@", "Review the config loader"))
     XCTAssertTrue(prompt.exists, "Expected the teammate's own prompt, not the pane's turns")
-    requireGone(app, "composer.text", "The composer must go while a sub-agent is shown")
     // The provenance row is the conversation's first cell, so a header scrolled out of sight
     // is absent too. Back to the start first, so its absence means it is not there.
-    let subagentChat = require(app, "pane.chat", "Expected the sub-agent's conversation")
-    for _ in 0..<4 { subagentChat.swipeDown() }
+    for _ in 0..<4 { chat.swipeDown() }
     XCTAssertTrue(
-      app.descendants(matching: .any).matching(identifier: "pane.chat.paging.startOfFile")
+      chat.descendants(matching: .any).matching(identifier: "pane.chat.paging.startOfFile")
         .firstMatch.waitForExistence(timeout: 5)
         || parent.isHittable,
       "Expected the start of the sub-agent's conversation on screen.\nTree was:\n"
         + app.debugDescription)
-    requireGone(app, "pane.chat.header", "The back bar takes the provenance row's place")
+    XCTAssertFalse(
+      chat.descendants(matching: .any)["pane.chat.header"].exists,
+      "A sub-agent's chat has no provenance row")
     let opened = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
     opened.name = "subagent-opened"
     opened.lifetime = .keepAlways
     add(opened)
 
-    back.tap()
-    requireGone(app, "pane.chat.subagent.back", "Back must return to the pane's chat")
+    // The edge swipe on the phone, so the gesture path is covered as well as the button,
+    // which the other sub-agent tests use.
+    swipeBackFromSubagent(app)
     require(app, "composer.text", "The composer must come back with the pane's chat")
     require(app, "pane.chat.header", "The provenance row must come back with the pane's chat")
     XCTAssertTrue(
@@ -741,24 +789,22 @@ final class PaneChatUITests: XCTestCase {
 
     // XCUITest sees through a sheet still sliding away, so wait for it to be gone.
     requireGone(app, "pane.chat.subagents.row", "A row must close the list")
-    let back = require(app, "pane.chat.subagent.back", "Expected the back bar over the sub-agent")
-    XCTAssertEqual(
-      require(app, "pane.chat.subagent.title", "Expected the sub-agent's name").label, "Explore")
-    let prompt = app.descendants(matching: .any).matching(identifier: "pane.chat.turn.human")
+    let chat = require(app, "subagent.chat", "Expected the sub-agent's conversation")
+    let prompt = chat.descendants(matching: .any).matching(identifier: "pane.chat.turn.human")
       .element(matching: NSPredicate(format: "label CONTAINS %@", "Find every caller of load_config"))
     XCTAssertTrue(
       prompt.waitForExistence(timeout: 20),
       "Expected the off-page sub-agent's own prompt.\nTree was:\n\(app.debugDescription)")
-    requireGone(app, "pane.subagents", "The button is not offered over a sub-agent's chat")
 
-    back.tap()
-    requireGone(app, "pane.chat.subagent.back", "Back must return to the pane's chat")
-    require(app, "pane.subagents", "The button must come back with the pane's chat")
+    leaveSubagent(app)
+    require(app, "pane.subagents", "The button must be on the pane's bar after Back")
   }
 
   /// Leaving the pane scene closes a sub-agent opened in it, so coming back finds the pane's
-  /// own chat and composer. The claim is about `TerminalScreen` going away, which no cheaper
-  /// tier hosts.
+  /// own chat and composer. On the phone the way out is Back twice, once off the pushed
+  /// sub-agent and once off the pane. On the iPad `terminal.back` leaves with the sub-agent
+  /// still open in place, so `TerminalPresenter.endPresentation` is what closes it. The claim
+  /// is about the scene going away and coming back, which no cheaper tier hosts.
   func testLeavingThePaneSceneClosesAnOpenSubagent() {
     let app = connectedHost(slowTranscript: true, subagents: true)
 
@@ -771,15 +817,66 @@ final class PaneChatUITests: XCTestCase {
       verifier.waitForExistence(timeout: 20),
       "Expected the teammate's spawn line.\nTree was:\n\(app.debugDescription)")
     verifier.tap()
-    require(app, "pane.chat.subagent.back", "Expected the back bar over the sub-agent")
-    requireGone(app, "composer.text", "The composer must go while a sub-agent is shown")
+    require(app, "subagent.chat", "Expected the sub-agent's conversation")
 
+    // The iPad leaves straight from the sub-agent; the phone backs off it first.
+    if !element(app, "pane.subagent.back").exists { leaveSubagent(app) }
     leavePaneScene(app, "Expected a way out of the pane scene")
     requireGone(app, "pane.chat", "Expected to have left the pane scene")
     tapPane(app, titled: "needs a decision")
     require(app, "pane.chat", "Expected the pane to reopen on its chat")
     require(app, "composer.text", "Coming back must find the pane's own chat and its composer")
-    requireGone(app, "pane.chat.subagent.back", "The sub-agent must close with the pane scene")
+    requireGone(app, "subagent.chat", "The sub-agent must close with the pane scene")
+  }
+
+  /// Opening a sub-agent with the keyboard up and coming Back must not leave the composer under
+  /// the keyboard. Back restores the composer's focus, and the pane screen did not lay out for
+  /// a keyboard rising during the pop, so the phone takes the keyboard down before it pushes.
+  /// The draft typed before the push survives it. Measured device-only, so a UI test. The slow
+  /// transcript, as on a phone.
+  func testBackFromASubagentLeavesTheComposerClearOfTheKeyboard() {
+    let app = connectedHost(slowTranscript: true, subagents: true)
+
+    tapPane(app, titled: "needs a decision")
+    require(app, "pane.chat", "Expected the pane to open on its chat")
+    let verifier = app.descendants(matching: .any)
+      .matching(identifier: "pane.chat.turn.agentEvent")
+      .element(matching: NSPredicate(format: "label CONTAINS %@", "Started verifier-7"))
+    XCTAssertTrue(
+      verifier.waitForExistence(timeout: 20),
+      "Expected the teammate's spawn line.\nTree was:\n\(app.debugDescription)")
+    let field = require(app, "composer.text", "Expected the composer field")
+    field.tap()
+    XCTAssertTrue(
+      app.keyboards.firstMatch.waitForExistence(timeout: 10), "The keyboard never came up")
+    let draft = "keep this draft"
+    field.typeText(draft)
+    XCTAssertTrue(verifier.isHittable, "The spawn line is under the keyboard")
+    verifier.tap()
+    require(app, "subagent.chat", "Expected the sub-agent's conversation")
+
+    leaveSubagent(app)
+    let composer = require(app, "composer.text", "The composer must come back")
+    // Long enough for a restored focus to raise the keyboard, which is the failure.
+    sleep(2)
+    let keyboard = app.keyboards.firstMatch
+    let shot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+    shot.name = "subagent-back-keyboard"
+    shot.lifetime = .keepAlways
+    add(shot)
+    if keyboard.exists {
+      // `app.keyboards`' frame reads 44 pt below the drawn keyboard on these simulators, so
+      // the composer must end 44 pt above it to be clear of what is drawn.
+      XCTAssertLessThanOrEqual(
+        composer.frame.maxY, keyboard.frame.minY - 44,
+        """
+        After Back the composer ends at y \(composer.frame.maxY), under the keyboard drawn from \
+        about \(keyboard.frame.minY - 44). Tree was:\n\(app.debugDescription)
+        """)
+    }
+    XCTAssertTrue(composer.isHittable, "After Back the composer cannot be reached")
+    XCTAssertEqual(
+      composer.value as? String, draft, "The draft typed before the push must survive Back")
   }
 
   /// A raw prompt with no structured options gets an Approve/Deny pair under the turn, not a

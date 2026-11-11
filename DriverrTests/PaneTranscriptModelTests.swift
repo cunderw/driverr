@@ -2097,6 +2097,8 @@ private final class SubagentCommandLog: @unchecked Sendable {
     lock.lock()
     sent.append(command)
     lock.unlock()
+    // Observation cannot see a locked log, so a wait on it is woken here.
+    Waker.signalShared()
   }
 
   var commands: [String] {
@@ -2315,5 +2317,41 @@ struct PaneSubagentModelTests {
     #expect(!log.commands.contains { $0.contains(paneFile) })
     #expect(log.commands.contains { $0.contains("agent-aanalyst7.jsonl") })
     #expect(model.lastAssistantMessage == "The pane's own last words.")
+  }
+
+  /// The phone pushes one level for a sub-agent (`PhoneStackPath.Route.subagent`). No route
+  /// offers a second open while one is shown today, so this pins the guard: a second open
+  /// replaces the first rather than stacking.
+  @Test("opening a second sub-agent replaces the first, so at most one is open")
+  func aSecondOpenReplacesTheFirst() async {
+    let model = await model()
+    let first = await open(.toolUse(id: "toolu_1_0"), on: model)
+    let second = await open(.teammate(name: "verifier-7"), on: model)
+    #expect(model.subagents.depth == 1)
+    #expect(second !== first)
+    #expect(model.shown === second)
+    #expect(model.shown.source?.file.name == "agent-averifier7.jsonl")
+  }
+
+  /// On the phone the pane's chat stays under the pushed sub-agent, whose own screen watches
+  /// the sub-agent. The pane's watcher must not probe it a second time.
+  @Test("a watcher that does not follow sub-agents probes the pane's file, not the open one")
+  func aNonFollowingWatcherProbesThePane() async throws {
+    let grown = Switch()
+    let log = SubagentCommandLog()
+    let model = await model(grown, log: log)
+    _ = await open(.toolUse(id: "toolu_1_0"), on: model)
+
+    grown.turnOn()
+    log.clear()
+    let watcher = Task { await model.watch(every: .milliseconds(10), followsSubagents: false) }
+    // Woken by `SubagentCommandLog.record`; the suite's time limit catches a probe that never
+    // comes.
+    await waitUntil("the pane's own file is probed") {
+      log.commands.contains { $0.contains("\(Self.sessionID).jsonl") }
+    }
+    watcher.cancel()
+    #expect(log.commands.contains { $0.contains("\(Self.sessionID).jsonl") })
+    #expect(!log.commands.contains { $0.contains("agent-aanalyst7.jsonl") })
   }
 }

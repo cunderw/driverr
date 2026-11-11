@@ -1,8 +1,9 @@
 /// The sub-agent conversations a pane's chat has opened, newest on top.
 ///
-/// A pane's chat shows its own conversation when this is empty and the top entry when it is
-/// not. Nothing is pushed onto the navigation stack for it: `PhoneStackPath` does not change,
-/// and a back bar in the chat pops this instead.
+/// On the phone a non-empty stack is `PhoneStackPath.Route.subagent`, pushed over the pane's
+/// own chat, and the system back button pops it. On iPad the detail column cannot push, so the
+/// pane's chat shows the top entry in place and a named back control pops it. The app opens at
+/// most one at a time.
 ///
 /// Generic over the entry so the rule is asserted here without the app's model type. The app
 /// holds one per pane, on `PaneTranscriptModel`.

@@ -71,4 +71,45 @@ struct PhoneStackPathTests {
   func popPastASceneEndsIt() {
     #expect(PhoneStackPath.effect(ofWrite: [], hadRequest: true) == .endSceneAndDeselect)
   }
+
+  @Test("an open sub-agent is a third level, over the pane and only over the pane")
+  func theSubagentLevel() {
+    #expect(
+      PhoneStackPath.path(selectedHostID: host, hasRequest: true, showsSubagent: true)
+        == [.host(host), .pane, .subagent])
+    #expect(
+      PhoneStackPath.path(selectedHostID: host, hasRequest: false, showsSubagent: true)
+        == [.host(host)], "a sub-agent with no scene has nothing to stand on")
+    #expect(
+      PhoneStackPath.path(selectedHostID: nil, hasRequest: true, showsSubagent: true).isEmpty)
+  }
+
+  @Test("pushing the sub-agent unwinds nothing")
+  func pushingTheSubagentUnwindsNothing() {
+    #expect(
+      PhoneStackPath.effect(
+        ofWrite: [.host(host), .pane, .subagent], hadRequest: true, hadSubagent: true) == .none)
+    #expect(
+      PhoneStackPath.effect(
+        ofWrite: [.host(host), .pane, .subagent], hadRequest: true, hadSubagent: false) == .none)
+  }
+
+  @Test("popping the sub-agent closes it and keeps the pane scene")
+  func poppingTheSubagentClosesIt() {
+    #expect(
+      PhoneStackPath.effect(ofWrite: [.host(host), .pane], hadRequest: true, hadSubagent: true)
+        == .closeSubagent)
+    #expect(PhoneStackPath.selection(inWrite: [.host(host), .pane]) == host)
+  }
+
+  /// The long press on Back can skip a level. Ending the scene closes the sub-agent with it.
+  @Test("popping past the sub-agent and the pane ends the scene")
+  func poppingPastTheSubagentEndsTheScene() {
+    #expect(
+      PhoneStackPath.effect(ofWrite: [.host(host)], hadRequest: true, hadSubagent: true)
+        == .endScene)
+    #expect(
+      PhoneStackPath.effect(ofWrite: [], hadRequest: true, hadSubagent: true)
+        == .endSceneAndDeselect)
+  }
 }

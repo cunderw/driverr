@@ -1185,11 +1185,11 @@ struct ChatCollectionViewTests {
     withExtendedLifetime(window) {}
   }
 
-  /// `ChatTopFade` is drawn over the slot's top while a row is pinned above it, as here, with no
-  /// `topExtension`, so the collection view's top inset decides whether the first row's content
-  /// starts under the fade or where it ends. Under the bar, `ChatUnderBarLayoutTests`.
-  @Test("at the top of the conversation the first row starts where the top fade ends")
-  func theFirstRowStartsWhereTheTopFadeEnds() {
+  /// With no `topExtension`, as here, the collection view's top inset alone decides where the
+  /// first row's content starts: `ChatColumn.topGap` below the slot's top. Under the bar, with
+  /// the extension added, `ChatUnderBarLayoutTests`.
+  @Test("at the top of the conversation the first row starts the top gap down")
+  func theFirstRowStartsTheTopGapDown() {
     let (_, window) = measure(
       size: HostedProbe.phone, theme: SpikeTheme(accent: handedAccent, foreground: .white),
       sink: AccentSink())
@@ -1203,18 +1203,18 @@ struct ChatCollectionViewTests {
     settle(collection)
 
     let inset = """
-      contentInset.top is \(collection.contentInset.top), against the fade's \
-      \(ChatTopFade.height) less the rows' own \(ChatColumn.rowPadding). More puts an empty \
-      band above the first row; less starts its content inside the fade.
+      contentInset.top is \(collection.contentInset.top), against the top gap's \
+      \(ChatColumn.topGap) less the rows' own \(ChatColumn.rowPadding). More puts an empty \
+      band above the first row; less starts its content closer to the top.
       """
-    #expect(abs(collection.contentInset.top - ChatTopFade.contentInset) < 0.5, "\(inset)")
+    #expect(abs(collection.contentInset.top - ChatColumn.topContentInset) < 0.5, "\(inset)")
 
     let indicator = """
       verticalScrollIndicatorInsets.top is \(collection.verticalScrollIndicatorInsets.top), \
-      against the fade's \(ChatTopFade.height). Less lets the indicator run into the fade.
+      against the top gap's \(ChatColumn.topGap). The indicator starts where the content does.
       """
     #expect(
-      abs(collection.verticalScrollIndicatorInsets.top - ChatTopFade.height) < 0.5,
+      abs(collection.verticalScrollIndicatorInsets.top - ChatColumn.topGap) < 0.5,
       "\(indicator)")
 
     // At the top rest the offset is -contentInset.top, so the first item's top in the viewport
@@ -1222,10 +1222,10 @@ struct ChatCollectionViewTests {
     let contentTop = first.frame.minY + collection.contentInset.top + ChatColumn.rowPadding
     let below = """
       At the top of the conversation the first row's content starts \(contentTop) pt below the \
-      slot's top, against the fade's \(ChatTopFade.height). The first item is at content y \
+      slot's top, against the top gap's \(ChatColumn.topGap). The first item is at content y \
       \(first.frame.minY), so the first section carries a top margin of its own.
       """
-    #expect(abs(contentTop - ChatTopFade.height) < 0.5, "\(below)")
+    #expect(abs(contentTop - ChatColumn.topGap) < 0.5, "\(below)")
 
     // The fixture hands in no provenance, as a sub-agent's chat does, so the conversation
     // holds no provenance row at all, not one scrolled out of sight.

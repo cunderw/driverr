@@ -13,7 +13,14 @@ enum ChatColumn {
   static let inset: CGFloat = 16
   /// Every row's padding above and below, so rows sit twice this apart.
   static let rowPadding: CGFloat = 9
-  /// The colour the chat side is painted. `ChatTopFade` fades to it, so the two must not differ.
+  /// How far below the top of the visible conversation (under the bar's glass, or the floating
+  /// capsules) the first row's content starts at rest. The scroll indicator starts here too.
+  static let topGap: CGFloat = 16
+  /// The collection view's `contentInset.top` beyond `ChatCollectionView.topExtension`:
+  /// `topGap` less the first row's own `rowPadding`, so at the top of the conversation the
+  /// first row's content starts `topGap` down. See `Coordinator.applyInsets`.
+  static var topContentInset: CGFloat { topGap - rowPadding }
+  /// The colour the chat side is painted.
   ///
   /// In dark it is #151515, the dark ground of Claude's iOS app, so the floating glass (the
   /// bar's buttons, the composer's pill) reads against it. In light it is
@@ -174,6 +181,14 @@ struct PaneChatView: View {
   /// for nothing else. See `drawsConversation`.
   var onDrawsConversation: ((Bool) -> Void)?
 
+  /// Whether this view draws the sub-agent open on `model`, or keeps `model`'s own conversation.
+  ///
+  /// `true` in the iPad's detail column, which cannot push, so a sub-agent replaces the pane's
+  /// chat in place. `false` on the phone's pane level, where the sub-agent is pushed over this
+  /// view (`SubagentChatScreen`) and a back-swipe must reveal the pane's own chat underneath.
+  /// `SubagentChatScreen` hands the sub-agent's own model in, which has nothing open on it.
+  var followsSubagents = true
+
   /// Where a hosted layout test reads the floating capsules' frame, in global coordinates.
   /// Installs nothing when `nil`. The in-app form of `HostedProbe`'s `measuredFrame(into:)`,
   /// as `ProvenanceRow.onCaptionFrame` is. See `floatingCapsules(for:)`.
@@ -209,8 +224,8 @@ struct PaneChatView: View {
   @State private var chatSlotHeight: CGFloat = 0
 
   /// The slot's top safe-area inset: the status bar, the navigation bar and the floating
-  /// capsules' bar when the slot meets them, 0 when the back bar stands between. The
-  /// representable reaches up by this much, and the coordinator rests the first row below it.
+  /// capsules' bar. The representable reaches up by this much, and the coordinator rests the
+  /// first row below it.
   /// Unlike the bottom, the top inset carries no keyboard, so it can be read directly.
   /// See `ChatCollectionView.Coordinator.applyInsets`.
   @State private var chatSlotTopInset: CGFloat = 0
@@ -293,11 +308,14 @@ struct PaneChatView: View {
 
   // MARK: - Which conversation is on screen
 
-  /// The conversation this surface draws: the pane's own, or an opened sub-agent. Everything
-  /// about the conversation reads this; everything about the pane still reads `model`.
-  private var shown: PaneTranscriptModel { model.shown }
+  /// The conversation this surface draws: the pane's own, or a sub-agent. Everything about the
+  /// conversation reads this; everything about the pane still reads `model`. See
+  /// `followsSubagents`.
+  private var shown: PaneTranscriptModel { followsSubagents ? model.shown : model }
 
-  private var isShowingSubagent: Bool { model.isShowingSubagent }
+  /// Whether the conversation drawn is a sub-agent's: one open on the pane's model, or a
+  /// sub-agent's own model handed in by `SubagentChatScreen`.
+  private var isShowingSubagent: Bool { shown.subagent != nil }
 
   /// What herdr says the pane's agent is doing, and `nil` while a sub-agent is shown: the
   /// pane's status is not the sub-agent's, so it must not mark its turns blocked or waiting.
@@ -327,13 +345,6 @@ struct PaneChatView: View {
         PaneScreenView(model: screen, agentName: agentName)
           .safeAreaPadding(.bottom)
       } else {
-        // The way back sits over every state a sub-agent's chat can be in, so a link still
-        // resolving or one that found nothing never strands the reader.
-        if let title = model.shown.subagent?.title {
-          SubagentBackBar(title: title, horizontalInset: chatGutter) {
-            model.closeSubagent()
-          }
-        }
         switch shown.state {
         case .idle, .loading:
           loading
@@ -361,11 +372,12 @@ struct PaneChatView: View {
     // Keyed on the pane, because a pane switch hands this view a different model in the same
     // place and a bare `.task` would not re-run. Also on the shown sub-agent, so opening or
     // closing one loads the right page.
-    .task(id: ShownKey(pane: model.pane.id, subagent: model.shown.subagent?.link)) {
+    .task(id: ShownKey(pane: model.pane.id, subagent: shown.subagent?.link)) {
       shown.loadIfNeeded()
       // The `/` list's catalogue, requested here because the bar is rebuilt on every keystroke
-      // and must not start a round trip. A no-op unless the answer is old.
-      model.loadSkillsIfNeeded()
+      // and must not start a round trip. A no-op unless the answer is old. The pane's, so not
+      // from a sub-agent's own screen, which has no composer.
+      if model.subagent == nil { model.loadSkillsIfNeeded() }
     }
     // Keep re-reading the conversation while it is on screen, because an agent writing while
     // it stays `working` changes no herdr status. A tick costs a size check, not a page; see
@@ -374,13 +386,16 @@ struct PaneChatView: View {
     // Keyed on the pane, the sub-agent and the scene phase. The `guard` makes the scene part
     // work, because a `.task` runs for every id value, including "not on screen". Switching to
     // the terminal removes this view, and the task with it.
+    //
+    // Only the conversation this view draws: on the phone the pushed sub-agent's screen
+    // watches the sub-agent, so the pane's chat under it must not poll it a second time.
     .task(
       id: WatchKey(
-        pane: model.pane.id, subagent: model.shown.subagent?.link,
+        pane: model.pane.id, subagent: shown.subagent?.link,
         isActive: scenePhase == .active)
     ) {
       guard scenePhase == .active else { return }
-      await model.watch()
+      await model.watch(followsSubagents: followsSubagents)
     }
     // Read the screen for a question while the pane is blocked and the transcript has none.
     // Claude Code writes a pending `AskUserQuestion` to the session file only once answered.
@@ -406,9 +421,11 @@ struct PaneChatView: View {
       replySelection = ReplyChipSelection(groups: groups)
       if groups.isEmpty { screenBandTop = nil }
     }
-    // Opening or closing a sub-agent is a new conversation in the same place. Both open at
-    // the newest turn; the place in the pane's chat is not restored.
-    .onChange(of: model.subagents.depth) {
+    // Opening, closing or replacing a sub-agent in place (the iPad) is a new conversation in
+    // the same place. Each opens at the newest turn; the place in the pane's chat is not
+    // restored. On the phone's pane level `shown` never changes for it, so the pane's chat
+    // under the push keeps its place.
+    .onChange(of: shown.subagent?.link) {
       // The captured screen is the pane's, so it is never the way into or out of a sub-agent.
       isShowingScreen = false
       jumpToken += 1
@@ -468,7 +485,7 @@ struct PaneChatView: View {
       .overlay {
         ChatCollectionView(
           turns: transcript.turns,
-          // Not over a sub-agent's chat, where `SubagentBackBar` stands in its place.
+          // Not over a sub-agent's chat: its file is not the pane's session.
           provenance: isShowingSubagent
             ? nil
             : ChatProvenance(
@@ -504,7 +521,10 @@ struct PaneChatView: View {
           dismissesKeyboardImmediately: isComposerCollapsed,
           onReaderState: { readerState = $0 },
           onScrollGeometry: onScrollGeometry,
-          onPlaceChange: onPlaceChange
+          onPlaceChange: onPlaceChange,
+          // Distinct for a sub-agent, because XCUITest sees through the phone's push and the
+          // pane's own chat is still in the tree under it.
+          accessibilityIdentifier: isShowingSubagent ? "subagent.chat" : "pane.chat"
         ) { item in
           chatRow(item, in: transcript)
         }
@@ -512,17 +532,10 @@ struct PaneChatView: View {
         // composer's top edge, rows stop above the card and the material has nothing to blur.
         // The composer's height arrives through `chatSlotHeight`.
         //
-        // The top too, so rows pass under the navigation bar's glass and the status bar. It
-        // acts only where the slot meets the safe area's top edge: with the sub-agent back bar
-        // pinned above it the slot's top inset is 0 and the conversation stops under that bar.
-        // Never on the terminals; see `TerminalScreen.terminals`.
+        // The top too, so rows pass under the navigation bar's glass and the status bar, where
+        // the collection view's own `topEdgeEffect` softens them. Never on the terminals; see
+        // `TerminalScreen.terminals`.
         .ignoresSafeArea(.container, edges: [.top, .bottom])
-      }
-      // Above the collection view, so rows fade out under the back bar above the slot. Only
-      // where it stands: under the navigation bar, the collection view's own `topEdgeEffect`
-      // softens it.
-      .overlay(alignment: .top) {
-        if chatSlotTopInset < 0.5 { ChatTopFade() }
       }
       // A new turn while the reader is up in the history shows a control instead of moving
       // them. `ChatEndProximity.showsJumpToLatest` is the rule; the tail marker can only hide
@@ -619,7 +632,7 @@ struct PaneChatView: View {
       // the conversation.
       if case .ready(let source, let page) = shown.state {
         provenanceHeader(source: source, contextUsage: page.contextUsage)
-          .padding(.bottom, ChatTopFade.contentInset)
+          .padding(.bottom, ChatColumn.topContentInset)
       }
     case .paging:
       // Above the oldest turn, where older ones arrive. The place is an item id, and ids are
@@ -654,7 +667,7 @@ struct PaneChatView: View {
   /// The gutter every row kind shares. See `ChatColumn.gutter(forColumnWidth:)`.
   ///
   /// Turn cards and the provenance row get it from their section. Views that are not cells,
-  /// such as the floating capsules and the back bar, must ask for it here, or they draw inside
+  /// such as the floating capsules, must ask for it here, or they draw inside
   /// the edge the cards and the composer share. `contentWidthEstimate` is 0 until measured, so
   /// the phone's answer applies until then.
   private var chatGutter: CGFloat {
@@ -774,7 +787,16 @@ struct PaneChatView: View {
       onOpenImage: onOpenImage,
       // Only the pane's own chat opens one: a sub-agent's spawn lines carry no link.
       onOpenSubagent: isShowingSubagent
-        ? nil : { link, title in model.openSubagent(link: link, title: title) },
+        ? nil
+        : { link, title in
+          // Keyboard down before the phone pushes: Back restores the composer's focus, and the
+          // pane screen does not lay out for a keyboard that rises during the pop.
+          if !followsSubagents {
+            UIApplication.shared.sendAction(
+              #selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+          }
+          model.openSubagent(link: link, title: title)
+        },
       estimatedContentWidth: contentWidthEstimate,
       render: shown.render[turn.id]
     )
