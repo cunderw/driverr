@@ -218,7 +218,6 @@ struct PaneChatView: View {
   /// Show the Screen capsule's vertical padding, 8 pt at the default text size.
   @ScaledMetric private var showScreenCapsulePadding: CGFloat = 8
 
-
   /// Whether the last automatic fetch failed, which disarms it.
   ///
   /// Cleared only by a tap on the control, never by scrolling. Otherwise a reader at the top of
