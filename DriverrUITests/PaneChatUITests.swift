@@ -2345,12 +2345,21 @@ final class PaneChatUITests: XCTestCase {
     func keyboardIsUp() -> Bool {
       app.keyboards.count > 0 && app.keyboards.firstMatch.frame.height > 0
     }
+    // Polls rather than sleeping a fixed time, and the caller asserts what it returns, so a
+    // slow dismissal waits and a missing one fails.
+    func eventually(_ condition: () -> Bool) -> Bool {
+      let deadline = Date().addingTimeInterval(10)
+      while Date() < deadline {
+        if condition() { return true }
+        usleep(100_000)
+      }
+      return condition()
+    }
     func dragOntoTheComposer() -> CGRect {
       let focused = card.frame
       at(focused.minY - 200).press(
         forDuration: 0.1, thenDragTo: at(focused.midY), withVelocity: 300,
         thenHoldForDuration: 0)
-      usleep(1_500_000)
       return focused
     }
 
@@ -2364,8 +2373,9 @@ final class PaneChatUITests: XCTestCase {
       XCTAssertTrue(keyboardIsUp(), "The keyboard is not up, so the drag below proves nothing")
       let focused = dragOntoTheComposer()
 
-      XCTAssertFalse(
-        keyboardIsUp(),
+      // A dismissed keyboard can linger with an empty rect, so absence is read on the frame.
+      XCTAssertTrue(
+        eventually { !keyboardIsUp() },
         """
         A drag down the conversation that ended on the composer's card \(focused) left the \
         keyboard up at \(app.keyboards.count > 0 ? "\(app.keyboards.firstMatch.frame)" : "-"). \
@@ -2373,6 +2383,7 @@ final class PaneChatUITests: XCTestCase {
         the composer and nothing moves. Draft '\(draft)'.
         """)
       if draft.isEmpty {
+        _ = eventually { abs(card.frame.height - pillHeight) <= 1 }
         XCTAssertEqual(
           card.frame.height, pillHeight, accuracy: 1,
           "With the keyboard down and no draft the composer should be its resting pill "
