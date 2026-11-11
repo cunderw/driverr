@@ -218,7 +218,10 @@ import Testing
     #expect(
       PaneAttachmentFailureCopy.sentence(
         for: MachineImageRefusal.tooLarge(limit: 2_000_000), at: Self.box)
-        == "The image is over the \(PaneAttachmentCopy.size(2_000_000)) limit for box.")
+        == "The image is over the "
+        + PaneAttachmentFailureCopy.limitSize(2_000_000) + " limit for box.")
+    // A round limit drops its `.0`.
+    #expect(PaneAttachmentFailureCopy.limitSize(2_000_000) == "2 MB")
   }
 
   /// The core's own words name its terminal, `t7 has finished`, which says nothing about what
