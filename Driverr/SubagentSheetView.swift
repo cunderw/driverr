@@ -52,7 +52,6 @@ struct SubagentSheetView: View {
             }
           }
         }
-        .accessibilityIdentifier("pane.chat.subagents.list")
         .navigationTitle(TranscriptChatCopy.subagentCount(total: list.total, running: running))
         .navigationBarTitleDisplayMode(.inline)
       }

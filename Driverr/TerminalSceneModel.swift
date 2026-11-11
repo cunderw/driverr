@@ -505,6 +505,7 @@ final class TerminalSceneModel {
   /// Closes the sub-agent list. Idempotent, like `hidePaneSheet()`. Asks for no keyboard: the
   /// list opens only over the chat, so no terminal is waiting for focus under it.
   func hideSubagentSheet() {
+    guard isShowingSubagentSheet else { return }
     isShowingSubagentSheet = false
   }
 
