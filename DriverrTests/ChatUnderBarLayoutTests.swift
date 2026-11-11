@@ -177,16 +177,17 @@ struct ChatUnderBarLayoutTests {
         "Nothing floats over a working pane's chat, got \(String(describing: capsules)).")
     }
 
-    // The top of the conversation, where a reader who scrolled all the way back rests.
-    collection.contentOffset = CGPoint(x: 0, y: -collection.adjustedContentInset.top)
-    collection.layoutIfNeeded()
+    // The top of the conversation, where a reader who scrolled all the way back rests:
+    // `contentOffset.y == -adjustedContentInset.top`. Worked out rather than scrolled to,
+    // because the place is `followingLatest` and the owner's reconcile writes the end back over
+    // any offset this test sets, which is the top only while the content fits.
     guard let first = collection.layoutAttributesForItem(at: IndexPath(item: 0, section: 0))
     else {
       Issue.record("No first item in the conversation.")
       withExtendedLifetime(window) {}
       return
     }
-    let firstTop = collection.convert(first.frame, to: window).minY
+    let firstTop = frame.minY + collection.adjustedContentInset.top + first.frame.minY
     let items = (collection.dataSource as? UICollectionViewDiffableDataSource<ChatSection, ChatItem>)?
       .snapshot().itemIdentifiers ?? []
     let provenance = """
