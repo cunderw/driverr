@@ -387,7 +387,8 @@ import UIKit
 
   // MARK: - A picked file
 
-  private static let unique = UUID(uuidString: "A1B2C3D4-0000-4000-8000-000000000000")!
+  private nonisolated static let unique =
+    UUID(uuidString: "A1B2C3D4-0000-4000-8000-000000000000")!
 
   /// A file goes up as it is, under its sanitised name behind the token, and the pane is
   /// handed the path the host answered with.
