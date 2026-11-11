@@ -57,14 +57,47 @@ public enum PaneAttachmentPlace: Equatable, Sendable {
   case machine(String)
 }
 
+/// What the pending attachment is: a photo, prepared down to PNG, or a file sent as it is.
+/// The row and its sentences follow it.
+public enum PaneAttachmentKind: Equatable, Sendable {
+  case image
+  /// `name` is the original, as the reader picked it, not the sanitised name it lands under.
+  case file(name: String)
+
+  /// The word the sentences use for it.
+  var noun: String {
+    switch self {
+    case .image: "image"
+    case .file: "file"
+    }
+  }
+}
+
+/// Which picker the composer's Attach menu asked for.
+public enum AttachmentSource: Equatable, Sendable {
+  case photos
+  case files
+}
+
 /// The row's strings.
 public enum PaneAttachmentCopy {
   /// The Attach control's accessibility label. The control itself is a glyph.
-  public static let attachButton = "Attach an image"
+  public static let attachButton = "Attach a photo or file"
+  /// The Attach menu's two items.
+  public static let photosItem = "Photos"
+  public static let filesItem = "Files"
   /// The Remove control's accessibility label, likewise.
   public static let removeButton = "Remove the attachment"
   /// What the row calls the thing it is showing, beside the thumbnail.
   public static let imageLabel = "Image"
+
+  /// ``imageLabel`` for an image, and a file's own name for a file.
+  public static func label(for kind: PaneAttachmentKind) -> String {
+    switch kind {
+    case .image: imageLabel
+    case .file(let name): name
+    }
+  }
   /// While the picked bytes are being read down to PNG.
   public static let preparing = "Preparing…"
   /// Once the host has it, for a pane on the SSH host. Not the path, a UUID file name that
@@ -128,32 +161,56 @@ public enum PaneAttachmentFailureCopy {
   /// The bytes could not be read as an image at all, before anything was sent.
   public static let unreadable = "That image could not be read."
 
+  /// ``unreadable`` for a kind. A file is unreadable when it is a folder or its read failed.
+  public static func unreadable(_ kind: PaneAttachmentKind) -> String {
+    "That \(kind.noun) could not be read."
+  }
+
+  /// A picked file over ``AttachmentLimit``'s number for its place, refused before it was
+  /// read. A machine's sentence is the same one its core's refusal gets.
+  public static func tooLarge(limit: Int, at place: PaneAttachmentPlace, kind: PaneAttachmentKind)
+    -> String
+  {
+    switch place {
+    case .host:
+      "The \(kind.noun) is over the \(PaneAttachmentCopy.size(limit)) limit for the host."
+    case .machine(let name):
+      "The \(kind.noun) is over the \(PaneAttachmentCopy.size(limit)) limit for \(name)."
+    }
+  }
+
   /// The upload landed and the hand-off did not. It says the host has the file, so the
   /// reader does not upload it again and leave two copies.
   public static let handOffFailed =
     "The host has the image, but the pane could not be told where it is."
 
-  /// ``handOffFailed``, naming the machine that has the image.
-  public static func handOffFailed(at place: PaneAttachmentPlace) -> String {
+  /// ``handOffFailed``, naming the machine that has the image or file.
+  public static func handOffFailed(
+    at place: PaneAttachmentPlace, kind: PaneAttachmentKind = .image
+  ) -> String {
     switch place {
-    case .host: handOffFailed
-    case .machine(let name): "The image is on \(name), but the pane could not be told where it is."
+    case .host:
+      "The host has the \(kind.noun), but the pane could not be told where it is."
+    case .machine(let name):
+      "The \(kind.noun) is on \(name), but the pane could not be told where it is."
     }
   }
 
   /// One upload failure at a place. A dropped channel and a short write are the SSH inbox
   /// command's alone, so they keep the host's sentence wherever they come from.
-  public static func sentence(for failure: ImageUploadFailure, at place: PaneAttachmentPlace)
-    -> String
-  {
-    guard case .machine(let name) = place else { return sentence(for: failure) }
+  public static func sentence(
+    for failure: ImageUploadFailure, at place: PaneAttachmentPlace,
+    kind: PaneAttachmentKind = .image
+  ) -> String {
+    guard case .machine(let name) = place else { return sentence(for: failure, kind: kind) }
+    let noun = kind.noun
     switch failure {
     case .channelDropped, .sizeMismatch:
-      return sentence(for: failure)
+      return sentence(for: failure, kind: kind)
     case .commandFailed:
-      return "Driverr could not save the image on \(name). Check its disk space and permissions."
+      return "Driverr could not save the \(noun) on \(name). Check its disk space and permissions."
     case .noHostPath:
-      return "The image was saved on \(name), but Driverr was not told where."
+      return "The \(noun) was saved on \(name), but Driverr was not told where."
     case .stalled:
       return "Nothing came back from \(name), so the upload was stopped. Try again."
     }
@@ -161,29 +218,36 @@ public enum PaneAttachmentFailureCopy {
 
   /// Any error at a place. For a machine, anything but an upload failure or a refusal is the
   /// one fallback: the core's own words name its terminal, not what to do.
-  public static func sentence(for error: any Error, at place: PaneAttachmentPlace) -> String {
-    guard case .machine(let name) = place else { return sentence(for: error) }
-    if let failure = error as? ImageUploadFailure { return sentence(for: failure, at: place) }
+  public static func sentence(
+    for error: any Error, at place: PaneAttachmentPlace, kind: PaneAttachmentKind = .image
+  ) -> String {
+    guard case .machine(let name) = place else { return sentence(for: error, kind: kind) }
+    if let failure = error as? ImageUploadFailure {
+      return sentence(for: failure, at: place, kind: kind)
+    }
     switch error as? MachineImageRefusal {
     case .unsupported?:
-      return "Driverr can't send images to \(name)."
+      return "Driverr can't send \(kind.noun)s to \(name)."
     case .tooLarge(let limit)?:
-      return "The image is over the \(PaneAttachmentCopy.size(limit)) limit for \(name)."
+      return tooLarge(limit: limit, at: place, kind: kind)
     case nil:
-      return "The image could not be sent to \(name)."
+      return "The \(kind.noun) could not be sent to \(name)."
     }
   }
 
-  public static func sentence(for failure: ImageUploadFailure) -> String {
+  public static func sentence(for failure: ImageUploadFailure, kind: PaneAttachmentKind = .image)
+    -> String
+  {
+    let noun = kind.noun
     switch failure {
     case .channelDropped:
       return "The connection to the host dropped mid-upload. Try again."
     case .commandFailed:
       return "The host refused the upload. Check its disk space and permissions."
     case .sizeMismatch:
-      return "The image arrived incomplete, so nothing was saved. Try again."
+      return "The \(noun) arrived incomplete, so nothing was saved. Try again."
     case .noHostPath:
-      return "The host saved the image but did not say where."
+      return "The host saved the \(noun) but did not say where."
     case .stalled:
       return "The host stopped answering, so the upload was stopped. Try again."
     }
@@ -191,11 +255,11 @@ public enum PaneAttachmentFailureCopy {
 
   /// Any other error, most often an `AppError` from a channel that could not open, as one
   /// sentence.
-  public static func sentence(for error: any Error) -> String {
-    if let failure = error as? ImageUploadFailure { return sentence(for: failure) }
+  public static func sentence(for error: any Error, kind: PaneAttachmentKind = .image) -> String {
+    if let failure = error as? ImageUploadFailure { return sentence(for: failure, kind: kind) }
     if let appError = error as? AppError, let described = appError.errorDescription {
       return described
     }
-    return "The image could not be sent to the host."
+    return "The \(kind.noun) could not be sent to the host."
   }
 }

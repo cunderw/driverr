@@ -44,23 +44,26 @@ struct KeyCommandTests {
   /// The order matches Escape's.
   @Test("⌘W closes what is up before it leaves the pane")
   func commandWClosesTheFrontmostThing() {
-    func commandW(sheet: Bool, settings: Bool, photos: Bool) -> KeyCommand {
+    func commandW(sheet: Bool, settings: Bool, photos: Bool, files: Bool = false) -> KeyCommand {
       KeyCommand.commandW(
-        isShowingPaneSheet: sheet, isShowingSettings: settings, isShowingPhotoPicker: photos
+        isShowingPaneSheet: sheet, isShowingSettings: settings, isShowingPhotoPicker: photos,
+        isShowingFileImporter: files
       )
     }
     #expect(commandW(sheet: false, settings: false, photos: false) == .leavePane)
     #expect(commandW(sheet: true, settings: false, photos: false) == .closeSwitcher)
     #expect(commandW(sheet: false, settings: true, photos: false) == .closeSettings)
     #expect(commandW(sheet: false, settings: false, photos: true) == .closePhotos)
-    #expect(commandW(sheet: true, settings: true, photos: true) == .closeSwitcher)
-    #expect(commandW(sheet: false, settings: true, photos: true) == .closeSettings)
+    #expect(commandW(sheet: false, settings: false, photos: false, files: true) == .closeFiles)
+    #expect(commandW(sheet: true, settings: true, photos: true, files: true) == .closeSwitcher)
+    #expect(commandW(sheet: false, settings: true, photos: true, files: true) == .closeSettings)
+    #expect(commandW(sheet: false, settings: false, photos: true, files: true) == .closePhotos)
   }
 
   @Test("every ⌘W title is in one exclusive group")
   func commandWTitlesShareAGroup() {
     let group: Set<KeyCommand> = [
-      .leavePane, .closeSwitcher, .closeSettings, .closePhotos, .leaveHost, .close,
+      .leavePane, .closeSwitcher, .closeSettings, .closePhotos, .closeFiles, .leaveHost, .close,
     ]
     #expect(KeyCommand.exclusiveGroups.contains(group))
   }

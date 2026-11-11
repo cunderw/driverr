@@ -275,4 +275,83 @@ import Testing
     #expect(Set(sentences).count == sentences.count)
     #expect(sentences.allSatisfy { $0.contains("box") })
   }
+
+  // MARK: - A file
+
+  private let file = PaneAttachmentKind.file(name: "build log.txt")
+
+  @Test func theAttachControlOffersPhotosAndFiles() {
+    #expect(PaneAttachmentCopy.attachButton == "Attach a photo or file")
+    #expect(PaneAttachmentCopy.photosItem == "Photos")
+    #expect(PaneAttachmentCopy.filesItem == "Files")
+  }
+
+  /// The row names a file by what the reader picked, not by the name it lands under.
+  @Test func aFileRowIsLabelledWithTheFilesOwnName() {
+    #expect(PaneAttachmentCopy.label(for: file) == "build log.txt")
+    #expect(PaneAttachmentCopy.label(for: .image) == PaneAttachmentCopy.imageLabel)
+  }
+
+  @Test func anImagesSentencesAreUnchangedWhenTheKindIsSaid() {
+    #expect(PaneAttachmentFailureCopy.unreadable(.image) == PaneAttachmentFailureCopy.unreadable)
+    #expect(
+      PaneAttachmentFailureCopy.handOffFailed(at: .host, kind: .image)
+        == PaneAttachmentFailureCopy.handOffFailed)
+    #expect(
+      PaneAttachmentFailureCopy.sentence(for: MachineImageRefusal.unsupported, at: .machine("studio"))
+        == "Driverr can't send images to studio.")
+  }
+
+  @Test func aFilesSentencesSayFile() {
+    #expect(PaneAttachmentFailureCopy.unreadable(file) == "That file could not be read.")
+    #expect(
+      PaneAttachmentFailureCopy.handOffFailed(at: .host, kind: file)
+        == "The host has the file, but the pane could not be told where it is.")
+    #expect(
+      PaneAttachmentFailureCopy.handOffFailed(at: .machine("studio"), kind: file)
+        == "The file is on studio, but the pane could not be told where it is.")
+    #expect(
+      PaneAttachmentFailureCopy.sentence(for: ImageUploadFailure.noHostPath, kind: file)
+        == "The host saved the file but did not say where.")
+    #expect(
+      PaneAttachmentFailureCopy.sentence(
+        for: ImageUploadFailure.sizeMismatch(expectedBytes: 4), kind: file)
+        == "The file arrived incomplete, so nothing was saved. Try again.")
+    #expect(
+      PaneAttachmentFailureCopy.sentence(for: URLError(.unknown), kind: file)
+        == "The file could not be sent to the host.")
+  }
+
+  @Test func aFilesMachineSentencesSayFile() {
+    let studio = PaneAttachmentPlace.machine("studio")
+    #expect(
+      PaneAttachmentFailureCopy.sentence(for: MachineImageRefusal.unsupported, at: studio, kind: file)
+        == "Driverr can't send files to studio.")
+    #expect(
+      PaneAttachmentFailureCopy.sentence(
+        for: MachineImageRefusal.tooLarge(limit: AttachmentLimit.machine), at: studio, kind: file)
+        == "The file is over the 8.4 MB limit for studio.")
+    #expect(
+      PaneAttachmentFailureCopy.sentence(for: URLError(.unknown), at: studio, kind: file)
+        == "The file could not be sent to studio.")
+    #expect(
+      PaneAttachmentFailureCopy.sentence(
+        for: ImageUploadFailure.commandFailed(exitStatus: 1, standardError: ""), at: studio,
+        kind: file)
+        == "Driverr could not save the file on studio. Check its disk space and permissions.")
+    #expect(
+      PaneAttachmentFailureCopy.sentence(for: ImageUploadFailure.noHostPath, at: studio, kind: file)
+        == "The file was saved on studio, but Driverr was not told where.")
+  }
+
+  /// Refused before the read, with the limit for where the file was going.
+  @Test func aFileOverTheLimitNamesTheLimitAndThePlace() {
+    #expect(
+      PaneAttachmentFailureCopy.tooLarge(limit: AttachmentLimit.host, at: .host, kind: file)
+        == "The file is over the 50.0 MB limit for the host.")
+    #expect(
+      PaneAttachmentFailureCopy.tooLarge(
+        limit: AttachmentLimit.machine, at: .machine("studio"), kind: file)
+        == "The file is over the 8.4 MB limit for studio.")
+  }
 }
