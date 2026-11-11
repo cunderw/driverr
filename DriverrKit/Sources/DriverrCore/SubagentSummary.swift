@@ -55,7 +55,7 @@ public struct SubagentSummary: Identifiable, Hashable, Sendable {
     self.writtenAt = writtenAt
   }
 
-  /// What a row and the back bar call it: the name, else the type, else the description.
+  /// What a row and the sub-agent's chat call it: the name, else the type, else the description.
   public var title: String {
     name ?? agentType ?? description ?? id
   }

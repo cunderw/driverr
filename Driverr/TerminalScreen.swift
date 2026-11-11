@@ -145,7 +145,12 @@ struct TerminalScreen: View {
               // An `HStack`, for the reason below.
               HStack(spacing: 4) {
                 Image(systemName: "chevron.backward")
+                // One line, cut at the tail, and capped: the bar lays items out at their ideal
+                // width, so an uncapped long pane title pushed the Panes button off the bar.
                 Text(scene.title)
+                  .lineLimit(1)
+                  .truncationMode(.tail)
+                  .frame(maxWidth: 260, alignment: .leading)
               }
             }
             // Styled exactly as `terminal.back`: the same control, one level down.

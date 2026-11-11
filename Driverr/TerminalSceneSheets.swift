@@ -1,5 +1,6 @@
 import DriverrCore
 import SwiftUI
+import UIKit
 
 /// The pane scene's sheets, the pane switcher, the chat's sub-agent list and Settings,
 /// attached once at `ContentView`'s root for both routes.
@@ -93,6 +94,12 @@ struct TerminalSceneSheets: ViewModifier {
     guard let picked = pickedSubagent else { return }
     pickedSubagent = nil
     guard let chatModel, chatModel.pane.id == picked.paneID else { return }
+    // Keyboard down before the phone pushes: Back restores the composer's focus, and the pane
+    // screen does not lay out for a keyboard that rises during the pop (composer hidden).
+    if route == .stack {
+      UIApplication.shared.sendAction(
+        #selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+    }
     chatModel.openSubagent(link: picked.link, title: picked.title)
   }
 

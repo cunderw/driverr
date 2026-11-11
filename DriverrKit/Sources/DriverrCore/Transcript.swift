@@ -359,7 +359,7 @@ public struct TranscriptTurn: Identifiable, Hashable, Sendable {
         agentID: agentID)
     }
 
-    /// The back bar's title for this spawn's sub-agent: the spawn's name, or its description
+    /// The title of this spawn's sub-agent's chat: the spawn's name, or its description
     /// when `sender` is empty.
     public var subagentTitle: String {
       sender.isEmpty ? (summary ?? "") : sender

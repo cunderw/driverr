@@ -55,10 +55,11 @@ This file holds the rules and traps on top of that.
   interaction waits out a 60 s timeout. Do not make cursor style a setting.
 - **The phone authors its own `NavigationStack`, and the pane scene is pushed onto it.**
   `ContentView` branches at its root: regular width is the `NavigationSplitView`, compact
-  width is a two-level stack. **Both levels are one typed path**, `PhoneStackPath.Route`
-  (`.host(id)` then `.pane`), derived from `selectedHostID` and
-  `TerminalPresenter.request` and resolved by one `navigationDestination(for:)` at the
-  stack's root. The rule is in `DriverrCore`, so `swift test` asserts it.
+  width is a three-level stack. **Every level is one typed path**, `PhoneStackPath.Route`
+  (`.host(id)`, then `.pane`, then `.subagent`), derived from `selectedHostID`,
+  `TerminalPresenter.request` and whether the scene's pane has a sub-agent open, and
+  resolved by one `navigationDestination(for:)` at the stack's root. The rule is in
+  `DriverrCore`, so `swift test` asserts it.
   - Do not hang the pane level off a `navigationDestination(isPresented:)` inside the host
     screen. It loses the pane on a cross-host pick from the pane switcher, because the
     destination is recreated with `isPresented` already `true` and SwiftUI pushes nothing.
@@ -66,6 +67,11 @@ This file holds the rules and traps on top of that.
   - **On iPad, do not push from `HostDetailView`.** A second push from a split view's
     detail column pops back to the host list instead of navigating.
   - `ContentView.phonePath`'s setter must not guard on the route; its doc comment says why.
+  - A sub-agent is a push on the phone (`SubagentChatScreen`, system back button) and in
+    place on iPad, where the detail column cannot push and `pane.subagent.back` returns to
+    the pane's chat. Closing it on a scene's end belongs to
+    `TerminalPresenter.endPresentation`, never to `TerminalScreen`'s `onDisappear`, which the
+    push fires.
   - The pane screen's bar draws no title and no subtitle, by the owner's choice: floating
     glass buttons over the content, as in Claude's iOS app. `navigationTitle` stays set for
     VoiceOver, the back button's long-press menu and the multitasking switcher, and is

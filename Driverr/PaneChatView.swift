@@ -667,7 +667,7 @@ struct PaneChatView: View {
   /// The gutter every row kind shares. See `ChatColumn.gutter(forColumnWidth:)`.
   ///
   /// Turn cards and the provenance row get it from their section. Views that are not cells,
-  /// such as the floating capsules and the back bar, must ask for it here, or they draw inside
+  /// such as the floating capsules, must ask for it here, or they draw inside
   /// the edge the cards and the composer share. `contentWidthEstimate` is 0 until measured, so
   /// the phone's answer applies until then.
   private var chatGutter: CGFloat {
@@ -787,7 +787,16 @@ struct PaneChatView: View {
       onOpenImage: onOpenImage,
       // Only the pane's own chat opens one: a sub-agent's spawn lines carry no link.
       onOpenSubagent: isShowingSubagent
-        ? nil : { link, title in model.openSubagent(link: link, title: title) },
+        ? nil
+        : { link, title in
+          // Keyboard down before the phone pushes: Back restores the composer's focus, and the
+          // pane screen does not lay out for a keyboard that rises during the pop.
+          if !followsSubagents {
+            UIApplication.shared.sendAction(
+              #selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+          }
+          model.openSubagent(link: link, title: title)
+        },
       estimatedContentWidth: contentWidthEstimate,
       render: shown.render[turn.id]
     )

@@ -225,6 +225,8 @@ struct AppEnvironment {
         if isNothingBlocked {
           return FakeControl(tree: FakeControl.treeWithoutTheBlockedPane)
         }
+        // The blocked pane with a title too long for a bar. See `isLongPaneTitle`.
+        if isLongPaneTitle { return FakeControl(tree: FakeControl.treeWithALongPaneTitle) }
         // One agent failed and nothing blocked. See `isAgentError`.
         if isAgentError { return FakeControl(tree: FakeControl.treeWithAFailedAgent) }
         // A tree that does not move: a status change is a refresh trigger, so a scripted flip
@@ -721,6 +723,12 @@ struct AppEnvironment {
   /// `w1:p2`.
   static var isOneBlocked: Bool {
     ProcessInfo.processInfo.arguments.contains("-uiTestingOneBlocked")
+  }
+
+  /// Whether this launch serves `FakeControl.treeWithALongPaneTitle`, for a look at a bar
+  /// control that names the pane.
+  static var isLongPaneTitle: Bool {
+    ProcessInfo.processInfo.arguments.contains("-uiTestingLongPaneTitle")
   }
 
   /// Whether this launch's herdr session holds nothing blocked, and keeps it that way
@@ -1274,6 +1282,7 @@ struct AppEnvironment {
     if isTranscriptOrchestrator { return orchestratorTranscript }
     if isTranscriptTaskState { return taskStateTranscript }
     if isTranscriptManySubagents { return manySubagentTranscript }
+    if isTranscriptLongSubagent { return longSubagentTranscript }
     if isTranscriptSubagents { return subagentTranscript }
     if isTranscriptUsageLimited { return usageLimitedTranscript }
     if isTranscriptUsageLimitReset { return usageLimitResetTranscript }
@@ -2404,6 +2413,39 @@ struct AppEnvironment {
           spawnedSecondsAgo: 10_100 + Double(index) * 60
         )
       })
+
+  /// `subagentTranscript` with analyst-7's conversation long enough to scroll, so a look can
+  /// show the sub-agent's rows passing under the bar's glass.
+  static let longSubagentTranscript = subagentTranscript.serving(
+    [
+      FakeTranscriptHost.SubagentFixture(
+        agentID: "aanalyst7",
+        toolUseID: "toolu_1_0",
+        name: "analyst-7",
+        secondsAgo: 1200,
+        prompt: "Plan the config loader. Read the loader and its tests, then return a short plan.",
+        turns: (0..<12).flatMap { index -> [FakeTranscriptHost.Turn] in
+          [
+            .init(
+              speaker: .assistant,
+              text: "Step \(index + 1): the loader reads each key on its own and stops at the "
+                + "first one missing, so a config with three gaps takes three runs to fix.",
+              secondsAgo: 1650 - Double(index) * 30),
+            .init(
+              speaker: .tools([ToolCall(name: "Read", target: "src/config/part\(index + 1).rs")]),
+              secondsAgo: 1640 - Double(index) * 30),
+          ]
+        },
+        description: "Plan the config loader",
+        agentType: "analyst",
+        spawnedSecondsAgo: 1700
+      )
+    ] + subagentTranscript.subagents.filter { $0.agentID != "aanalyst7" })
+
+  /// Whether this launch should serve `longSubagentTranscript`.
+  static var isTranscriptLongSubagent: Bool {
+    ProcessInfo.processInfo.arguments.contains("-uiTestingLongSubagent")
+  }
 
   /// Whether this launch should serve the session with sixty sub-agents.
   static var isTranscriptManySubagents: Bool {

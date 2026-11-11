@@ -215,7 +215,7 @@ final class PaneTranscriptModel {
   /// `subagents` instead.
   struct SubagentTarget: Equatable {
     let link: SubagentLink
-    /// What the spawn line called it, for the back bar.
+    /// What the spawn line called it, for the sub-agent's screen title.
     let title: String
     /// The expanded project directory the pane's file is in, read off the file's path.
     let directory: String

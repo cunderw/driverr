@@ -64,7 +64,7 @@ struct SubagentChatCopyTests {
     #expect(!TranscriptAbsence.subagentFileNotFound.isUnreadableAgentKind)
   }
 
-  @Test("the back bar names the spawn, or its description when it has no name")
+  @Test("the sub-agent's title names the spawn, or its description when it has no name")
   func subagentTitle() {
     let named = TranscriptTurn.AgentEvent(
       sender: "analyst-7", summary: "Plan it", body: "", kind: .spawned)

@@ -2316,4 +2316,40 @@ struct PaneSubagentModelTests {
     #expect(log.commands.contains { $0.contains("agent-aanalyst7.jsonl") })
     #expect(model.lastAssistantMessage == "The pane's own last words.")
   }
+
+  /// The phone pushes one level for a sub-agent (`PhoneStackPath.Route.subagent`), so a second
+  /// pick, which the iPad's sub-agent list still offers, replaces the one open.
+  @Test("opening a second sub-agent replaces the first, so at most one is open")
+  func aSecondOpenReplacesTheFirst() async {
+    let model = await model()
+    let first = await open(.toolUse(id: "toolu_1_0"), on: model)
+    let second = await open(.teammate(name: "verifier-7"), on: model)
+    #expect(model.subagents.depth == 1)
+    #expect(second !== first)
+    #expect(model.shown === second)
+    #expect(model.shown.source?.file.name == "agent-averifier7.jsonl")
+  }
+
+  /// On the phone the pane's chat stays under the pushed sub-agent, whose own screen watches
+  /// the sub-agent. The pane's watcher must not probe it a second time.
+  @Test("a watcher that does not follow sub-agents probes the pane's file, not the open one")
+  func aNonFollowingWatcherProbesThePane() async throws {
+    let grown = Switch()
+    let log = SubagentCommandLog()
+    let model = await model(grown, log: log)
+    _ = await open(.toolUse(id: "toolu_1_0"), on: model)
+
+    grown.turnOn()
+    log.clear()
+    let watcher = Task { await model.watch(every: .milliseconds(10), followsSubagents: false) }
+    let deadline = Date().addingTimeInterval(5)
+    while !log.commands.contains(where: { $0.contains("\(Self.sessionID).jsonl") }),
+      Date() < deadline
+    {
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    watcher.cancel()
+    #expect(log.commands.contains { $0.contains("\(Self.sessionID).jsonl") })
+    #expect(!log.commands.contains { $0.contains("agent-aanalyst7.jsonl") })
+  }
 }

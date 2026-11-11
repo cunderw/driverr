@@ -386,7 +386,7 @@ public struct TranscriptNotice: Equatable, Sendable {
         symbolName: "desktopcomputer"
       )
     case .subagentFileNotFound:
-      // No `Show the Screen`: the pane's screen is the parent's. The back bar is the exit.
+      // No `Show the Screen`: the pane's screen is the parent's. Back is the exit.
       self.init(
         title: "No file for this agent yet",
         message:
