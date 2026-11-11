@@ -3,7 +3,8 @@ import Foundation
 import Observation
 import UIKit
 
-/// The one image a pane's composer holds, from Photos until the pane's computer has it.
+/// The one image or file a pane's composer holds, from the picker until the pane's computer
+/// has it.
 ///
 /// One at a time, per pane. `PaneComposerModel` holds it and is cached per pane
 /// (`PaneComposerCache`), so an attachment survives a switch to the Terminal surface, as a
@@ -31,6 +32,9 @@ final class PaneAttachmentModel {
 
   /// Whether there is anything to show.
   var isAttached: Bool { phase != nil }
+
+  /// What is attached, which the row's glyph, label and sentences follow.
+  private(set) var kind: PaneAttachmentKind = .image
 
   /// Where the upload goes, which the row's sentences name.
   let place: PaneAttachmentPlace
@@ -61,18 +65,24 @@ final class PaneAttachmentModel {
   /// `IMG_0042.png` from two phones would be one file.
   @ObservationIgnored private let makeFileName: @Sendable () -> String
 
+  /// The token a picked file's name lands behind, for the same reason. See
+  /// `AttachmentFileName.remote(original:unique:)`.
+  @ObservationIgnored private let makeUnique: @Sendable () -> UUID
+
   init(
     place: PaneAttachmentPlace = .host,
     makeUpload: @escaping @MainActor (Data, String) -> (any ImageUploading)?,
     handOff: @escaping @MainActor (String) async throws -> Void = { _ in },
     makeFileName: @escaping @Sendable () -> String = {
       UUID().uuidString.lowercased() + ".png"
-    }
+    },
+    makeUnique: @escaping @Sendable () -> UUID = { UUID() }
   ) {
     self.place = place
     self.makeUpload = makeUpload
     self.handOff = handOff
     self.makeFileName = makeFileName
+    self.makeUnique = makeUnique
   }
 
   /// Takes the bytes Photos handed over, prepares them, and starts the upload.
@@ -82,6 +92,7 @@ final class PaneAttachmentModel {
     cancelWork()
     generation += 1
     let run = generation
+    kind = .image
     phase = .preparing
     thumbnail = nil
     byteCount = 0
@@ -102,8 +113,40 @@ final class PaneAttachmentModel {
       // Prepared, and nothing on the wire yet. `send` still has to get an uploader, which is
       // `nil` when the link is down.
       self.phase = .ready
-      await self.send(prepared, run: run)
+      await self.send(prepared, fileName: self.makeFileName(), run: run)
     }
+  }
+
+  /// Takes a file the document picker handed over, already read, and starts the upload.
+  ///
+  /// The bytes go as they are: no downscale, and no thumbnail, so the row draws a glyph. It
+  /// lands under `AttachmentFileName.remote`, and the row shows `name` as picked. Replaces
+  /// whatever was staged, as ``attach(_:)`` does.
+  func attach(file bytes: Data, name: String) {
+    cancelWork()
+    generation += 1
+    let run = generation
+    kind = .file(name: name)
+    thumbnail = nil
+    byteCount = bytes.count
+    phase = .ready
+    let fileName = AttachmentFileName.remote(original: name, unique: makeUnique())
+    work = Task { [weak self] in
+      await self?.send(bytes, fileName: fileName, run: run)
+    }
+  }
+
+  /// Shows a row that failed before anything was sent, such as a file too large to read.
+  ///
+  /// Replaces whatever was staged, as a new pick does, so the reader sees why this one did not
+  /// attach. Remove clears it.
+  func fail(_ sentence: String, kind: PaneAttachmentKind) {
+    cancelWork()
+    generation += 1
+    self.kind = kind
+    thumbnail = nil
+    byteCount = 0
+    phase = .failed(sentence)
   }
 
   /// Discards the pending image, cancelling an upload in flight.
@@ -115,16 +158,17 @@ final class PaneAttachmentModel {
     phase = nil
     thumbnail = nil
     byteCount = 0
+    kind = .image
   }
 
-  private func send(_ bytes: Data, run: Int) async {
-    guard let uploader = makeUpload(bytes, makeFileName()) else {
+  private func send(_ bytes: Data, fileName: String, run: Int) async {
+    guard let uploader = makeUpload(bytes, fileName) else {
       // The host's sentence wherever the pane is: no link reaches a machine either.
       settle(
         run,
         .failed(
           PaneAttachmentFailureCopy.sentence(
-            for: AppError.notConnected(host: "this host"), at: .host)))
+            for: AppError.notConnected(host: "this host"), at: .host, kind: kind)))
       return
     }
 
@@ -152,7 +196,7 @@ final class PaneAttachmentModel {
       watch.cancel()
     } catch {
       watch.cancel()
-      settle(run, .failed(PaneAttachmentFailureCopy.sentence(for: error, at: place)))
+      settle(run, .failed(PaneAttachmentFailureCopy.sentence(for: error, at: place, kind: kind)))
     }
   }
 
@@ -169,7 +213,7 @@ final class PaneAttachmentModel {
     } catch {
       // Not the error's own text: what matters is that the image has already landed, on the
       // host or the pane's machine, so picking it again sends it twice.
-      settle(run, .failed(PaneAttachmentFailureCopy.handOffFailed(at: place)))
+      settle(run, .failed(PaneAttachmentFailureCopy.handOffFailed(at: place, kind: kind)))
       return
     }
     settle(run, .handedOver)

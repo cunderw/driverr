@@ -26,7 +26,7 @@ struct PaneComposerPillLayoutTests {
       model: composer,
       header: PaneComposerHeader(pane: PreviewSupport.agentPane),
       onLayoutProbe: { height = Double($0.height) },
-      onAttach: {}
+      onAttach: { _ in }
     )
     .environment(\.dynamicTypeSize, size)
     let window = HostedProbe.window(bar)

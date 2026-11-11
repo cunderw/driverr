@@ -420,6 +420,59 @@ final class TerminalSceneModel {
     model.composers?.model(for: pane).attachment.attach(data)
   }
 
+  /// Whether the system Files picker is up. Attached at the root beside the Photos picker,
+  /// for the same reason.
+  private(set) var isShowingFileImporter = false
+
+  /// The composer asked for a file.
+  ///
+  /// The document picker runs out of process too. A launch with `-uiTestingPickedFile` skips
+  /// to a file the app wrote itself, and everything after the pick runs on it, the read
+  /// included.
+  func requestFileAttachment() {
+    if let seeded = AppEnvironment.seededPickedFile {
+      attachPickedFile(url: seeded)
+      return
+    }
+    isShowingFileImporter = true
+  }
+
+  /// The Files picker closed, chosen from or not.
+  func hideFileImporter() {
+    isShowingFileImporter = false
+  }
+
+  /// Reads a picked file and routes it to the current pane's composer, as
+  /// ``attachPickedImage(_:)`` does an image.
+  ///
+  /// The read is detached, because a file can be tens of megabytes and this type is
+  /// `@MainActor`. The limit is the one for where the file is going, checked before the read.
+  /// A file that cannot be sent still gets a row, saying why, through the upload's own inline
+  /// failure.
+  func attachPickedFile(url: URL) {
+    isShowingFileImporter = false
+    guard let pane = currentPane, let attachment = model.composers?.model(for: pane).attachment
+    else { return }
+    let place = attachment.place
+    let limit = AttachmentLimit.limit(for: place)
+    let name = url.lastPathComponent
+    let kind = PaneAttachmentKind.file(name: name)
+    Task {
+      let outcome = await Task.detached(priority: .userInitiated) {
+        PickedFileReader.read(url: url, limit: limit)
+      }.value
+      switch outcome {
+      case .contents(let bytes):
+        attachment.attach(file: bytes, name: name)
+      case .unreadable:
+        attachment.fail(PaneAttachmentFailureCopy.unreadable(kind), kind: kind)
+      case .tooLarge(let limit):
+        attachment.fail(
+          PaneAttachmentFailureCopy.tooLarge(limit: limit, at: place, kind: kind), kind: kind)
+      }
+    }
+  }
+
   /// Built when the pane sheet first opens, so nothing polls for a sheet nobody asked for.
   /// Kept afterwards, because discarding it mid-dismissal pulls the tiles from under the
   /// animation.

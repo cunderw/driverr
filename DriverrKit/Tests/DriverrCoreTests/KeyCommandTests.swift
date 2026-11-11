@@ -8,9 +8,9 @@ import Testing
 struct KeyCommandTests {
   @Test("the catalogue holds every title of the eighteen bindings")
   func holdsEveryBinding() {
-    // Add Host, Settings, nine places, next, previous, the surface key's two titles, ⌘W's six
+    // Add Host, Settings, nine places, next, previous, the surface key's two titles, ⌘W's seven
     // titles, Escape and Send. The two ⌘, buttons are one command.
-    #expect(KeyCommand.all.count == 23)
+    #expect(KeyCommand.all.count == 24)
     #expect(Set(KeyCommand.all).count == KeyCommand.all.count)
   }
 

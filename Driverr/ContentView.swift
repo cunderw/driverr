@@ -3,6 +3,7 @@ import DriverrTerm
 import PhotosUI
 import SwiftUI
 import UIKit
+import UniformTypeIdentifiers
 
 /// The composer's way into Photos, attached at `ContentView`'s root.
 ///
@@ -39,6 +40,37 @@ private struct ComposerPhotosPicker: ViewModifier {
           guard let data = try? await picked.loadTransferable(type: Data.self) else { return }
           scene.attachPickedImage(data)
         }
+      }
+  }
+}
+
+/// The composer's way into Files, attached at `ContentView`'s root beside
+/// `ComposerPhotosPicker`, for the same reasons: the document picker presents, and the bar
+/// may be in a column where nothing may present. The presenter is passed in.
+private struct ComposerFileImporter: ViewModifier {
+  let presenter: TerminalPresenter
+
+  func body(content: Content) -> some View {
+    content
+      .fileImporter(
+        isPresented: Binding(
+          get: { presenter.request?.scene.isShowingFileImporter ?? false },
+          set: { isShowing in
+            guard !isShowing else { return }
+            presenter.request?.scene.hideFileImporter()
+          }
+        ),
+        // `.data`, so any file and no folder. A package such as a `.pages` document is not
+        // data and is not offered.
+        allowedContentTypes: [.data],
+        allowsMultipleSelection: false
+      ) { result in
+        // A failure here is the picker's own and says nothing a reader can act on, so it
+        // closes like a cancel.
+        guard case .success(let urls) = result, let url = urls.first,
+          let scene = presenter.request?.scene
+        else { return }
+        scene.attachPickedFile(url: url)
       }
   }
 }
@@ -285,6 +317,8 @@ struct ContentView: View {
     .modifier(
       ComposerPhotosPicker(presenter: terminalPresenter, item: $pickedImageItem)
     )
+    // And its Files picker. See `ComposerFileImporter`.
+    .modifier(ComposerFileImporter(presenter: terminalPresenter))
     // Returning to the foreground is when Driverr learns what backgrounding cost: a link that
     // died while suspended announced nothing. Nothing is torn down on the way out, because a
     // short suspension usually leaves the connection alive.
@@ -418,7 +452,7 @@ struct ContentView: View {
     let isRootPresenting =
       isShowingSettings || isShowingKeys || hostForm != nil || hostPendingDeletion != nil
       || keySheet != nil || scene?.isShowingPaneSheet == true || scene?.isShowingSettings == true
-      || scene?.isShowingPhotoPicker == true
+      || scene?.isShowingPhotoPicker == true || scene?.isShowingFileImporter == true
     guard let offer = connections.pendingHookOffer(isRootPresenting: isRootPresenting) else { return nil }
     return HookSheetRequest(
       hostID: offer.model.host.id,

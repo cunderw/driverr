@@ -930,7 +930,7 @@ extension PaneComposerUITests {
   /// `PaneAttachmentCopy`'s.
   func testAttachingShowsARowThatReportsBytesSent() {
     let app = composerWithAPickedImage()
-    require(app, "composer.attach", "Expected an attach control").tap()
+    pickFromTheAttachMenu(app, "composer.attach.photos")
 
     // Polled straight off the tap. Each element lookup costs a tree snapshot, and lookups
     // before this loop can outlast the upload.
@@ -958,7 +958,7 @@ extension PaneComposerUITests {
   /// type over what the reader was writing.
   func testTheRowSettlesOnceTheHostHasTheImage() {
     let app = composerWithAPickedImage()
-    require(app, "composer.attach", "Expected an attach control").tap()
+    pickFromTheAttachMenu(app, "composer.attach.photos")
 
     let progress = require(app, "composer.attachment.progress", "Expected the row")
     let deadline = Date().addingTimeInterval(15)
@@ -993,7 +993,7 @@ extension PaneComposerUITests {
     field.tap()
     field.typeText("look")
 
-    require(app, "composer.attach", "Expected an attach control").tap()
+    pickFromTheAttachMenu(app, "composer.attach.photos")
 
     let progress = require(app, "composer.attachment.progress", "Expected the row")
     let deadline = Date().addingTimeInterval(20)
@@ -1024,6 +1024,40 @@ extension PaneComposerUITests {
   /// `DriverrKit`.
   private static let handedOverNotice = "Added to the pane’s prompt"
 
+  /// Opens the Attach menu and picks `item` from it: `composer.attach.photos` or
+  /// `composer.attach.files`.
+  private func pickFromTheAttachMenu(_ app: XCUIApplication, _ item: String) {
+    require(app, "composer.attach", "Expected an attach control").tap()
+    require(app, item, "Expected \(item) in the attach menu").tap()
+  }
+
+  /// Files hands a picked file to the same row and the same upload, and the row names it.
+  ///
+  /// `-uiTestingPickedFile` stands in for the document picker, which runs out of process. The
+  /// app writes "build log.txt" itself, so the read and the remote name run on a real file.
+  func testAPickedFileGetsARowThatSettlesOnceThePaneHasIt() {
+    let app = composerWithAPickedImage(["-uiTestingPickedFile"])
+    pickFromTheAttachMenu(app, "composer.attach.files")
+
+    let row = require(app, "composer.attachment.row", "Expected a row for the picked file")
+    XCTAssertEqual(
+      row.label, "build log.txt",
+      "A file's row is labelled with the name it was picked as.\nTree was:\n"
+        + app.debugDescription
+    )
+    let progress = require(app, "composer.attachment.progress", "Expected the row's status")
+    let deadline = Date().addingTimeInterval(15)
+    while Date() < deadline && !progress.label.contains(Self.handedOverNotice) {
+      usleep(150_000)
+    }
+    XCTAssertTrue(
+      progress.label.contains(Self.handedOverNotice),
+      "Expected the row to report the hand-off, got '\(progress.label)'.\nTree was:\n"
+        + app.debugDescription
+    )
+    requireGone(app, "composer.attachment.failure", "A readable file must not fail")
+  }
+
   /// Remove clears the row and stops the running upload.
   ///
   /// `PaneAttachmentModel` ignores phases from an abandoned run, so the row clears even if
@@ -1034,7 +1068,7 @@ extension PaneComposerUITests {
   /// live transfer despite the lookups before it.
   func testRemovingTheAttachmentClearsTheRowAndStopsTheUpload() {
     let app = composerWithAPickedImage(["-uiTestingStalledUpload"])
-    require(app, "composer.attach", "Expected an attach control").tap()
+    pickFromTheAttachMenu(app, "composer.attach.photos")
     require(app, "composer.attachment.row", "Expected a row for the pending image")
 
     // Under way, not only staged.
@@ -1078,7 +1112,7 @@ extension PaneComposerUITests {
   /// still the way out. The sentence is `PaneAttachmentFailureCopy`.
   func testAFailedUploadSaysSoInlineAndKeepsTheRow() {
     let app = composerWithAPickedImage(["-uiTestingUploadFails"])
-    require(app, "composer.attach", "Expected an attach control").tap()
+    pickFromTheAttachMenu(app, "composer.attach.photos")
 
     let failure = require(
       app,
