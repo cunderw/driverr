@@ -160,6 +160,11 @@ struct PaneChatView: View {
   /// `onScrollGeometry`. See `ChatPlaceProbe`.
   var onPlaceChange: ((ChatPlaceProbe) -> Void)?
 
+  /// Reports whether this view is drawing a conversation, the one state that reaches under the
+  /// bar and the home indicator. `TerminalScreen.slotClip` opens the surfaces' clip for it and
+  /// for nothing else. See `drawsConversation`.
+  var onDrawsConversation: ((Bool) -> Void)?
+
   /// VoiceOver focus, moved to the newest turn when the transcript first renders, where a
   /// sighted reader's eye lands anyway.
   @AccessibilityFocusState private var focusedTurnID: TranscriptTurn.ID?
@@ -217,6 +222,14 @@ struct PaneChatView: View {
       return resolution.isUnreadableAgentKind
     }
     return false
+  }
+
+  /// Whether a conversation is on screen: a readable transcript, not the captured screen, a
+  /// notice or the file picker. Those are SwiftUI scroll views that draw into the safe area on
+  /// their own, so the surfaces' clip must stay closed for them.
+  private var drawsConversation: Bool {
+    guard !showsCapturedScreen, case .ready = shown.state else { return false }
+    return true
   }
 
   /// Whether the reader has taken the exit to the pane's captured screen.
@@ -320,6 +333,7 @@ struct PaneChatView: View {
       }
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
+    .onChange(of: drawsConversation, initial: true) { _, draws in onDrawsConversation?(draws) }
     // Feeds `contentWidthEstimate`.
     .onGeometryChange(for: CGFloat.self, of: \.size.width) { contentWidthEstimate = $0 }
     // Not `systemBackground`, which is pure black in dark, where a translucent card reads as a

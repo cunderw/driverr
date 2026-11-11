@@ -1153,6 +1153,16 @@ struct ChatCollectionViewTests {
       """
     #expect(abs(contentTop - ChatTopFade.height) < 0.5, "\(below)")
 
+    // The fixture hands in no provenance, as a sub-agent's chat does, so the conversation
+    // holds no provenance row at all, not one scrolled out of sight.
+    let items =
+      (collection.dataSource as? UICollectionViewDiffableDataSource<ChatSection, ChatItem>)?
+      .snapshot().itemIdentifiers ?? []
+    #expect(!items.isEmpty, "No items under the fixture.")
+    #expect(
+      !items.contains(.provenance),
+      "With no provenance handed in, the items still hold one: \(items.prefix(3))…")
+
     withExtendedLifetime(window) {}
   }
 
