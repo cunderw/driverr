@@ -2386,7 +2386,9 @@ final class PaneChatUITests: XCTestCase {
     }
   }
 
-  /// Scrolling back through the conversation in portrait keeps the keyboard up.
+  /// Scrolling back through the conversation in portrait keeps the keyboard up, as long as the
+  /// finger stays off the composer. A drag onto the composer's card is a dismissal
+  /// (`testDraggingOntoTheComposerTakesTheKeyboardDown`).
   ///
   /// Scroll-to-dismiss exists so a landscape reader can bring back the full composer and the
   /// rows the collapse hides. In portrait nothing collapses, and dismissing would take the
