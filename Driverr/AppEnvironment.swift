@@ -2923,11 +2923,12 @@ struct AppEnvironment {
   /// device ends on the same lines with no blank rows under them. It ends on a question, which
   /// is what the app is about.
   ///
-  /// **The lines 15, 26, 31 and 70 from the end (the last line is 0) are blank.** The top row
+  /// **The lines 15, 26, 31, 48 and 70 from the end (the last line is 0) are blank.** The top row
   /// of a terminal can be cut where the view meets the bar, and those are the rows that sit
   /// there in the tour: iPhone Duo with the keyboard down and up, the 6.9-inch phone with the
-  /// keyboard up, and the iPad with the keyboard down. A cut blank row draws nothing. Count
-  /// again after any change here, and look at the top of each terminal capture.
+  /// keyboard up, and the iPad with the keyboard up and down. A cut blank row draws nothing.
+  /// Where a row is cut also moved when the line count changed, so keep the count at 73, and
+  /// look at the top of each terminal capture after any change here.
   static let demoTranscript = [
     "dev@workbox:~/api$ herdr attach api-refactor",
     "[herdr] attached to pane 3 (claude)",
@@ -2945,7 +2946,6 @@ struct AppEnvironment {
     "",
     "● Reading src/db/config.rs",
     "  max_connections = 16, idle_timeout = 30s",
-    "  acquire_timeout = 5s",
     "",
     "● Grep \"spawn_blocking\" (2 files)",
     "  src/db/pool.rs:41",
@@ -2958,6 +2958,7 @@ struct AppEnvironment {
     "● Reading src/routes/health.rs",
     "  The health check pings the pool directly.",
     "  It already awaits.",
+    "  Nothing to change there.",
     "",
     "● Ran tests: 41 passed, 0 failed",
     "  Baseline is green.",
