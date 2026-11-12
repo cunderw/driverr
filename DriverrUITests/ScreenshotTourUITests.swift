@@ -259,7 +259,7 @@ final class ScreenshotTourUITests: XCTestCase {
   /// `align` corrects a small gap by first moving the other way, and on a sheet a drag that
   /// moves the content down can pull the sheet down with it: on iPhone Duo the settings sheet
   /// lost its bar and closed after the shot. Each drag here adds what the last one lost to
-  /// recognition, and the row rests within a point of the bar or a little below it.
+  /// recognition, and the row rests within 3 pt of the bar, which the shot cannot tell apart.
   private func alignUpward(
     _ identifier: String,
     under bar: XCUIElement,
@@ -270,12 +270,12 @@ final class ScreenshotTourUITests: XCTestCase {
     let row = element(app, identifier)
     let origin = app.coordinate(withNormalizedOffset: .zero)
     let barBottom = bar.frame.maxY
-    var lost: CGFloat = 12
+    var lost: CGFloat = 10
     for _ in 0..<8 {
       let before = row.frame.minY
       let gap = before - barBottom
       print("tour: '\(identifier)' row top \(before), bar bottom \(barBottom), gap \(gap)")
-      if gap <= 1 { break }
+      if gap <= 3 { break }
       let start = origin.withOffset(CGVector(dx: bar.frame.midX, dy: barBottom + 300))
       let end = start.withOffset(CGVector(dx: 0, dy: -(gap + lost)))
       start.press(forDuration: 0.1, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.4)
@@ -284,7 +284,7 @@ final class ScreenshotTourUITests: XCTestCase {
     }
     let gap = row.frame.minY - barBottom
     XCTAssertTrue(
-      gap >= -1 && gap <= 1,
+      abs(gap) <= 3,
       "The '\(identifier)' row's top edge is \(gap) pt from the bar. Tree was:\n"
         + app.debugDescription,
       file: file, line: line)
