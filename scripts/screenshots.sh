@@ -35,6 +35,11 @@
 # and 0.73 on iPhone Duo) and rounds its corners to the display's. Nothing else changes the app's pixels. The
 # store image's size is the canvas the framing draws on, which is checked too.
 #
+# The tour runs in dark appearance. Each device is set to dark after its boot, and the
+# setting is read back, because a set that does not take would photograph a light app. The
+# appearance each device was found in is put back when the script exits, also when the run
+# fails.
+#
 # The status bar is overridden for the run (9:41 on a fixed date, four bars, a full
 # battery) and cleared afterwards, also when the run fails. Without that every image
 # carries the time it was taken at, and the iPad's the date.
@@ -102,17 +107,41 @@ fail() {
   exit 1
 }
 
-# The devices whose status bar this run has overridden. One trap for the whole script,
-# because `main` loops over the kinds and a trap set per kind would replace the one before it.
+# The devices whose status bar this run has overridden, and `<udid>=<appearance>` for each
+# device whose appearance it changed, with the appearance it was found in. One trap for the
+# whole script, because `main` loops over the kinds and a trap set per kind would replace the
+# one before it.
 OVERRIDDEN=()
+PRIOR_APPEARANCES=()
 
-clear_status_bars() {
-  local udid
+# Best-effort: it runs from the trap, and a failure here would hide the run's own status.
+restore_devices() {
+  local udid entry
   for udid in ${OVERRIDDEN[@]+"${OVERRIDDEN[@]}"}; do
     xcrun simctl status_bar "$udid" clear >/dev/null 2>&1 || true
   done
+  for entry in ${PRIOR_APPEARANCES[@]+"${PRIOR_APPEARANCES[@]}"}; do
+    xcrun simctl ui "${entry%%=*}" appearance "${entry#*=}" >/dev/null 2>&1 || true
+  done
 }
-trap clear_status_bars EXIT
+trap restore_devices EXIT
+
+# Sets the booted device to dark appearance, and fails unless it reads back as dark. A device
+# that is shut down answers `unknown` with exit 0, which is why this runs after the boot, and
+# why the read-back is what proves it. The appearance it was found in is kept for the trap.
+set_dark() {
+  local udid="$1" device="$2" found read_back
+  found="$(xcrun simctl ui "$udid" appearance 2>/dev/null | tr -d '[:space:]')" || found=""
+  case "$found" in
+    light|dark) PRIOR_APPEARANCES+=("$udid=$found") ;;
+  esac
+  xcrun simctl ui "$udid" appearance dark \
+    || fail "could not set $device ($udid) to dark appearance"
+  read_back="$(xcrun simctl ui "$udid" appearance 2>/dev/null | tr -d '[:space:]')" || read_back=""
+  [ "$read_back" = "dark" ] \
+    || fail "asked $device ($udid) for dark appearance and it reads '${read_back:-unknown}'"
+  note "$device: appearance dark (was ${found:-unknown})"
+}
 
 # The UDID of the one available device with this name. `simctl status_bar` takes a UDID, and
 # two devices under one name would make "booted" ambiguous.
@@ -245,6 +274,7 @@ capture_one() {
   udid="$(device_udid "$device")" || fail "cannot find the simulator '$device'"
   xcrun simctl shutdown "$udid" 2>/dev/null || true
   xcrun simctl bootstatus "$udid" -b >/dev/null
+  set_dark "$udid" "$device"
   OVERRIDDEN+=("$udid")
   # Its own assignment, because a failure inside an argument's `$(…)` does not stop the
   # script.

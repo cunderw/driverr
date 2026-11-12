@@ -1370,8 +1370,49 @@ struct AppEnvironment {
           )
         ],
       codexSessions: [seededCodexRollout]
-    )
+    ).serving(storeTourSubagents)
   }()
+
+  /// Two sub-agents still writing while the tour's agent waits, so the chat's bar shows its
+  /// sub-agents button with a count in the `chat` capture.
+  ///
+  /// Spawned before the page's first turn, so no spawn line is added to the conversation the
+  /// capture shows. Off the page a file written within `SubagentList.liveWindow` reads as
+  /// running, and a file's age is `secondsAgo` from each answer, so both read as running at
+  /// every read. The fake serves sub-agents to whichever session asks, so every Claude pane
+  /// on the tour's host shows the button.
+  static let storeTourSubagents = [
+    FakeTranscriptHost.SubagentFixture(
+      agentID: "a0tourcallers00001",
+      toolUseID: "toolu_tour_callers",
+      secondsAgo: 8,
+      prompt: "Find every caller of open_session outside this crate and list the file and line of each.",
+      turns: [
+        .init(
+          speaker: .tools([ToolCall(name: "Grep", target: "open_session")]),
+          secondsAgo: 10
+        )
+      ],
+      description: "Find open_session's callers",
+      agentType: "Explore",
+      spawnedSecondsAgo: 1_000
+    ),
+    FakeTranscriptHost.SubagentFixture(
+      agentID: "a0tourbench000001",
+      toolUseID: "toolu_tour_bench",
+      secondsAgo: 15,
+      prompt: "Run the pool benchmarks before and after the change and report the difference.",
+      turns: [
+        .init(
+          speaker: .tools([ToolCall(name: "Bash", target: "cargo bench pool")]),
+          secondsAgo: 20
+        )
+      ],
+      description: "Benchmark the connection pool",
+      agentType: "general-purpose",
+      spawnedSecondsAgo: 960
+    ),
+  ]
 
   /// A conversation with two runs and more turns than fit on a phone: the fixture that shows
   /// whether opening a run moves the reader.

@@ -388,7 +388,10 @@ The release procedure lives outside this repo. These are only the facts about th
   count and alpha, and it changes nothing in the tree unless every step passed. It shuts
   each device down and boots it before the tour, and it fails a phone set if a capture
   draws the home indicator (`scripts/home-indicator.sh`). That boot is why the Duo set is
-  the outer display only.
+  the outer display only. The tour runs in dark appearance and puts each device's
+  appearance back afterwards. An optional background image at
+  `docs/app-store-assets/background/<kind>.png` replaces that set's gradient; the header
+  keeps the gradient.
   `scripts/screenshots.sh --frame` frames the committed captures again with no tour. They
   upload in filename order. All three sets are `01-` to `06-` and start with Needs You. The
   phones' `hosts.png` is captured and not published.

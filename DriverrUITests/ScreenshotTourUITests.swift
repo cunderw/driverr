@@ -391,6 +391,15 @@ final class ScreenshotTourUITests: XCTestCase {
     // wrong pane would ship.
     treePaneRow(app, titled: "needs a decision").tap()
     require(app, "composer.text", "Expected the composer")
+    // The bar's sub-agents button, with its count. The list arrives after the conversation,
+    // so the composer being up does not mean the button is.
+    let subagents = require(
+      app, "pane.subagents", "Expected the sub-agents button in the pane bar", timeout: 20)
+    XCTAssertEqual(
+      subagents.value as? String, "2",
+      "The chat capture would ship with the wrong sub-agent count. Tree was:\n"
+        + app.debugDescription
+    )
     settle(app)
     XCTAssertFalse(
       app.keyboards.firstMatch.exists,

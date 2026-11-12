@@ -4,6 +4,13 @@
 // frame, on a background drawn from the default theme's accent, under one short caption.
 // It also draws the product page header from the same captures.
 //
+// A set can have an optional background image instead of the accent gradient:
+// `docs/app-store-assets/background/<kind>.png` (iphone-max, ipad or iphone-duo), drawn to
+// fill the canvas, centred, and cropped to it. Without that file the set gets the gradient,
+// so a fresh clone frames with no image. The header always gets the gradient. The caption
+// contrast check reads whatever was drawn under the text, so an image that is too light
+// behind the caption fails the run.
+//
 //   swift scripts/frame-screenshots.swift iphone-max <raw dir> <out dir>
 //   swift scripts/frame-screenshots.swift ipad       <raw dir> <out dir>
 //   swift scripts/frame-screenshots.swift iphone-duo <raw dir> <out dir>
@@ -112,8 +119,9 @@ let captionLines = 2
 
 // MARK: - Colour
 
-/// `Theme.system`'s light ANSI 4, which `Theme.accent(for: .light)` returns unchanged.
-/// The captures are in light appearance, so the light accent is the one they show.
+/// `Theme.system`'s light ANSI 4, which `Theme.accent(for: .light)` returns unchanged. The
+/// gradient was drawn from it when the tour captured in light, and it is kept so a set framed
+/// without a background image looks as it did.
 let accent = RGB(hex: 0x5786F6)
 
 struct RGB {
@@ -203,6 +211,46 @@ func fromTop(_ context: CGContext, x: CGFloat, y: CGFloat, width: CGFloat, heigh
   -> CGRect
 {
   CGRect(x: x, y: CGFloat(context.height) - y - height, width: width, height: height)
+}
+
+/// The repository, from this script's own path, because the directories it is handed can be
+/// a staging directory outside the tree.
+let repoRoot = URL(fileURLWithPath: #filePath)
+  .deletingLastPathComponent().deletingLastPathComponent()
+
+/// Where a set's optional background image lives, relative to the repository.
+func backgroundPath(_ kind: String) -> String { "docs/app-store-assets/background/\(kind).png" }
+
+/// The set's background image, or `nil` when the file does not exist and the set gets the
+/// gradient.
+func backgroundImage(_ kind: String) -> CGImage? {
+  let url = repoRoot.appendingPathComponent(backgroundPath(kind))
+  guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+  return loadImage(url)
+}
+
+/// Draws `image` over the whole canvas at the smallest scale that covers it, centred, so
+/// whatever does not fit is cut off evenly on both sides.
+func drawBackground(_ context: CGContext, image: CGImage) {
+  let size = CGSize(width: context.width, height: context.height)
+  let scale = max(size.width / CGFloat(image.width), size.height / CGFloat(image.height))
+  let drawn = CGSize(width: CGFloat(image.width) * scale, height: CGFloat(image.height) * scale)
+  context.draw(
+    image,
+    in: CGRect(
+      x: (size.width - drawn.width) / 2, y: (size.height - drawn.height) / 2,
+      width: drawn.width, height: drawn.height))
+}
+
+/// Says which gradient `drawBackground(_:)` draws, and how white reads on its top colour.
+func describeGradient() {
+  print(
+    String(
+      format:
+        "background #%02X%02X%02X to #%02X%02X%02X, white reads at %.2f:1 on the top colour",
+      Int(backgroundTop.r * 255), Int(backgroundTop.g * 255), Int(backgroundTop.b * 255),
+      Int(backgroundBottom.r * 255), Int(backgroundBottom.g * 255),
+      Int(backgroundBottom.b * 255), backgroundTop.contrast(with: white)))
 }
 
 func drawBackground(_ context: CGContext) {
@@ -424,6 +472,13 @@ func frameSet(_ name: String, kind: Kind, raw: URL, out: URL) {
     .filter { $0.hasSuffix(".png") && !listed.contains(String($0.dropLast(4))) }
   for file in unlisted.sorted() { print("\(name): not published: \(file)") }
 
+  let image = backgroundImage(name)
+  if let image {
+    print("\(name): background \(backgroundPath(name)), \(image.width)x\(image.height), filled")
+  } else {
+    describeGradient()
+  }
+
   for (index, shot) in published.enumerated() {
     let capture = loadImage(raw.appendingPathComponent("\(shot.stem).png"))
     guard CGFloat(capture.width) == kind.capture.width,
@@ -434,7 +489,11 @@ func frameSet(_ name: String, kind: Kind, raw: URL, out: URL) {
           + "\(Int(kind.capture.width))x\(Int(kind.capture.height))")
     }
     let context = canvas(kind.canvas)
-    drawBackground(context)
+    if let image {
+      drawBackground(context, image: image)
+    } else {
+      drawBackground(context)
+    }
 
     let width = kind.canvas.width
     let margin = width * 0.08
@@ -459,6 +518,7 @@ func frameSet(_ name: String, kind: Kind, raw: URL, out: URL) {
 }
 
 func frameHeader(rawRoot: URL, out: URL, crops: URL?) {
+  describeGradient()
   let context = canvas(headerSize)
   drawBackground(context)
   let (w, h) = (headerSize.width, headerSize.height)
@@ -536,12 +596,6 @@ let raw = URL(fileURLWithPath: arguments[1])
 let out = URL(fileURLWithPath: arguments[2])
 let crops = arguments.count == 4 ? URL(fileURLWithPath: arguments[3]) : nil
 try? FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
-print(
-  String(
-    format: "background #%02X%02X%02X to #%02X%02X%02X, white reads at %.2f:1 on the top colour",
-    Int(backgroundTop.r * 255), Int(backgroundTop.g * 255), Int(backgroundTop.b * 255),
-    Int(backgroundBottom.r * 255), Int(backgroundBottom.g * 255), Int(backgroundBottom.b * 255),
-    backgroundTop.contrast(with: white)))
 switch job {
 case "header": frameHeader(rawRoot: raw, out: out, crops: crops)
 default:
