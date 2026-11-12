@@ -118,8 +118,8 @@ struct TerminalScreen: View {
   /// password does not outlive the bar.
   @State private var reconnectPassword = ""
   /// The sub-agents button's clock: an active sub-agent can stop being active with nothing
-  /// else changing, so the count and the button's presence are re-read on the sheet's tick.
-  /// A `TimelineView` cannot decide whether a `ToolbarItem` exists.
+  /// else changing, so while the button is up its count and presence are re-read on the
+  /// sheet's tick. A `TimelineView` cannot decide whether a `ToolbarItem` exists.
   @State private var subagentTick = Date.now
 
   var body: some View {
@@ -276,9 +276,10 @@ struct TerminalScreen: View {
       // Only `start()`, which needs no balancing half: a second call from a rebuilt view
       // returns early. The retain/release pairs live in `TerminalPresenter.beginPresentation`.
       .task { scene.start() }
-      // Only while the session has sub-agents to count.
-      .task(id: chatModel?.subagentList.isEmpty == false) {
-        guard chatModel?.subagentList.isEmpty == false else { return }
+      // Only while the button is up: time can end an active sub-agent but never start one,
+      // so a hidden button comes back only through a new list or page, which redraws anyway.
+      .task(id: shownSubagentRows != nil) {
+        guard shownSubagentRows != nil else { return }
         while !Task.isCancelled {
           try? await Task.sleep(for: .seconds(Self.subagentTickInterval))
           subagentTick = .now

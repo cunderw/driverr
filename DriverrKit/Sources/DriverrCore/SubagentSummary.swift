@@ -186,7 +186,7 @@ public struct SubagentRow: Identifiable, Hashable, Sendable {
     case .idle:
       guard let writtenAt = summary.writtenAt else { return false }
       return now.timeIntervalSince(writtenAt) < SubagentList.idleWindow
-    default: return false
+    case .finished, .failed, .stopped, .none: return false
     }
   }
 

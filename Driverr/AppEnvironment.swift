@@ -2453,7 +2453,7 @@ struct AppEnvironment {
         ],
         description: "Map the loader's callers",
         agentType: "scout",
-        spawnedSecondsAgo: 1000
+        spawnedSecondsAgo: 990
       )
     ])
 
@@ -2524,19 +2524,23 @@ struct AppEnvironment {
     ),
   ])
 
-  /// `subagentTranscript` with 57 more finished lookups behind it, 60 in all, so the open
-  /// list reaches its height cap, scrolls inside it, and ends on the host's cap of 50.
-  static let manySubagentTranscript = subagentTranscript.serving(
-    subagentTranscript.subagents
+  /// `idleSubagentTranscript` with 57 more lookups behind it, 61 in all, every one still
+  /// writing, so the open list is tall enough to scroll inside its sheet. The host lists the
+  /// newest 50 spawns; the finished analyst and the finished off-page lookup are among them
+  /// and are not shown, so the list holds the two teammates and 46 lookups, under
+  /// `47 running · 1 idle`. A lookup's age is `secondsAgo` from each answer, so it reads as
+  /// running at every read; the list is read again often enough that none passes the live
+  /// window between reads.
+  static let manySubagentTranscript = idleSubagentTranscript.serving(
+    idleSubagentTranscript.subagents
       + (1...57).map { index in
         FakeTranscriptHost.SubagentFixture(
           agentID: "a0many\(index)",
           toolUseID: "toolu_many_\(index)",
-          secondsAgo: 10_000 + Double(index) * 60,
+          secondsAgo: Double(5 + index % 20),
           prompt: "Survey module \(index) and report its public types.",
           description: "Survey module \(index)",
           agentType: "Explore",
-          isFinished: true,
           spawnedSecondsAgo: 10_100 + Double(index) * 60
         )
       })
