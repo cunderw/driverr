@@ -253,6 +253,43 @@ final class ScreenshotTourUITests: XCTestCase {
     )
   }
 
+  /// Scrolls a sheet's form up until the top edge of `identifier`'s row meets the bottom edge
+  /// of `bar`, by drags that only ever move the content up.
+  ///
+  /// `align` corrects a small gap by first moving the other way, and on a sheet a drag that
+  /// moves the content down can pull the sheet down with it: on iPhone Duo the settings sheet
+  /// lost its bar and closed after the shot. Each drag here adds what the last one lost to
+  /// recognition, and the row rests within a point of the bar or a little below it.
+  private func alignUpward(
+    _ identifier: String,
+    under bar: XCUIElement,
+    in app: XCUIApplication,
+    file: StaticString = #filePath,
+    line: UInt = #line
+  ) {
+    let row = element(app, identifier)
+    let origin = app.coordinate(withNormalizedOffset: .zero)
+    let barBottom = bar.frame.maxY
+    var lost: CGFloat = 12
+    for _ in 0..<8 {
+      let before = row.frame.minY
+      let gap = before - barBottom
+      print("tour: '\(identifier)' row top \(before), bar bottom \(barBottom), gap \(gap)")
+      if gap <= 1 { break }
+      let start = origin.withOffset(CGVector(dx: bar.frame.midX, dy: barBottom + 300))
+      let end = start.withOffset(CGVector(dx: 0, dy: -(gap + lost)))
+      start.press(forDuration: 0.1, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.4)
+      let moved = before - row.frame.minY
+      if moved > 0 { lost = max(0, gap + lost - moved) }
+    }
+    let gap = row.frame.minY - barBottom
+    XCTAssertTrue(
+      gap >= -1 && gap <= 1,
+      "The '\(identifier)' row's top edge is \(gap) pt from the bar. Tree was:\n"
+        + app.debugDescription,
+      file: file, line: line)
+  }
+
   /// Whether the host list is on screen beside the connected host's screen, which is the
   /// split view at regular width. Read from the layout, so it follows the app and not the
   /// device's name.
@@ -470,14 +507,13 @@ final class ScreenshotTourUITests: XCTestCase {
     // outer display, the iPad's form sheet) would show only the last themes, with the rows
     // above them ghosted under the bar, so there the whole theme list is shown instead, its
     // first row's edge against the bar, and Font Size is below the fold. Aligned from the top,
-    // where the form opens, because every drag then moves the content up: a drag that brings
-    // the content back down can pull the sheet down with it and dismiss it.
+    // where the form opens, so every drag moves the content up; see `alignUpward`.
     let form = app.collectionViews.containing(.any, identifier: "settings.theme.system").firstMatch
     let bar = app.navigationBars["Settings"]
     if form.frame.height >= 800 {
       scroll(form, toRest: "settings.fontsize.value", in: app)
     } else {
-      align("settings.theme.system", under: bar, in: app)
+      alignUpward("settings.theme.system", under: bar, in: app)
     }
     let dracula = require(app, "settings.theme.dracula", "Expected the Dracula theme row")
     XCTAssertTrue(
