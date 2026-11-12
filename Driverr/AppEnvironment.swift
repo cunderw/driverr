@@ -1283,6 +1283,8 @@ struct AppEnvironment {
     if isTranscriptTaskState { return taskStateTranscript }
     if isTranscriptManySubagents { return manySubagentTranscript }
     if isTranscriptLongSubagent { return longSubagentTranscript }
+    if isTranscriptEndingSubagents { return endingSubagentTranscript }
+    if isTranscriptIdleSubagents { return idleSubagentTranscript }
     if isTranscriptSubagents { return subagentTranscript }
     if isTranscriptUsageLimited { return usageLimitedTranscript }
     if isTranscriptUsageLimitReset { return usageLimitResetTranscript }
@@ -2397,19 +2399,148 @@ struct AppEnvironment {
     ),
   ])
 
-  /// `subagentTranscript` with 57 more finished lookups behind it, 60 in all, so the open
-  /// list reaches its height cap, scrolls inside it, and ends on the host's cap of 50.
-  static let manySubagentTranscript = subagentTranscript.serving(
-    subagentTranscript.subagents
+  /// `subagentTranscript` with a second teammate that went idle ten minutes ago, so the open
+  /// list shows a running row and an idle one together, under `1 running · 1 idle`. An idle
+  /// state comes only from the page's idle notification, so the teammate's spawn is on the page.
+  static let idleSubagentTranscript = FakeTranscriptHost(
+    sessionID: "3f8c1d20-0000-4000-8000-000000000002",
+    turns: [
+      .init(speaker: .human, text: "plan and review the config loader", secondsAgo: 1800),
+      .init(
+        speaker: .toolBlocks([
+          .spawn(
+            subagentType: "analyst", name: "analyst-7",
+            description: "Plan the config loader",
+            launch: .async(agentID: "aanalyst7", end: .init(secondsAgo: 1200)))
+        ]),
+        secondsAgo: 1700
+      ),
+      .init(
+        speaker: .toolBlocks([
+          .spawn(
+            subagentType: "verifier", name: "verifier-7",
+            description: "Review the config loader",
+            launch: .teammate),
+          .spawn(
+            subagentType: "scout", name: "scout-7",
+            description: "Map the loader's callers",
+            launch: .teammate),
+        ]),
+        secondsAgo: 1000
+      ),
+      .init(
+        speaker: .teammate([
+          .init(sender: "scout-7", summary: "Report sent to main", shape: .idleNotification)
+        ]),
+        secondsAgo: 600
+      ),
+      .init(
+        speaker: .assistant,
+        text: "The scout reported and is waiting. The verifier is still reading the diff.",
+        secondsAgo: 60
+      ),
+    ]
+  ).serving(
+    subagentTranscript.subagents + [
+      FakeTranscriptHost.SubagentFixture(
+        agentID: "ascout7",
+        name: "scout-7",
+        isTeammate: true,
+        secondsAgo: 600,
+        prompt: "Map every caller of the config loader and send the list to the main session.",
+        turns: [
+          .init(speaker: .assistant, text: "Four callers. Sending the list.", secondsAgo: 610)
+        ],
+        description: "Map the loader's callers",
+        agentType: "scout",
+        spawnedSecondsAgo: 990
+      )
+    ])
+
+  /// A session whose one active sub-agent stops being active about forty seconds after the
+  /// fixture is built, at launch: the analyst and the verifier are finished on the page, and
+  /// the lookup, whose spawn is not on the page, stopped writing its file 20 s before then.
+  /// Off the page a file written within `SubagentList.liveWindow` reads as running, so the bar
+  /// counts one, and the first tick of the bar and of the open list after the window finds
+  /// none. The time is fixed, not `secondsAgo`, because the list is read again whenever the
+  /// page refreshes and `secondsAgo` would find the file as fresh every time.
+  static let endingSubagentTranscript = FakeTranscriptHost(
+    sessionID: "3f8c1d20-0000-4000-8000-000000000002",
+    turns: [
+      .init(speaker: .human, text: "plan and review the config loader", secondsAgo: 1800),
+      .init(
+        speaker: .toolBlocks([
+          .spawn(
+            subagentType: "analyst", name: "analyst-7",
+            description: "Plan the config loader",
+            launch: .async(agentID: "aanalyst7", end: .init(secondsAgo: 1200)))
+        ]),
+        secondsAgo: 1700
+      ),
+      .init(
+        speaker: .toolBlocks([
+          .spawn(
+            subagentType: "verifier", name: "verifier-7",
+            description: "Review the config loader",
+            launch: .async(agentID: "averifier7", end: .init(secondsAgo: 300)))
+        ]),
+        secondsAgo: 1000
+      ),
+      .init(
+        speaker: .assistant,
+        text: "The analyst and the verifier are done. The lookup is finishing.",
+        secondsAgo: 60
+      ),
+    ]
+  ).serving([
+    subagentTranscript.subagents[0],
+    FakeTranscriptHost.SubagentFixture(
+      agentID: "averifier7",
+      name: "verifier-7",
+      secondsAgo: 300,
+      prompt: "Review the config loader on the latest commit and report your findings.",
+      turns: [
+        .init(speaker: .assistant, text: "No findings on the latest commit.", secondsAgo: 310)
+      ],
+      description: "Review the config loader",
+      agentType: "verifier",
+      spawnedSecondsAgo: 1000
+    ),
+    FakeTranscriptHost.SubagentFixture(
+      agentID: "a0lookup0000000001",
+      toolUseID: "toolu_earlier_lookup",
+      secondsAgo: 20,
+      prompt: "Find every caller of load_config and list the file and line of each.",
+      turns: [
+        .init(
+          speaker: .tools([ToolCall(name: "Grep", target: "load_config")]),
+          secondsAgo: 20
+        )
+      ],
+      description: "Find the config loader's callers",
+      agentType: "Explore",
+      spawnedSecondsAgo: 2000,
+      stoppedWritingAt: Date.now.addingTimeInterval(-20)
+    ),
+  ])
+
+  /// `idleSubagentTranscript` with 57 more lookups behind it, 61 in all, every one still
+  /// writing, so the open list is tall enough to scroll inside its sheet. The host lists the
+  /// newest 50 spawns; the finished analyst and the finished off-page lookup are among them
+  /// and are not shown, so the list holds the two teammates and 46 lookups, under
+  /// `47 running · 1 idle`. A lookup's age is `secondsAgo` from each answer, so it reads as
+  /// running at every read; the list is read again often enough that none passes the live
+  /// window between reads.
+  static let manySubagentTranscript = idleSubagentTranscript.serving(
+    idleSubagentTranscript.subagents
       + (1...57).map { index in
         FakeTranscriptHost.SubagentFixture(
           agentID: "a0many\(index)",
           toolUseID: "toolu_many_\(index)",
-          secondsAgo: 10_000 + Double(index) * 60,
+          secondsAgo: Double(5 + index % 20),
           prompt: "Survey module \(index) and report its public types.",
           description: "Survey module \(index)",
           agentType: "Explore",
-          isFinished: true,
           spawnedSecondsAgo: 10_100 + Double(index) * 60
         )
       })
@@ -2455,6 +2586,17 @@ struct AppEnvironment {
   /// Whether this launch should serve the session whose spawn lines open sub-agents.
   static var isTranscriptSubagents: Bool {
     ProcessInfo.processInfo.arguments.contains("-uiTestingSubagents")
+  }
+
+  /// Whether this launch should serve the session with a running and an idle teammate.
+  static var isTranscriptIdleSubagents: Bool {
+    ProcessInfo.processInfo.arguments.contains("-uiTestingSubagentsIdle")
+  }
+
+  /// Whether this launch should serve the session whose last active sub-agent ends while
+  /// the pane is open.
+  static var isTranscriptEndingSubagents: Bool {
+    ProcessInfo.processInfo.arguments.contains("-uiTestingSubagentsEnding")
   }
 
   /// Whether this launch should serve the session whose spawned work is in every state.

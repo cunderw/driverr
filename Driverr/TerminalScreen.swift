@@ -117,6 +117,10 @@ struct TerminalScreen: View {
   /// What is typed into the inline reconnect prompt. On the screen, not the scene, so a
   /// password does not outlive the bar.
   @State private var reconnectPassword = ""
+  /// The sub-agents button's clock: an active sub-agent can stop being active with nothing
+  /// else changing, so while the button is up its count and presence are re-read on the
+  /// sheet's tick. A `TimelineView` cannot decide whether a `ToolbarItem` exists.
+  @State private var subagentTick = Date.now
 
   var body: some View {
     content
@@ -182,8 +186,8 @@ struct TerminalScreen: View {
         // The sub-agents button shares the toggle's capsule, because both are about this pane's
         // chat. It is first, so the toggle does not move when it comes and goes.
         if showsSurfaceToggle {
-          if let subagentList = shownSubagentList {
-            ToolbarItem(placement: .primaryAction) { subagentsButton(subagentList) }
+          if let subagentRows = shownSubagentRows {
+            ToolbarItem(placement: .primaryAction) { subagentsButton(subagentRows) }
           }
           ToolbarItem(placement: .primaryAction) { surfaceToggle }
           ToolbarSpacer(.fixed, placement: .primaryAction)
@@ -272,6 +276,15 @@ struct TerminalScreen: View {
       // Only `start()`, which needs no balancing half: a second call from a rebuilt view
       // returns early. The retain/release pairs live in `TerminalPresenter.beginPresentation`.
       .task { scene.start() }
+      // Only while the button is up: time can end an active sub-agent but never start one,
+      // so a hidden button comes back only through a new list or page, which redraws anyway.
+      .task(id: shownSubagentRows != nil) {
+        guard shownSubagentRows != nil else { return }
+        while !Task.isCancelled {
+          try? await Task.sleep(for: .seconds(Self.subagentTickInterval))
+          subagentTick = .now
+        }
+      }
       // The keyboard's end frame, since nothing in the view tree can see it.
       // `willChangeFrame` carries the end frame, so it lands in the same layout pass the
       // keyboard animates into.
@@ -743,35 +756,44 @@ struct TerminalScreen: View {
     route == .detailColumn && chatModel?.isShowingSubagent == true
   }
 
-  /// The session's sub-agents while the bar offers them: the chat is up with the pane's own
-  /// conversation, and the session spawned at least one. `nil` otherwise. A sub-agent shown in
-  /// place has `pane.subagent.back` in the bar instead.
-  private var shownSubagentList: SubagentList? {
+  /// The sub-agents button's tick, `SubagentSheetView`'s and `PaneChatView.ageTick`'s value.
+  private static let subagentTickInterval: TimeInterval = 30
+
+  /// The session's active sub-agents while the bar offers them: the chat is up with the pane's
+  /// own conversation, and at least one sub-agent is running or freshly idle
+  /// (`SubagentList.activeRows(merging:asOf:)`). `nil` otherwise. A sub-agent shown in place
+  /// has `pane.subagent.back` in the bar instead.
+  private var shownSubagentRows: [SubagentRow]? {
     guard isShowingChat, let chatModel, !isShowingSubagentInPlace,
       !chatModel.subagentList.isEmpty
     else { return nil }
-    return chatModel.subagentList
+    // Read for its invalidation only: the rows are judged at the real time, so a list that
+    // lands between ticks is not judged on a clock up to a tick behind it.
+    _ = subagentTick
+    let rows = chatModel.subagentList.activeRows(
+      merging: chatModel.transcript?.turns ?? [], asOf: .now)
+    return rows.isEmpty ? nil : rows
   }
 
-  /// Opens the session's sub-agent list. The glyph and how many the session spawned, so the
-  /// reason to open it shows without opening it.
+  /// Opens the session's sub-agent list. The glyph and how many are active, so the reason to
+  /// open it shows without opening it.
   ///
   /// **An `HStack`, not a `Label`**, for `surfaceToggle`'s reason. The count is not red: red
   /// on this bar is the Panes count, which means a pane is waiting.
-  private func subagentsButton(_ list: SubagentList) -> some View {
+  private func subagentsButton(_ rows: [SubagentRow]) -> some View {
     Button {
       scene.showSubagentSheet()
     } label: {
       HStack(spacing: 4) {
         Image(systemName: "person.2")
-        Text(list.total, format: .number)
+        Text(rows.count, format: .number)
           .monospacedDigit()
       }
     }
     // Label-coloured, like every glyph on this bar (CLAUDE.md, Style).
     .tint(Color.primary)
     .accessibilityLabel("Sub-agents")
-    .accessibilityValue(Text(list.total, format: .number))
+    .accessibilityValue(Text(rows.count, format: .number))
     .accessibilityHint(TranscriptChatCopy.subagentListHint)
     .help("Sub-agents")
     .accessibilityIdentifier("pane.subagents")

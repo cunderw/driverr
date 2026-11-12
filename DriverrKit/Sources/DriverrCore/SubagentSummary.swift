@@ -141,6 +141,19 @@ public struct SubagentList: Hashable, Sendable {
       return SubagentRow(summary: summary, task: nil, state: nil)
     }
   }
+
+  /// How long an idle teammate stays listed after its own file was last written.
+  ///
+  /// A teammate goes idle between every message it is sent, so dropping it at once would make
+  /// the list and the bar's count flicker through an agent-team session. One idle for hours is
+  /// what the list is not for: the owner's complaint was "every agent we ever had".
+  public static let idleWindow: TimeInterval = 30 * 60
+
+  /// The rows the bar counts and the list shows: `rows(merging:asOf:)` kept to the active
+  /// ones, by `SubagentRow.isActive(asOf:)`, in the same order.
+  public func activeRows(merging turns: [TranscriptTurn], asOf now: Date) -> [SubagentRow] {
+    rows(merging: turns, asOf: now).filter { $0.isActive(asOf: now) }
+  }
 }
 
 /// One line of the chat's sub-agent list.
@@ -158,6 +171,24 @@ public struct SubagentRow: Identifiable, Hashable, Sendable {
   }
 
   public var id: String { summary.id }
+
+  /// Whether the list shows this row: running, or idle with its own file written within
+  /// `SubagentList.idleWindow`. Finished, failed, stopped and unknown rows are not active; a
+  /// finished one stays reachable from its spawn line.
+  ///
+  /// **A running state is taken as given, however old.** One the page reports running has no
+  /// end on the page yet, and nothing ages it out: a background agent whose parent was killed
+  /// before its notification stays running. A running row read off the meta and the file ages
+  /// out on its own, through `SubagentList.liveWindow`.
+  public func isActive(asOf now: Date) -> Bool {
+    switch state {
+    case .running: return true
+    case .idle:
+      guard let writtenAt = summary.writtenAt else { return false }
+      return now.timeIntervalSince(writtenAt) < SubagentList.idleWindow
+    case .finished, .failed, .stopped, .none: return false
+    }
+  }
 
   /// `Running · 3m` from the page; `Finished · 2h ago` or `Running` from the meta and the
   /// file; `Written 2h ago` when nothing says more.
@@ -194,18 +225,21 @@ extension TranscriptChatCopy {
   public static let subagentNotStarted = "Starting"
   /// A row nothing says more about than when its file was written.
   public static let subagentWritten = "Written"
-  /// The list's header button, for VoiceOver's hint.
-  public static let subagentListHint = "Shows the agents this session started"
+  /// The bar's sub-agents button, for VoiceOver's hint.
+  public static let subagentListHint = "Shows the sub-agents running in this session"
+  /// The open list when nothing in it is active any more.
+  public static let noSubagentsRunning = "No sub-agents running"
+  /// Under `noSubagentsRunning`: where the ones that left the list went.
+  public static let finishedSubagentsStayInChat =
+    "Finished sub-agents stay in the chat, on the line that started them."
 
-  /// The open list's foot when the host capped it: the rows are the newest spawns.
-  public static func subagentListCapped(shown: Int, of total: Int) -> String {
-    "The newest \(shown) of \(total)"
-  }
-
-  /// `3 sub-agents · 1 running`, or `1 sub-agent` when none is running.
-  public static func subagentCount(total: Int, running: Int) -> String {
-    let count = total == 1 ? "1 sub-agent" : "\(total) sub-agents"
-    guard running > 0 else { return count }
-    return "\(count) \(agentEventSeparator) \(running) running"
+  /// The open list's title: `2 running · 1 idle`, `2 running`, `1 idle`, or `Sub-agents` when
+  /// none is active.
+  public static func subagentActiveTitle(running: Int, idle: Int) -> String {
+    var parts: [String] = []
+    if running > 0 { parts.append("\(running) running") }
+    if idle > 0 { parts.append("\(idle) idle") }
+    guard !parts.isEmpty else { return "Sub-agents" }
+    return parts.joined(separator: " \(agentEventSeparator) ")
   }
 }
