@@ -1284,6 +1284,7 @@ struct AppEnvironment {
     if isTranscriptManySubagents { return manySubagentTranscript }
     if isTranscriptLongSubagent { return longSubagentTranscript }
     if isTranscriptEndingSubagents { return endingSubagentTranscript }
+    if isTranscriptIdleSubagents { return idleSubagentTranscript }
     if isTranscriptSubagents { return subagentTranscript }
     if isTranscriptUsageLimited { return usageLimitedTranscript }
     if isTranscriptUsageLimitReset { return usageLimitResetTranscript }
@@ -2398,6 +2399,64 @@ struct AppEnvironment {
     ),
   ])
 
+  /// `subagentTranscript` with a second teammate that went idle ten minutes ago, so the open
+  /// list shows a running row and an idle one together, under `1 running · 1 idle`. An idle
+  /// state comes only from the page's idle notification, so the teammate's spawn is on the page.
+  static let idleSubagentTranscript = FakeTranscriptHost(
+    sessionID: "3f8c1d20-0000-4000-8000-000000000002",
+    turns: [
+      .init(speaker: .human, text: "plan and review the config loader", secondsAgo: 1800),
+      .init(
+        speaker: .toolBlocks([
+          .spawn(
+            subagentType: "analyst", name: "analyst-7",
+            description: "Plan the config loader",
+            launch: .async(agentID: "aanalyst7", end: .init(secondsAgo: 1200)))
+        ]),
+        secondsAgo: 1700
+      ),
+      .init(
+        speaker: .toolBlocks([
+          .spawn(
+            subagentType: "verifier", name: "verifier-7",
+            description: "Review the config loader",
+            launch: .teammate),
+          .spawn(
+            subagentType: "scout", name: "scout-7",
+            description: "Map the loader's callers",
+            launch: .teammate),
+        ]),
+        secondsAgo: 1000
+      ),
+      .init(
+        speaker: .teammate([
+          .init(sender: "scout-7", summary: "Report sent to main", shape: .idleNotification)
+        ]),
+        secondsAgo: 600
+      ),
+      .init(
+        speaker: .assistant,
+        text: "The scout reported and is waiting. The verifier is still reading the diff.",
+        secondsAgo: 60
+      ),
+    ]
+  ).serving(
+    subagentTranscript.subagents + [
+      FakeTranscriptHost.SubagentFixture(
+        agentID: "ascout7",
+        name: "scout-7",
+        isTeammate: true,
+        secondsAgo: 600,
+        prompt: "Map every caller of the config loader and send the list to the main session.",
+        turns: [
+          .init(speaker: .assistant, text: "Four callers. Sending the list.", secondsAgo: 610)
+        ],
+        description: "Map the loader's callers",
+        agentType: "scout",
+        spawnedSecondsAgo: 1000
+      )
+    ])
+
   /// A session whose one active sub-agent stops being active about forty seconds after the
   /// fixture is built, at launch: the analyst and the verifier are finished on the page, and
   /// the lookup, whose spawn is not on the page, stopped writing its file 20 s before then.
@@ -2523,6 +2582,11 @@ struct AppEnvironment {
   /// Whether this launch should serve the session whose spawn lines open sub-agents.
   static var isTranscriptSubagents: Bool {
     ProcessInfo.processInfo.arguments.contains("-uiTestingSubagents")
+  }
+
+  /// Whether this launch should serve the session with a running and an idle teammate.
+  static var isTranscriptIdleSubagents: Bool {
+    ProcessInfo.processInfo.arguments.contains("-uiTestingSubagentsIdle")
   }
 
   /// Whether this launch should serve the session whose last active sub-agent ends while

@@ -46,7 +46,9 @@ struct SubagentSheetView: View {
         let running = rows.filter { $0.state == .running }.count
         Group {
           if rows.isEmpty {
-            ContentUnavailableView(TranscriptChatCopy.noSubagentsRunning, systemImage: "person.2")
+            ContentUnavailableView(
+              TranscriptChatCopy.noSubagentsRunning, systemImage: "person.2",
+              description: Text(TranscriptChatCopy.finishedSubagentsStayInChat))
           } else {
             List {
               ForEach(rows) { row in

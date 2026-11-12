@@ -229,6 +229,9 @@ extension TranscriptChatCopy {
   public static let subagentListHint = "Shows the sub-agents running in this session"
   /// The open list when nothing in it is active any more.
   public static let noSubagentsRunning = "No sub-agents running"
+  /// Under `noSubagentsRunning`: where the ones that left the list went.
+  public static let finishedSubagentsStayInChat =
+    "Finished sub-agents stay in the chat, on the line that started them."
 
   /// The open list's title: `2 running · 1 idle`, `2 running`, `1 idle`, or `Sub-agents` when
   /// none is active.
