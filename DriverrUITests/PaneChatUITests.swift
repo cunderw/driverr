@@ -348,9 +348,9 @@ final class PaneChatUITests: XCTestCase {
 
     // Tap a thumbnail where a reader can see it: below the bar and the floating capsules (#84),
     // above the composer. Focus follows the newest turn, so with the keyboard up the first
-    // thumbnail in the tree is above the screen, and `isHittable` is true for one whose centre
-    // is in the capsules' band, where the bar takes the tap (#87). Settled first, because focus
-    // scrolls to the end and a correction follows.
+    // thumbnail in the tree is above the screen, and an element tap on the next one lands at
+    // its centre, in the capsules' band, where Show the Screen takes it and the viewer never
+    // opens (#87). Settled first, because focus scrolls to the end and a correction follows.
     usleep(1_500_000)
     let bandTop = chromeBottom(in: app)
     let bandBottom = composerTop(in: app) ?? app.keyboards.firstMatch.frame.minY
