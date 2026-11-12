@@ -42,8 +42,9 @@ for tool in python3 sips; do
 done
 
 readonly SIZES="1320x2868 1398x2034"
-# The darkest background a light capture may have on the row above the indicator. The light
-# captures measured 225 to 255 and the dark ones 32 to 34.
+# The darkest background a light capture may have on the row above the indicator; a capture
+# with anything darker there is judged as dark. The light captures measured 225 to 255 and
+# the dark tour's 0 to 50.
 readonly LIGHT=128
 # How far a column's two rows may differ and still count as the same, on a light capture and
 # on a dark one.
