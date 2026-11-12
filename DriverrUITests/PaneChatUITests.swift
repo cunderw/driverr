@@ -346,7 +346,38 @@ final class PaneChatUITests: XCTestCase {
       \(app.debugDescription)
       """)
 
-    thumbnail.tap()
+    // Tap a thumbnail where a reader can see it: below the bar and the floating capsules,
+    // above the composer. Focus follows the newest turn, so with the keyboard up the first
+    // thumbnail in the tree is above the screen, and `isHittable` is true for one whose centre
+    // is in the capsules' band, where the bar takes the tap (#87). Settled first, because focus
+    // scrolls to the end and a correction follows.
+    usleep(1_500_000)
+    let bandTop = [
+      app.navigationBars.firstMatch, element(app, "pane.chat.showScreen"),
+      element(app, "pane.chat.agentStop"),
+    ]
+    .filter(\.exists)
+    .map(\.frame.maxY)
+    .reduce(0, max)
+    let bandBottom = composerTop(in: app) ?? app.keyboards.firstMatch.frame.minY
+    let band = CGRect(x: 0, y: bandTop, width: 10_000, height: bandBottom - bandTop)
+    let visible = thumbnails.allElementsBoundByIndex
+      .map { ($0, $0.frame.intersection(band)) }
+      .filter { !$0.1.isNull && $0.1.height >= 24 }
+      .max { $0.1.height < $1.1.height }
+    guard let (onScreen, part) = visible else {
+      XCTFail(
+        """
+        No thumbnail shows between the bar (\(bandTop)) and the composer (\(bandBottom)) with the \
+        keyboard up, so there is nothing a reader could tap.
+        Tree was:
+        \(app.debugDescription)
+        """)
+      return
+    }
+    app.coordinate(withNormalizedOffset: .zero)
+      .withOffset(CGVector(dx: part.midX, dy: part.midY))
+      .tap()
 
     require(app, "chat.image.full", "Expected the full-size image after tapping a thumbnail")
     let opened = require(app, "chat.image.close", "Expected a Done button over the image")
@@ -384,7 +415,7 @@ final class PaneChatUITests: XCTestCase {
 
     requireGone(app, "chat.image.full", "Done must put the full-size image away")
     XCTAssertTrue(
-      thumbnail.waitForExistence(timeout: 5),
+      onScreen.waitForExistence(timeout: 5),
       "The conversation must still be there behind it.\nTree was:\n\(app.debugDescription)"
     )
   }
@@ -2558,19 +2589,32 @@ final class PaneChatUITests: XCTestCase {
     // The drag has to stay above the keyboard. The scroll view runs the whole way down the
     // window, so `swipeDown()` starts on the keys and scrolls nothing. Both ends come from the
     // chat's frame clipped to the keyboard's top, and the end also to the composer's.
+    //
+    // The start is also below the bar and the floating capsules, because the scroll view
+    // reaches up under both and a drag that starts on the bar never reaches it (#88).
     let chat = element(app, "pane.chat")
     let chatFrame = chat.frame
-    let visibleHeight = min(chatFrame.maxY, opened.minY) - chatFrame.minY
+    let visibleTop = [
+      app.navigationBars.firstMatch, element(app, "pane.chat.showScreen"),
+      element(app, "pane.chat.agentStop"),
+    ]
+    .filter(\.exists)
+    .map(\.frame.maxY)
+    .reduce(chatFrame.minY, max)
+    let visibleHeight = min(chatFrame.maxY, opened.minY) - visibleTop
     XCTAssertGreaterThan(
       visibleHeight, 100,
-      "Only \(visibleHeight) pt of conversation is visible above the keyboard, which is not "
-        + "enough to drag inside. Chat \(chatFrame), keyboard \(opened).")
+      "Only \(visibleHeight) pt of conversation is visible between the bar and the keyboard, "
+        + "which is not enough to drag inside. Chat \(chatFrame), top \(visibleTop), keyboard "
+        + "\(opened).")
     let start = chat.coordinate(
-      withNormalizedOffset: CGVector(dx: 0.5, dy: (visibleHeight * 0.15) / chatFrame.height))
+      withNormalizedOffset: CGVector(
+        dx: 0.5, dy: (visibleTop - chatFrame.minY + visibleHeight * 0.15) / chatFrame.height))
     // And above the composer: a drag that reaches the composer's card starts the keyboard's
     // interactive dismissal (`testDraggingOntoTheComposerTakesTheKeyboardDown`).
     let endY = min(
-      visibleHeight * 0.85, (composerTop(in: app) ?? opened.minY) - chatFrame.minY - 12)
+      visibleTop - chatFrame.minY + visibleHeight * 0.85,
+      (composerTop(in: app) ?? opened.minY) - chatFrame.minY - 12)
     let end = chat.coordinate(
       withNormalizedOffset: CGVector(dx: 0.5, dy: endY / chatFrame.height))
 
