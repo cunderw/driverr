@@ -253,41 +253,28 @@ final class ScreenshotTourUITests: XCTestCase {
     )
   }
 
-  /// Scrolls a sheet's form up until the top edge of `identifier`'s row meets the bottom edge
-  /// of `bar`, by drags that only ever move the content up.
-  ///
-  /// `align` corrects a small gap by first moving the other way, and on a sheet a drag that
-  /// moves the content down can pull the sheet down with it: on iPhone Duo the settings sheet
-  /// lost its bar and closed after the shot. Each drag here adds what the last one lost to
-  /// recognition, and the row rests within 3 pt of the bar, which the shot cannot tell apart.
-  private func alignUpward(
-    _ identifier: String,
+  /// Scrolls the settings form back until its first theme row's edge meets `bar`'s bottom
+  /// edge. By slow drags that hold before they lift, because a fling at the top of a sheet
+  /// resizes or dismisses it, and the System row is not in the tree until it is near the
+  /// screen.
+  private func showEveryTheme(
     under bar: XCUIElement,
+    form frame: CGRect,
     in app: XCUIApplication,
     file: StaticString = #filePath,
     line: UInt = #line
   ) {
-    let row = element(app, identifier)
+    let system = element(app, "settings.theme.system")
     let origin = app.coordinate(withNormalizedOffset: .zero)
-    let barBottom = bar.frame.maxY
-    var lost: CGFloat = 10
-    for _ in 0..<8 {
-      let before = row.frame.minY
-      let gap = before - barBottom
-      print("tour: '\(identifier)' row top \(before), bar bottom \(barBottom), gap \(gap)")
-      if gap <= 3 { break }
-      let start = origin.withOffset(CGVector(dx: bar.frame.midX, dy: barBottom + 300))
-      let end = start.withOffset(CGVector(dx: 0, dy: -(gap + lost)))
+    for _ in 0..<6 where !system.exists {
+      let start = origin.withOffset(CGVector(dx: frame.midX, dy: bar.frame.maxY + 40))
+      let end = start.withOffset(CGVector(dx: 0, dy: frame.height * 0.4))
       start.press(forDuration: 0.1, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.4)
-      let moved = before - row.frame.minY
-      if moved > 0 { lost = max(0, gap + lost - moved) }
     }
-    let gap = row.frame.minY - barBottom
     XCTAssertTrue(
-      abs(gap) <= 3,
-      "The '\(identifier)' row's top edge is \(gap) pt from the bar. Tree was:\n"
-        + app.debugDescription,
+      system.exists, "The System theme row never came back. Tree was:\n" + app.debugDescription,
       file: file, line: line)
+    align("settings.theme.system", under: bar, in: app, file: file, line: line)
   }
 
   /// Whether the host list is on screen beside the connected host's screen, which is the
@@ -484,8 +471,7 @@ final class ScreenshotTourUITests: XCTestCase {
     capture("pane-actions")
     // Dismiss the menu without choosing anything, by a tap beside it, and leave the terminal
     // tidy. Not `app.tap()`, which taps the middle of the screen: on iPhone Duo's outer display
-    // the menu is there, and the tap chose Rename. The rename prompt then stayed presented and
-    // took the settings sheet's bar away later in the tour.
+    // the menu is there, and the tap chose Rename.
     let menuItem = require(app, "pane.rename", "Expected the menu to be open").frame
     let screen = app.windows.firstMatch.frame
     let besideX =
@@ -515,26 +501,33 @@ final class ScreenshotTourUITests: XCTestCase {
     // Scrolled down to Font Size, which the caption names, so the shot holds the theme rows,
     // the fonts and the size. Dracula, because its purple accent shows the choice took effect.
     //
-    // The theme list, the fonts and Font Size need about 800 pt. A shorter form (iPhone Duo's
-    // outer display, the iPad's form sheet) would show only the last themes, with the rows
-    // above them ghosted under the bar, so there the whole theme list is shown instead, its
-    // first row's edge against the bar, and Font Size is below the fold. Aligned from the top,
-    // where the form opens, so every drag moves the content up; see `alignUpward`.
+    // Where the form is too short for that (iPhone Duo's outer display, the iPad's form
+    // sheet), Font Size at the bottom leaves only the last themes on screen, with the rows
+    // above them ghosted under the bar. There the theme list is brought back after the tap,
+    // its first row's edge against the bar, so every theme is in the shot and the fonts run on
+    // below it. Font Size is then below the fold.
     let form = app.collectionViews.containing(.any, identifier: "settings.theme.system").firstMatch
-    let bar = app.navigationBars["Settings"]
-    if form.frame.height >= 800 {
-      scroll(form, toRest: "settings.fontsize.value", in: app)
-    } else {
-      alignUpward("settings.theme.system", under: bar, in: app)
-    }
+    // Read now, because the System row that finds the form scrolls out of the tree.
+    let formFrame = form.frame
+    scroll(form, toRest: "settings.fontsize.value", in: app)
     let dracula = require(app, "settings.theme.dracula", "Expected the Dracula theme row")
     XCTAssertTrue(
-      dracula.isHittable && dracula.frame.minY >= bar.frame.maxY,
-      "The Dracula row is not on screen below the bar, so the shot would not show a chosen "
-        + "theme. Tree was:\n" + app.debugDescription
+      dracula.isHittable,
+      "The Dracula row is not on screen, so the shot would not show a chosen theme. Tree was:\n"
+        + app.debugDescription
     )
     dracula.tap()
     settle(app)
+    let bar = app.navigationBars["Settings"]
+    let nord = element(app, "settings.theme.nord")
+    if !(nord.exists && nord.frame.minY >= bar.frame.maxY) {
+      showEveryTheme(under: bar, form: formFrame, in: app)
+      settle(app)
+    }
+    XCTAssertTrue(
+      dracula.isHittable && dracula.frame.minY >= bar.frame.maxY,
+      "The chosen theme is not on screen below the bar. Tree was:\n" + app.debugDescription
+    )
     capture("settings")
     require(app, "settings.done", "Expected a way out of settings").tap()
   }
