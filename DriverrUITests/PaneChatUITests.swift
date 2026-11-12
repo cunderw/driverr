@@ -84,7 +84,8 @@ final class PaneChatUITests: XCTestCase {
     screenQuestion: Bool = false,
     screenQuestionHandover: Bool = false,
     usageLimited: Bool = false,
-    subagents: Bool = false
+    subagents: Bool = false,
+    endingSubagents: Bool = false
   ) -> XCUIApplication {
     XCUIDevice.shared.orientation = .portrait
     var flags: [String] = []
@@ -130,6 +131,9 @@ final class PaneChatUITests: XCTestCase {
     // Two spawn lines with a sub-agent file behind each: a finished plain spawn and a running
     // teammate.
     if subagents { flags += ["-uiTestingSubagents"] }
+    // Finished spawn lines, and one off-page sub-agent whose file stops reading as running
+    // about half a minute after the list is read.
+    if endingSubagents { flags += ["-uiTestingSubagentsEnding"] }
     // Seeded, because this class is not about connecting.
     let app = connectedHostApp(flags)
     require(app, "session.workspace", "Expected the session tree")
@@ -772,15 +776,16 @@ final class PaneChatUITests: XCTestCase {
     add(closed)
   }
 
-  /// The bar's sub-agents button opens a list naming every sub-agent the session's meta files
-  /// hold, including one whose spawn line is not on the page, and a row opens that sub-agent.
+  /// The bar's sub-agents button counts the session's active sub-agents and opens a list of
+  /// only those, and a row opens that sub-agent. The analyst is finished on the page and the
+  /// lookup by its meta, so the running teammate is the one row.
   ///
   /// The claim is wiring: the list command through the model to the bar's button and the
   /// sheet at `ContentView`'s root, and a row's tap to `openSubagent` once the sheet is gone.
-  /// The mapping and the state merge are kit tests (`SubagentListTests`,
-  /// `SubagentListReaderTests`). The slow transcript makes the page, and so the list, arrive
-  /// after the chat is up, as on a phone.
-  func testTheSubagentListNamesEverySubagentAndARowOpensOne() {
+  /// The mapping, the state merge and what counts as active are kit tests
+  /// (`SubagentListTests`, `SubagentListReaderTests`). The slow transcript makes the page, and
+  /// so the list, arrive after the chat is up, as on a phone.
+  func testTheSubagentListNamesOnlyTheActiveSubagentsAndARowOpensOne() {
     let app = connectedHost(slowTranscript: true, subagents: true)
 
     tapPane(app, titled: "needs a decision")
@@ -788,41 +793,116 @@ final class PaneChatUITests: XCTestCase {
     let button = require(
       app, "pane.subagents", "Expected the sub-agents button in the pane bar", timeout: 20)
     XCTAssertEqual(button.label, "Sub-agents")
-    XCTAssertEqual(button.value as? String, "3", "Expected the bar to count every meta file")
+    XCTAssertEqual(button.value as? String, "1", "Expected the bar to count the running one")
     button.tap()
 
     let rows = app.descendants(matching: .any).matching(identifier: "pane.chat.subagents.row")
-    // Spawned before the page's first turn, so only the meta files know it.
-    let lookup = rows.element(
-      matching: NSPredicate(format: "label CONTAINS %@", "Find the config loader's callers"))
+    let verifier = rows.element(matching: NSPredicate(format: "label CONTAINS %@", "verifier-7"))
     XCTAssertTrue(
-      lookup.waitForExistence(timeout: 10),
-      "Expected the off-page sub-agent's row.\nTree was:\n\(app.debugDescription)")
-    XCTAssertEqual(rows.count, 3, "Expected one row per meta file")
+      verifier.waitForExistence(timeout: 10),
+      "Expected the running teammate's row.\nTree was:\n\(app.debugDescription)")
+    XCTAssertEqual(rows.count, 1, "Expected only the active sub-agent")
+    XCTAssertFalse(
+      rows.element(matching: NSPredicate(format: "label CONTAINS %@", "Find the config loader's callers"))
+        .exists,
+      "The finished off-page lookup must not be listed")
     XCTAssertTrue(
-      rows.element(matching: NSPredicate(format: "label CONTAINS %@", "verifier-7")).exists,
-      "Expected the teammate's row")
-    XCTAssertTrue(
-      app.navigationBars.staticTexts["3 sub-agents · 1 running"].exists,
-      "Expected the sheet's title to count the agents and the running one.\nTree was:\n"
-        + app.debugDescription)
+      app.navigationBars.staticTexts["1 running"].exists,
+      "Expected the sheet's title to count the running one.\nTree was:\n" + app.debugDescription)
     let open = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
     open.name = "subagent-sheet"
     open.lifetime = .keepAlways
     add(open)
-    lookup.tap()
+    verifier.tap()
 
     // XCUITest sees through a sheet still sliding away, so wait for it to be gone.
     requireGone(app, "pane.chat.subagents.row", "A row must close the list")
     let chat = require(app, "subagent.chat", "Expected the sub-agent's conversation")
     let prompt = chat.descendants(matching: .any).matching(identifier: "pane.chat.turn.human")
-      .element(matching: NSPredicate(format: "label CONTAINS %@", "Find every caller of load_config"))
+      .element(matching: NSPredicate(format: "label CONTAINS %@", "Review the config loader on the latest"))
     XCTAssertTrue(
       prompt.waitForExistence(timeout: 20),
-      "Expected the off-page sub-agent's own prompt.\nTree was:\n\(app.debugDescription)")
+      "Expected the teammate's own prompt.\nTree was:\n\(app.debugDescription)")
 
     leaveSubagent(app)
     require(app, "pane.subagents", "The button must be on the pane's bar after Back")
+  }
+
+  /// The list stays open when its last active sub-agent ends, and says none is running instead
+  /// of showing a stale row; the bar's button goes. The ending is the off-page lookup's file
+  /// passing the live window, on the sheet's and the bar's 30 s tick, so this test waits that
+  /// long by design. No cheaper tier runs the two ticks against the presented sheet.
+  func testTheSubagentListEmptiesWhenItsLastActiveSubagentEnds() {
+    let app = connectedHost(slowTranscript: true, endingSubagents: true)
+
+    tapPane(app, titled: "needs a decision")
+    require(app, "pane.chat", "Expected the pane to open on its chat")
+    let button = require(
+      app, "pane.subagents", "Expected the sub-agents button in the pane bar", timeout: 20)
+    XCTAssertEqual(button.value as? String, "1", "Expected the bar to count the running lookup")
+    button.tap()
+
+    let rows = app.descendants(matching: .any).matching(identifier: "pane.chat.subagents.row")
+    XCTAssertTrue(
+      rows.element(matching: NSPredicate(format: "label CONTAINS %@", "Find the config loader's callers"))
+        .waitForExistence(timeout: 10),
+      "Expected the running lookup's row.\nTree was:\n\(app.debugDescription)")
+    XCTAssertEqual(rows.count, 1, "Expected only the active sub-agent")
+
+    let empty = app.staticTexts["No sub-agents running"]
+    XCTAssertTrue(
+      empty.waitForExistence(timeout: 45),
+      "Expected the open list to say none is running once the lookup ended.\nTree was:\n"
+        + app.debugDescription)
+    XCTAssertEqual(rows.count, 0, "The ended lookup's row must leave the open list")
+    XCTAssertTrue(
+      app.navigationBars.staticTexts["Sub-agents"].exists,
+      "Expected the title to stop counting.\nTree was:\n" + app.debugDescription)
+    let ended = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+    ended.name = "subagent-sheet-empty"
+    ended.lifetime = .keepAlways
+    add(ended)
+
+    require(app, "pane.subagents.done", "Expected Done on the emptied list").tap()
+    requireGone(app, "pane.subagents.done", "Done must close the list")
+    requireGone(
+      app, "pane.subagents", "The bar's button must go once nothing is active", timeout: 40)
+    let gone = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+    gone.name = "subagent-button-gone"
+    gone.lifetime = .keepAlways
+    add(gone)
+  }
+
+  /// A sub-agent opened from the list stays open when it stops being active: nothing that
+  /// shows it reads the list. The bar's button is gone on the way back, which is what proves
+  /// the lookup ended while its chat was up.
+  func testASubagentOpenWhenItEndsStaysOpen() {
+    let app = connectedHost(slowTranscript: true, endingSubagents: true)
+
+    tapPane(app, titled: "needs a decision")
+    require(app, "pane.chat", "Expected the pane to open on its chat")
+    require(app, "pane.subagents", "Expected the sub-agents button in the pane bar", timeout: 20)
+      .tap()
+    let lookup = app.descendants(matching: .any).matching(identifier: "pane.chat.subagents.row")
+      .element(matching: NSPredicate(format: "label CONTAINS %@", "Find the config loader's callers"))
+    XCTAssertTrue(
+      lookup.waitForExistence(timeout: 10),
+      "Expected the running lookup's row.\nTree was:\n\(app.debugDescription)")
+    lookup.tap()
+    requireGone(app, "pane.chat.subagents.row", "A row must close the list")
+    let chat = require(app, "subagent.chat", "Expected the sub-agent's conversation")
+
+    // Past the live window and a tick of the bar's clock. A clock is the subject, so this is a
+    // wait on time, not on a state; the button's absence below proves the time passed.
+    XCTAssertFalse(
+      chat.waitForNonExistence(timeout: 40), "The sub-agent's chat must stay open when it ends")
+    let prompt = chat.descendants(matching: .any).matching(identifier: "pane.chat.turn.human")
+      .element(matching: NSPredicate(format: "label CONTAINS %@", "Find every caller of load_config"))
+    XCTAssertTrue(prompt.exists, "Expected the lookup's own prompt still on screen")
+
+    leaveSubagent(app)
+    require(app, "composer.text", "Expected the pane's own chat after Back")
+    requireGone(app, "pane.subagents", "The lookup must have ended while its chat was up")
   }
 
   /// Leaving the pane scene closes a sub-agent opened in it, so coming back finds the pane's

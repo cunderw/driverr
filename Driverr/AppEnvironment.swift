@@ -1283,6 +1283,7 @@ struct AppEnvironment {
     if isTranscriptTaskState { return taskStateTranscript }
     if isTranscriptManySubagents { return manySubagentTranscript }
     if isTranscriptLongSubagent { return longSubagentTranscript }
+    if isTranscriptEndingSubagents { return endingSubagentTranscript }
     if isTranscriptSubagents { return subagentTranscript }
     if isTranscriptUsageLimited { return usageLimitedTranscript }
     if isTranscriptUsageLimitReset { return usageLimitResetTranscript }
@@ -2397,6 +2398,71 @@ struct AppEnvironment {
     ),
   ])
 
+  /// A session whose one active sub-agent stops being active about half a minute after the
+  /// list is read: the analyst and the verifier are finished on the page, and the lookup,
+  /// whose spawn is not on the page, last wrote its file 35 s before each read. Off the page a
+  /// file written within `SubagentList.liveWindow` reads as running, so the bar counts one,
+  /// and the next tick of the bar and of the open list finds none. Nothing re-reads the list
+  /// in that time: the page does not grow, so only the two-minute staleness would.
+  static let endingSubagentTranscript = FakeTranscriptHost(
+    sessionID: "3f8c1d20-0000-4000-8000-000000000003",
+    turns: [
+      .init(speaker: .human, text: "plan and review the config loader", secondsAgo: 1800),
+      .init(
+        speaker: .toolBlocks([
+          .spawn(
+            subagentType: "analyst", name: "analyst-7",
+            description: "Plan the config loader",
+            launch: .async(agentID: "aanalyst7", end: .init(secondsAgo: 1200)))
+        ]),
+        secondsAgo: 1700
+      ),
+      .init(
+        speaker: .toolBlocks([
+          .spawn(
+            subagentType: "verifier", name: "verifier-7",
+            description: "Review the config loader",
+            launch: .async(agentID: "averifier7", end: .init(secondsAgo: 300)))
+        ]),
+        secondsAgo: 1000
+      ),
+      .init(
+        speaker: .assistant,
+        text: "The analyst and the verifier are done. The lookup is finishing.",
+        secondsAgo: 60
+      ),
+    ]
+  ).serving([
+    subagentTranscript.subagents[0],
+    FakeTranscriptHost.SubagentFixture(
+      agentID: "averifier7",
+      name: "verifier-7",
+      secondsAgo: 300,
+      prompt: "Review the config loader on the latest commit and report your findings.",
+      turns: [
+        .init(speaker: .assistant, text: "No findings on the latest commit.", secondsAgo: 310)
+      ],
+      description: "Review the config loader",
+      agentType: "verifier",
+      spawnedSecondsAgo: 1000
+    ),
+    FakeTranscriptHost.SubagentFixture(
+      agentID: "a0lookup0000000001",
+      toolUseID: "toolu_earlier_lookup",
+      secondsAgo: 35,
+      prompt: "Find every caller of load_config and list the file and line of each.",
+      turns: [
+        .init(
+          speaker: .tools([ToolCall(name: "Grep", target: "load_config")]),
+          secondsAgo: 35
+        )
+      ],
+      description: "Find the config loader's callers",
+      agentType: "Explore",
+      spawnedSecondsAgo: 2000
+    ),
+  ])
+
   /// `subagentTranscript` with 57 more finished lookups behind it, 60 in all, so the open
   /// list reaches its height cap, scrolls inside it, and ends on the host's cap of 50.
   static let manySubagentTranscript = subagentTranscript.serving(
@@ -2455,6 +2521,12 @@ struct AppEnvironment {
   /// Whether this launch should serve the session whose spawn lines open sub-agents.
   static var isTranscriptSubagents: Bool {
     ProcessInfo.processInfo.arguments.contains("-uiTestingSubagents")
+  }
+
+  /// Whether this launch should serve the session whose last active sub-agent ends while
+  /// the pane is open.
+  static var isTranscriptEndingSubagents: Bool {
+    ProcessInfo.processInfo.arguments.contains("-uiTestingSubagentsEnding")
   }
 
   /// Whether this launch should serve the session whose spawned work is in every state.

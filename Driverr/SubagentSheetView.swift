@@ -1,12 +1,16 @@
 import DriverrCore
 import SwiftUI
 
-/// Every sub-agent the pane's session spawned, in a sheet the bar's sub-agents button opens.
-/// A row opens that sub-agent's chat, as its spawn line does.
+/// The pane's session's active sub-agents, in a sheet the bar's sub-agents button opens: the
+/// running ones and the freshly idle (`SubagentList.activeRows(merging:asOf:)`). A row opens
+/// that sub-agent's chat, as its spawn line does. A finished one is reached from its spawn line.
 ///
 /// The rows come from the session's meta files (`PaneTranscriptModel.subagentList`), so an
 /// agent whose spawn line is far up the session is listed. Presented by
 /// `TerminalSceneSheets`, because the detail column must not present (CLAUDE.md).
+///
+/// **The last one ending leaves the sheet open**, on `noSubagentsRunning` with Done, rather
+/// than dismissing it under the user's finger. The bar's button goes on its own tick.
 ///
 /// Everything arrives as an argument, so nothing here reads an environment the sheet does not
 /// inherit.
@@ -38,21 +42,21 @@ struct SubagentSheetView: View {
   private var sheet: some View {
     NavigationStack {
       TimelineView(.periodic(from: .now, by: Self.tick)) { context in
-        let rows = list.rows(merging: turns, asOf: context.date)
+        let rows = list.activeRows(merging: turns, asOf: context.date)
         let running = rows.filter { $0.state == .running }.count
-        List {
-          Section {
-            ForEach(rows) { row in
-              rowButton(row, asOf: context.date)
-            }
-          } footer: {
-            if list.total > rows.count {
-              Text(TranscriptChatCopy.subagentListCapped(shown: rows.count, of: list.total))
-                .accessibilityIdentifier("pane.chat.subagents.capped")
+        Group {
+          if rows.isEmpty {
+            ContentUnavailableView(TranscriptChatCopy.noSubagentsRunning, systemImage: "person.2")
+          } else {
+            List {
+              ForEach(rows) { row in
+                rowButton(row, asOf: context.date)
+              }
             }
           }
         }
-        .navigationTitle(TranscriptChatCopy.subagentCount(total: list.total, running: running))
+        .navigationTitle(
+          TranscriptChatCopy.subagentActiveTitle(running: running, idle: rows.count - running))
         .navigationBarTitleDisplayMode(.inline)
       }
       .toolbar {

@@ -169,12 +169,69 @@ struct SubagentListTests {
     #expect(rows.first?.statusLine(asOf: Self.now) == "Running · 16m")
   }
 
-  @Test("the header counts every sub-agent and the running ones")
-  func header() {
-    #expect(TranscriptChatCopy.subagentCount(total: 3, running: 1) == "3 sub-agents · 1 running")
-    #expect(TranscriptChatCopy.subagentCount(total: 1, running: 0) == "1 sub-agent")
-    #expect(TranscriptChatCopy.subagentCount(total: 2, running: 2) == "2 sub-agents · 2 running")
-    #expect(TranscriptChatCopy.subagentListCapped(shown: 50, of: 243) == "The newest 50 of 243")
+  @Test("the title counts the running and the idle, and names the list when neither")
+  func title() {
+    #expect(TranscriptChatCopy.subagentActiveTitle(running: 1, idle: 0) == "1 running")
+    #expect(TranscriptChatCopy.subagentActiveTitle(running: 2, idle: 1) == "2 running · 1 idle")
+    #expect(TranscriptChatCopy.subagentActiveTitle(running: 0, idle: 3) == "3 idle")
+    #expect(TranscriptChatCopy.subagentActiveTitle(running: 0, idle: 0) == "Sub-agents")
+  }
+
+  // MARK: - Active rows
+
+  @Test("only running and freshly idle rows are active, in the list's order")
+  func activeRows() {
+    let list = SubagentList(total: 4, summaries: [Self.finished, Self.live, Self.plain, Self.teammate])
+    let rows = list.activeRows(
+      merging: [
+        // Written 10m ago and idle: still active.
+        Self.spawn(.teammate(name: "verifier-7"), .idle, id: "t1"),
+        Self.spawn(.toolUse(id: "toolu_1"), .failed, id: "t2"),
+      ],
+      asOf: Self.now)
+    // a0006 runs by its file's age; a0005 is finished by its meta; a0004 failed on the page.
+    #expect(rows.map(\.id) == ["a0006", "averifier-0123"])
+    #expect(rows.map(\.state) == [.running, .idle])
+  }
+
+  @Test("finished, failed, stopped and unknown rows are not active")
+  func endedRowsAreNotActive() {
+    for state: TaskProgress.State? in [.finished, .failed, .stopped, nil] {
+      let row = SubagentRow(summary: Self.live, task: nil, state: state)
+      #expect(!row.isActive(asOf: Self.now), "\(String(describing: state))")
+    }
+  }
+
+  @Test("an idle row is active inside the idle window and not at its edge")
+  func theIdleWindow() {
+    func idle(writtenAgo seconds: TimeInterval?) -> SubagentRow {
+      SubagentRow(
+        summary: SubagentSummary(id: "a", name: "n", writtenAt: seconds.map(Self.ago)),
+        task: TaskProgress(state: .idle), state: .idle)
+    }
+    #expect(SubagentList.idleWindow == 30 * 60)
+    #expect(idle(writtenAgo: SubagentList.idleWindow - 1).isActive(asOf: Self.now))
+    #expect(!idle(writtenAgo: SubagentList.idleWindow).isActive(asOf: Self.now))
+    #expect(!idle(writtenAgo: nil).isActive(asOf: Self.now), "no file says nothing about when")
+  }
+
+  /// The known limit: nothing on the page ends it, so it stays active. See `isActive(asOf:)`.
+  @Test("a row the page reports running stays active however long its file has been quiet")
+  func pageRunningDoesNotAge() {
+    let quiet = SubagentSummary(
+      id: "a0007", toolUseID: "toolu_7", spawnedAt: Self.ago(86_400), writtenAt: Self.ago(80_000))
+    let rows = SubagentList(total: 1, summaries: [quiet]).activeRows(
+      merging: [Self.spawn(.toolUse(id: "toolu_7"), .running, id: "t1")], asOf: Self.now)
+    #expect(rows.map(\.id) == ["a0007"])
+  }
+
+  @Test("a running row read off the file stops being active when the live window passes")
+  func fileRunningAgesOut() {
+    let list = SubagentList(total: 1, summaries: [Self.live])
+    #expect(list.activeRows(merging: [], asOf: Self.now).count == 1)
+    // Five seconds old now, so 55 more seconds reaches the window's edge.
+    let later = Self.now.addingTimeInterval(SubagentList.liveWindow - 5)
+    #expect(list.activeRows(merging: [], asOf: later).isEmpty)
   }
 
   @Test("a row reads as one statement")
