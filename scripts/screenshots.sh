@@ -132,9 +132,17 @@ trap restore_devices EXIT
 set_dark() {
   local udid="$1" device="$2" found read_back
   found="$(xcrun simctl ui "$udid" appearance 2>/dev/null | tr -d '[:space:]')" || found=""
-  case "$found" in
-    light|dark) PRIOR_APPEARANCES+=("$udid=$found") ;;
-  esac
+  # Only the first appearance a run found is kept, so a kind asked for twice does not record
+  # the dark it set the first time and leave the device dark.
+  local entry seen=0
+  for entry in ${PRIOR_APPEARANCES[@]+"${PRIOR_APPEARANCES[@]}"}; do
+    [ "${entry%%=*}" != "$udid" ] || seen=1
+  done
+  if [ "$seen" = 0 ]; then
+    case "$found" in
+      light|dark) PRIOR_APPEARANCES+=("$udid=$found") ;;
+    esac
+  fi
   xcrun simctl ui "$udid" appearance dark \
     || fail "could not set $device ($udid) to dark appearance"
   read_back="$(xcrun simctl ui "$udid" appearance 2>/dev/null | tr -d '[:space:]')" || read_back=""

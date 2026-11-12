@@ -2918,12 +2918,18 @@ struct AppEnvironment {
   /// A plausible agent session, sized to fill a terminal on both store devices.
   ///
   /// Every line is under 48 columns, because the 6.9-inch portrait terminal is 55 wide and a
-  /// wrapped line looks like a bug. It is longer than either device's terminal with the
-  /// keyboard down, because the iPad then shows about 68 rows and the phone about 44, and a
-  /// terminal shows its tail, so both devices end on the same lines with no blank rows under
-  /// them. It ends on a question, which is what the app is about.
+  /// wrapped line looks like a bug. It is longer than every store device's terminal, because
+  /// the iPad with the keyboard down shows 71 rows, and a terminal shows its tail, so every
+  /// device ends on the same lines with no blank rows under them. It ends on a question, which
+  /// is what the app is about.
+  ///
+  /// **The lines 15, 26, 31 and 70 from the end (the last line is 0) are blank.** The top row
+  /// of a terminal can be cut where the view meets the bar, and those are the rows that sit
+  /// there in the tour: iPhone Duo with the keyboard down and up, the 6.9-inch phone with the
+  /// keyboard up, and the iPad with the keyboard down. A cut blank row draws nothing. Count
+  /// again after any change here, and look at the top of each terminal capture.
   static let demoTranscript = [
-    "carson@workbox:~/api$ herdr attach api-refactor",
+    "dev@workbox:~/api$ herdr attach api-refactor",
     "[herdr] attached to pane 3 (claude)",
     "",
     "● Task: make the connection pool async",
@@ -2939,6 +2945,7 @@ struct AppEnvironment {
     "",
     "● Reading src/db/config.rs",
     "  max_connections = 16, idle_timeout = 30s",
+    "  acquire_timeout = 5s",
     "",
     "● Grep \"spawn_blocking\" (2 files)",
     "  src/db/pool.rs:41",
@@ -2965,6 +2972,7 @@ struct AppEnvironment {
     "  are already async.",
     "",
     "● Edited src/db/pool.rs",
+    "  1 addition, 1 removal",
     "  -  pub fn open_session(&self)",
     "  +  pub async fn open_session(&self)",
     "",
@@ -2973,11 +2981,9 @@ struct AppEnvironment {
     "  +  let conn = pool.acquire().await;",
     "",
     "● cargo check",
-    "   Compiling driverr-api v0.4.1",
     "    Finished dev [unoptimized] in 4.21s",
     "",
     "● cargo clippy",
-    "    Checking driverr-api v0.4.1",
     "    Finished dev [unoptimized] in 2.87s",
     "  No warnings.",
     "",
@@ -2988,9 +2994,11 @@ struct AppEnvironment {
     "● Reading tests/session.rs",
     "  Both failures call open_session from a",
     "  sync test. They need #[tokio::test].",
+    "  The fix is one attribute each.",
     "",
     "● The pool is async now. Migrating the two",
     "  call sites changes the public API.",
+    "  Both are in src/routes/session.rs.",
     "",
     "  Proceed with the migration? (y/n)",
     "",

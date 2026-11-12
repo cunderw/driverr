@@ -18,15 +18,14 @@
 # bottom edge, which read as an indicator in three of five captures.
 #
 # A light capture and a dark one are judged with different tolerances. On a light capture a
-# column counts as crossing the indicator when the two rows differ by more than 25. The dark
-# indicator sits within 25 of its background, so a dark capture that drew it read as "none"
-# at that tolerance. A dark capture is judged at 4 instead: the dark tour's captures measured
-# the two rows identical in every sampled column, so any column that differs is something
-# to look at. The one exception is content that runs off the bottom edge: the pane switcher's
+# column counts as crossing the indicator when the two rows differ by more than 25. A dark
+# indicator reads about 25 above its background (53 to 58 on 28 to 32, measured on Driverr
+# iPhone 17 captures from scripts/look.sh), so 25 sits right at its edge and a dark capture
+# that drew it read as "none". A dark capture is judged at 4 instead, which that indicator
+# clears with a wide margin. The dark tour's captures measured the two rows identical in
+# every sampled column, except where content runs off the bottom edge: the pane switcher's
 # list put one tile's label across one of the 50 columns, and the indicator crosses nine in
-# ten. So a dark capture reads "none" with up to one column in ten differing. No dark capture
-# that drew the indicator has been measured, so a dark "none" is the rows being the same, not
-# a match against a known indicator. Open the captures.
+# ten. So a dark capture reads "none" with up to one column in ten differing.
 
 set -euo pipefail
 
