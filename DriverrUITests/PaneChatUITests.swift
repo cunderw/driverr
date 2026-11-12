@@ -346,19 +346,13 @@ final class PaneChatUITests: XCTestCase {
       \(app.debugDescription)
       """)
 
-    // Tap a thumbnail where a reader can see it: below the bar and the floating capsules,
+    // Tap a thumbnail where a reader can see it: below the bar and the floating capsules (#84),
     // above the composer. Focus follows the newest turn, so with the keyboard up the first
     // thumbnail in the tree is above the screen, and `isHittable` is true for one whose centre
     // is in the capsules' band, where the bar takes the tap (#87). Settled first, because focus
     // scrolls to the end and a correction follows.
     usleep(1_500_000)
-    let bandTop = [
-      app.navigationBars.firstMatch, element(app, "pane.chat.showScreen"),
-      element(app, "pane.chat.agentStop"),
-    ]
-    .filter(\.exists)
-    .map(\.frame.maxY)
-    .reduce(0, max)
+    let bandTop = chromeBottom(in: app)
     let bandBottom = composerTop(in: app) ?? app.keyboards.firstMatch.frame.minY
     let band = CGRect(x: 0, y: bandTop, width: 10_000, height: bandBottom - bandTop)
     let visible = thumbnails.allElementsBoundByIndex
@@ -2190,6 +2184,21 @@ final class PaneChatUITests: XCTestCase {
       "A stalled page always has a way forward, so the control must be present")
   }
 
+  /// The lowest edge of what floats over the top of the chat: the navigation bar and, when the
+  /// pane is blocked or failed, the stop notice and Show the Screen capsules (a top
+  /// `safeAreaBar`, #84). The scroll view reaches up under all of them, so a point derived from
+  /// `pane.chat`'s frame can land on the bar, and a drag or tap there never reaches the chat.
+  /// `floor` is the chat's own top, for a caller that has it.
+  private func chromeBottom(in app: XCUIApplication, floor: CGFloat = 0) -> CGFloat {
+    [
+      app.navigationBars.firstMatch, element(app, "pane.chat.showScreen"),
+      element(app, "pane.chat.agentStop"),
+    ]
+    .filter(\.exists)
+    .map(\.frame.maxY)
+    .reduce(floor, max)
+  }
+
   /// The top of the composer card, which is the bottom of what a reader can see. The scroll
   /// view runs on underneath the card.
   ///
@@ -2590,17 +2599,11 @@ final class PaneChatUITests: XCTestCase {
     // window, so `swipeDown()` starts on the keys and scrolls nothing. Both ends come from the
     // chat's frame clipped to the keyboard's top, and the end also to the composer's.
     //
-    // The start is also below the bar and the floating capsules, because the scroll view
-    // reaches up under both and a drag that starts on the bar never reaches it (#88).
+    // The start is also below the bar and the floating capsules (#84): the scroll view reaches
+    // up under both, and a drag that starts on the bar never reaches it (#88).
     let chat = element(app, "pane.chat")
     let chatFrame = chat.frame
-    let visibleTop = [
-      app.navigationBars.firstMatch, element(app, "pane.chat.showScreen"),
-      element(app, "pane.chat.agentStop"),
-    ]
-    .filter(\.exists)
-    .map(\.frame.maxY)
-    .reduce(chatFrame.minY, max)
+    let visibleTop = chromeBottom(in: app, floor: chatFrame.minY)
     let visibleHeight = min(chatFrame.maxY, opened.minY) - visibleTop
     XCTAssertGreaterThan(
       visibleHeight, 100,
