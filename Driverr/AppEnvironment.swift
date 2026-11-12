@@ -2398,14 +2398,15 @@ struct AppEnvironment {
     ),
   ])
 
-  /// A session whose one active sub-agent stops being active about half a minute after the
-  /// list is read: the analyst and the verifier are finished on the page, and the lookup,
-  /// whose spawn is not on the page, last wrote its file 35 s before each read. Off the page a
-  /// file written within `SubagentList.liveWindow` reads as running, so the bar counts one,
-  /// and the next tick of the bar and of the open list finds none. Nothing re-reads the list
-  /// in that time: the page does not grow, so only the two-minute staleness would.
+  /// A session whose one active sub-agent stops being active about forty seconds after the
+  /// fixture is built, at launch: the analyst and the verifier are finished on the page, and
+  /// the lookup, whose spawn is not on the page, stopped writing its file 20 s before then.
+  /// Off the page a file written within `SubagentList.liveWindow` reads as running, so the bar
+  /// counts one, and the first tick of the bar and of the open list after the window finds
+  /// none. The time is fixed, not `secondsAgo`, because the list is read again whenever the
+  /// page refreshes and `secondsAgo` would find the file as fresh every time.
   static let endingSubagentTranscript = FakeTranscriptHost(
-    sessionID: "3f8c1d20-0000-4000-8000-000000000003",
+    sessionID: "3f8c1d20-0000-4000-8000-000000000002",
     turns: [
       .init(speaker: .human, text: "plan and review the config loader", secondsAgo: 1800),
       .init(
@@ -2449,17 +2450,18 @@ struct AppEnvironment {
     FakeTranscriptHost.SubagentFixture(
       agentID: "a0lookup0000000001",
       toolUseID: "toolu_earlier_lookup",
-      secondsAgo: 35,
+      secondsAgo: 20,
       prompt: "Find every caller of load_config and list the file and line of each.",
       turns: [
         .init(
           speaker: .tools([ToolCall(name: "Grep", target: "load_config")]),
-          secondsAgo: 35
+          secondsAgo: 20
         )
       ],
       description: "Find the config loader's callers",
       agentType: "Explore",
-      spawnedSecondsAgo: 2000
+      spawnedSecondsAgo: 2000,
+      stoppedWritingAt: Date.now.addingTimeInterval(-20)
     ),
   ])
 

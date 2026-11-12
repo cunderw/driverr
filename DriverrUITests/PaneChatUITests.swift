@@ -830,8 +830,9 @@ final class PaneChatUITests: XCTestCase {
 
   /// The list stays open when its last active sub-agent ends, and says none is running instead
   /// of showing a stale row; the bar's button goes. The ending is the off-page lookup's file
-  /// passing the live window, on the sheet's and the bar's 30 s tick, so this test waits that
-  /// long by design. No cheaper tier runs the two ticks against the presented sheet.
+  /// passing the live window about forty seconds after launch, seen on the sheet's and the
+  /// bar's 30 s tick, so this test waits that long by design. No cheaper tier runs the two
+  /// ticks against the presented sheet.
   func testTheSubagentListEmptiesWhenItsLastActiveSubagentEnds() {
     let app = connectedHost(slowTranscript: true, endingSubagents: true)
 
@@ -851,7 +852,7 @@ final class PaneChatUITests: XCTestCase {
 
     let empty = app.staticTexts["No sub-agents running"]
     XCTAssertTrue(
-      empty.waitForExistence(timeout: 45),
+      empty.waitForExistence(timeout: 75),
       "Expected the open list to say none is running once the lookup ended.\nTree was:\n"
         + app.debugDescription)
     XCTAssertEqual(rows.count, 0, "The ended lookup's row must leave the open list")
@@ -892,17 +893,18 @@ final class PaneChatUITests: XCTestCase {
     requireGone(app, "pane.chat.subagents.row", "A row must close the list")
     let chat = require(app, "subagent.chat", "Expected the sub-agent's conversation")
 
-    // Past the live window and a tick of the bar's clock. A clock is the subject, so this is a
-    // wait on time, not on a state; the button's absence below proves the time passed.
+    // Past the live window, about forty seconds after launch. A clock is the subject, so this
+    // is a wait on time, not on a state; the button's absence below proves the time passed.
     XCTAssertFalse(
-      chat.waitForNonExistence(timeout: 40), "The sub-agent's chat must stay open when it ends")
+      chat.waitForNonExistence(timeout: 60), "The sub-agent's chat must stay open when it ends")
     let prompt = chat.descendants(matching: .any).matching(identifier: "pane.chat.turn.human")
       .element(matching: NSPredicate(format: "label CONTAINS %@", "Find every caller of load_config"))
     XCTAssertTrue(prompt.exists, "Expected the lookup's own prompt still on screen")
 
     leaveSubagent(app)
     require(app, "composer.text", "Expected the pane's own chat after Back")
-    requireGone(app, "pane.subagents", "The lookup must have ended while its chat was up")
+    requireGone(
+      app, "pane.subagents", "The lookup must have ended while its chat was up", timeout: 35)
   }
 
   /// Leaving the pane scene closes a sub-agent opened in it, so coming back finds the pane's

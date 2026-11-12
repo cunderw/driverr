@@ -345,6 +345,10 @@ public struct FakeTranscriptHost: Sendable {
     /// How long ago the sub-agent was spawned: its first record's time, the list's sort key.
     /// `secondsAgo`, the last write, when not given.
     public let spawnedSecondsAgo: TimeInterval?
+    /// When the file was last written, as a fixed time, for a sub-agent that has stopped
+    /// writing. `secondsAgo` moves with every answer, so a file it describes never ages, and
+    /// a list read again finds it as fresh as before. `nil` uses `secondsAgo`.
+    public let stoppedWritingAt: Date?
 
     public init(
       agentID: String,
@@ -358,7 +362,8 @@ public struct FakeTranscriptHost: Sendable {
       description: String? = nil,
       agentType: String? = nil,
       isFinished: Bool = false,
-      spawnedSecondsAgo: TimeInterval? = nil
+      spawnedSecondsAgo: TimeInterval? = nil,
+      stoppedWritingAt: Date? = nil
     ) {
       self.agentID = agentID
       self.toolUseID = toolUseID
@@ -372,6 +377,13 @@ public struct FakeTranscriptHost: Sendable {
       self.agentType = agentType
       self.isFinished = isFinished
       self.spawnedSecondsAgo = spawnedSecondsAgo
+      self.stoppedWritingAt = stoppedWritingAt
+    }
+
+    /// The file's mtime as epoch seconds, as of `now`.
+    func modifiedEpoch(asOf now: Date) -> Int {
+      if let stoppedWritingAt { return Int(stoppedWritingAt.timeIntervalSince1970) }
+      return Int(now.timeIntervalSince1970) - Int(secondsAgo)
     }
 
     /// The meta file's one line, in the two shapes `SubagentSummary` describes.
@@ -636,7 +648,7 @@ public struct FakeTranscriptHost: Sendable {
       return false
     }
     let lines = matches.map { fixture -> String in
-      let mtime = epoch - Int(fixture.secondsAgo)
+      let mtime = fixture.modifiedEpoch(asOf: now)
       let size = fixture.fileSizeInBytes ?? subagentRecords(of: fixture, asOf: now).utf8.count
       return "\(mtime)\t\(size)\t\(fixture.fileName)"
     }
@@ -649,7 +661,7 @@ public struct FakeTranscriptHost: Sendable {
     let dir = "\(directory)/subagents"
     let lines = subagentFixture(named: command).map { fixture -> String in
       let size = fixture.fileSizeInBytes ?? subagentRecords(of: fixture, asOf: now).utf8.count
-      return "\(epoch - Int(fixture.secondsAgo))\t\(size)\t\(fixture.fileName)"
+      return "\(fixture.modifiedEpoch(asOf: now))\t\(size)\t\(fixture.fileName)"
     }
     return ([String(epoch), dir] + (lines.map { [$0] } ?? [])).joined(separator: "\n") + "\n"
   }
@@ -669,7 +681,7 @@ public struct FakeTranscriptHost: Sendable {
       // The first record's `timestamp`, the command's spawn time.
       let spawned = now.addingTimeInterval(-(fixture.spawnedSecondsAgo ?? fixture.secondsAgo))
         .formatted(.iso8601)
-      let written = epoch - Int(fixture.secondsAgo)
+      let written = fixture.modifiedEpoch(asOf: now)
       let size = fixture.fileSizeInBytes ?? subagentRecords(of: fixture, asOf: now).utf8.count
       return "\(spawned)\t\(written)\t\(size)\t\(fixture.fileName)\t\(fixture.metaLine)"
     }
@@ -952,7 +964,7 @@ public struct FakeTranscriptHost: Sendable {
   private func stamp(for command: String, asOf now: Date) -> String {
     if let fixture = subagentFixture(named: command) {
       let body = subagentRecords(of: fixture, asOf: now)
-      let modified = Int(now.timeIntervalSince1970) - Int(fixture.secondsAgo)
+      let modified = fixture.modifiedEpoch(asOf: now)
       return "\(modified)\(TranscriptCommands.fieldSeparator)\(body.utf8.count)\n"
     }
     guard let session = session(named: command) else {
