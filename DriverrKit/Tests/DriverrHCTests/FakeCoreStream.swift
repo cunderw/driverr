@@ -40,7 +40,14 @@ final class FakeCoreStream: HerdrStream, @unchecked Sendable {
   /// When true, the program exits straight after whatever it said to `hello`.
   var exitsAfterHello = false
   /// When true, a call's answer waits for `flushHeld()`, so two answers can land in one chunk.
+  ///
+  /// A call is in `methods` before its answer is held, so a wait on `methods` can flush with
+  /// that answer still on its way. `flushHeld()` therefore stops holding, and an answer that
+  /// arrives after it goes out on its own rather than waiting for good.
   var holdsReplies = false
+  /// With `holdsReplies`, writes the held answers in one chunk as soon as this many are held,
+  /// so a test that needs them coalesced waits on the held answers themselves.
+  var flushesHeldAt: Int?
   var replies: [String: Reply] = [
     "events.subscribe": .result(FakeCoreStream.subscribed()),
     "doc.get": .result(FakeCoreStream.noDocument),
@@ -65,6 +72,7 @@ final class FakeCoreStream: HerdrStream, @unchecked Sendable {
   private var askedPaths: [String] = []
   private var closeCount = 0
   private var held = Data()
+  private var heldCount = 0
   private var lateReplies = 0
   private var received: [CoreFrame] = []
   private var requests: [Data] = []
@@ -247,9 +255,14 @@ final class FakeCoreStream: HerdrStream, @unchecked Sendable {
   /// The program exits.
   func finish() { continuation.finish() }
 
+  /// Writes every answer held so far, in one chunk, and stops holding.
   func flushHeld() {
     let bytes = lock.withLock {
-      defer { held = Data() }
+      defer {
+        held = Data()
+        heldCount = 0
+        holdsReplies = false
+      }
       return held
     }
     write(bytes)
@@ -293,12 +306,18 @@ final class FakeCoreStream: HerdrStream, @unchecked Sendable {
   }
 
   private func respond(_ json: String) {
-    guard holdsReplies else {
-      writeMessage(json)
+    let frame = CoreFrame(channel: 0, kind: .data, payload: Data(json.utf8)).encoded
+    let outcome: (isHeld: Bool, isLast: Bool) = lock.withLock {
+      guard holdsReplies else { return (false, false) }
+      held.append(frame)
+      heldCount += 1
+      return (true, heldCount == flushesHeldAt)
+    }
+    guard outcome.isHeld else {
+      write(frame)
       return
     }
-    let frame = CoreFrame(channel: 0, kind: .data, payload: Data(json.utf8)).encoded
-    lock.withLock { held.append(frame) }
+    if outcome.isLast { flushHeld() }
   }
 
   /// What `terminal.attach` answers: a channel and the terminal's record, cut down.

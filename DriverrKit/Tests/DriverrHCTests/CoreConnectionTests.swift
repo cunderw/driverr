@@ -111,12 +111,13 @@ struct CoreConnectionTests {
   func coalescedAnswers() async throws {
     let stream = FakeCoreStream()
     stream.holdsReplies = true
+    // The fake writes both answers as one chunk once it holds both. A wait on `methods`
+    // could flush before the second answer was held, and that answer never went out (#85).
+    stream.flushesHeldAt = 2
     stream.replies = ["a": .result(#"{"value":1}"#), "b": .result(#"{"value":2}"#)]
     let connection = await connected(stream)
     async let first = connection.call("a", params: CoreNoParams(), as: Echo.self)
     async let second = connection.call("b", params: CoreNoParams(), as: Echo.self)
-    try await waitUntil("both calls reach the core") { stream.methods.count == 2 }
-    stream.flushHeld()
     #expect(try await first == Echo(value: 1))
     #expect(try await second == Echo(value: 2))
   }
