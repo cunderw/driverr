@@ -482,8 +482,20 @@ final class ScreenshotTourUITests: XCTestCase {
     require(app, "pane.rename", "Expected the menu to be open")
     settle(app)
     capture("pane-actions")
-    // Dismiss the menu without choosing anything, and leave the terminal tidy.
-    app.tap()
+    // Dismiss the menu without choosing anything, by a tap beside it, and leave the terminal
+    // tidy. Not `app.tap()`, which taps the middle of the screen: on iPhone Duo's outer display
+    // the menu is there, and the tap chose Rename. The rename prompt then stayed presented and
+    // took the settings sheet's bar away later in the tour.
+    let menuItem = require(app, "pane.rename", "Expected the menu to be open").frame
+    let screen = app.windows.firstMatch.frame
+    let besideX =
+      menuItem.minX > screen.width / 2 ? menuItem.minX / 2 : (menuItem.maxX + screen.width) / 2
+    app.coordinate(withNormalizedOffset: .zero)
+      .withOffset(CGVector(dx: besideX, dy: menuItem.midY)).tap()
+    XCTAssertTrue(
+      element(app, "pane.rename").waitForNonExistence(timeout: 10),
+      "The pane actions menu did not close. Tree was:\n" + app.debugDescription
+    )
     leavePaneScene(app, "Expected a way out of the terminal")
 
     // Settings, last, because it changes the theme, and the theme tints every screen after
