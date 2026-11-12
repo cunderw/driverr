@@ -1312,6 +1312,15 @@ struct AppEnvironment {
   /// lines, and the call is written at four minutes, so the header still reads "written 4m
   /// ago". They carry no elapsed time here: on the 6.9-inch phone that line pushes the turn's
   /// name under the chat's header.
+  ///
+  /// **How long it is below the person's reply decides what Show the Screen covers.** On the
+  /// phones the chat rests at its end and the capsule floats just under the bar, so moving
+  /// any line below the reply moves what sits under the capsule. As written, both the 6.9-inch
+  /// phone and iPhone Duo put it over a tool card whose short lines end left of it, with 8 pt
+  /// clear. Measured on both, the length below the capsule can shrink by 151 to 259 pt on the
+  /// 6.9-inch phone and by 158 to 199 pt on Duo from the version with a third reply, a
+  /// three-line code block and a third call, and this cut is about 172 on each. Look at the
+  /// `chat` capture after any change here.
   static let storeTourTranscript: FakeTranscriptHost = {
     let seeded = seededTranscript.sessions.first?.turns ?? []
     return FakeTranscriptHost(
@@ -1336,7 +1345,6 @@ struct AppEnvironment {
             speaker: .tools([
               ToolCall(name: "Edit", target: "pool.rs"),
               ToolCall(name: "Bash", target: "cargo test"),
-              ToolCall(name: "Read", target: "routes/session.rs"),
             ]),
             secondsAgo: 360
           ),
@@ -1346,20 +1354,10 @@ struct AppEnvironment {
               **`Pool::acquire`** was still blocking. Fixed in `pool.rs`:
 
               ```rust
-              pub async fn acquire(&self) -> Connection {
-                  self.wait_for_slot().await
-              }
+              pub async fn acquire(&self) -> Connection
               ```
               """,
             secondsAgo: 330
-          ),
-          .init(
-            speaker: .assistant,
-            text: """
-              Both handlers in `routes/session.rs` already run inside async routes, so only \
-              their signatures change. Anything outside this crate that calls them would see it.
-              """,
-            secondsAgo: 300
           ),
         ]
         + [
