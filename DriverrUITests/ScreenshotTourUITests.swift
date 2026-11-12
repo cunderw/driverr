@@ -253,6 +253,30 @@ final class ScreenshotTourUITests: XCTestCase {
     )
   }
 
+  /// Scrolls the settings form back until its first theme row's edge meets `bar`'s bottom
+  /// edge. By slow drags that hold before they lift, because a fling at the top of a sheet
+  /// resizes or dismisses it, and the System row is not in the tree until it is near the
+  /// screen.
+  private func showEveryTheme(
+    under bar: XCUIElement,
+    form frame: CGRect,
+    in app: XCUIApplication,
+    file: StaticString = #filePath,
+    line: UInt = #line
+  ) {
+    let system = element(app, "settings.theme.system")
+    let origin = app.coordinate(withNormalizedOffset: .zero)
+    for _ in 0..<6 where !system.exists {
+      let start = origin.withOffset(CGVector(dx: frame.midX, dy: bar.frame.maxY + 40))
+      let end = start.withOffset(CGVector(dx: 0, dy: frame.height * 0.4))
+      start.press(forDuration: 0.1, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.4)
+    }
+    XCTAssertTrue(
+      system.exists, "The System theme row never came back. Tree was:\n" + app.debugDescription,
+      file: file, line: line)
+    align("settings.theme.system", under: bar, in: app, file: file, line: line)
+  }
+
   /// Whether the host list is on screen beside the connected host's screen, which is the
   /// split view at regular width. Read from the layout, so it follows the app and not the
   /// device's name.
@@ -391,6 +415,15 @@ final class ScreenshotTourUITests: XCTestCase {
     // wrong pane would ship.
     treePaneRow(app, titled: "needs a decision").tap()
     require(app, "composer.text", "Expected the composer")
+    // The bar's sub-agents button, with its count. The list arrives after the conversation,
+    // so the composer being up does not mean the button is.
+    let subagents = require(
+      app, "pane.subagents", "Expected the sub-agents button in the pane bar", timeout: 20)
+    XCTAssertEqual(
+      subagents.value as? String, "2",
+      "The chat capture would ship with the wrong sub-agent count. Tree was:\n"
+        + app.debugDescription
+    )
     settle(app)
     XCTAssertFalse(
       app.keyboards.firstMatch.exists,
@@ -436,8 +469,19 @@ final class ScreenshotTourUITests: XCTestCase {
     require(app, "pane.rename", "Expected the menu to be open")
     settle(app)
     capture("pane-actions")
-    // Dismiss the menu without choosing anything, and leave the terminal tidy.
-    app.tap()
+    // Dismiss the menu without choosing anything, by a tap beside it, and leave the terminal
+    // tidy. Not `app.tap()`, which taps the middle of the screen: on iPhone Duo's outer display
+    // the menu is there, and the tap chose Rename.
+    let menuItem = require(app, "pane.rename", "Expected the menu to be open").frame
+    let screen = app.windows.firstMatch.frame
+    let besideX =
+      menuItem.minX > screen.width / 2 ? menuItem.minX / 2 : (menuItem.maxX + screen.width) / 2
+    app.coordinate(withNormalizedOffset: .zero)
+      .withOffset(CGVector(dx: besideX, dy: menuItem.midY)).tap()
+    XCTAssertTrue(
+      element(app, "pane.rename").waitForNonExistence(timeout: 10),
+      "The pane actions menu did not close. Tree was:\n" + app.debugDescription
+    )
     leavePaneScene(app, "Expected a way out of the terminal")
 
     // Settings, last, because it changes the theme, and the theme tints every screen after
@@ -454,25 +498,18 @@ final class ScreenshotTourUITests: XCTestCase {
       opens: "settings.preview",
       "settings"
     )
-    // Scrolled down to Font Size, which the caption names, so the shot holds the lower theme
-    // rows, the fonts and the size. Dracula, because its row is on screen there and its
-    // purple accent shows the choice took effect.
+    // Scrolled down to Font Size, which the caption names, so the shot holds the theme rows,
+    // the fonts and the size. Dracula, because its purple accent shows the choice took effect.
     //
-    // The iPad's form sheet is short, so there the chosen theme is scrolled to the top
-    // instead, its row edge against the bar. Font Size still fits under it.
+    // Where the form is too short for that (iPhone Duo's outer display, the iPad's form
+    // sheet), Font Size at the bottom leaves only the last themes on screen, with the rows
+    // above them ghosted under the bar. There the theme list is brought back after the tap,
+    // its first row's edge against the bar, so every theme is in the shot and the fonts run on
+    // below it. Font Size is then below the fold.
     let form = app.collectionViews.containing(.any, identifier: "settings.theme.system").firstMatch
     // Read now, because the System row that finds the form scrolls out of the tree.
-    let sheetBottom = form.frame.maxY
+    let formFrame = form.frame
     scroll(form, toRest: "settings.fontsize.value", in: app)
-    if isSplitView {
-      align("settings.theme.dracula", under: app.navigationBars["Settings"], in: app)
-      let size = require(app, "settings.fontsize.value", "Expected the Font Size row")
-      XCTAssertTrue(
-        size.isHittable && size.frame.maxY <= sheetBottom,
-        "Font Size is below the sheet with Dracula at the top. Tree was:\n"
-          + app.debugDescription
-      )
-    }
     let dracula = require(app, "settings.theme.dracula", "Expected the Dracula theme row")
     XCTAssertTrue(
       dracula.isHittable,
@@ -481,6 +518,16 @@ final class ScreenshotTourUITests: XCTestCase {
     )
     dracula.tap()
     settle(app)
+    let bar = app.navigationBars["Settings"]
+    let nord = element(app, "settings.theme.nord")
+    if !(nord.exists && nord.frame.minY >= bar.frame.maxY) {
+      showEveryTheme(under: bar, form: formFrame, in: app)
+      settle(app)
+    }
+    XCTAssertTrue(
+      dracula.isHittable && dracula.frame.minY >= bar.frame.maxY,
+      "The chosen theme is not on screen below the bar. Tree was:\n" + app.debugDescription
+    )
     capture("settings")
     require(app, "settings.done", "Expected a way out of settings").tap()
   }

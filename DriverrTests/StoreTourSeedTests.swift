@@ -72,6 +72,23 @@ struct StoreTourSeedTests {
     let seededWords = turns(AppEnvironment.seededTranscript).last?.text
     #expect(lastWords == seededWords)
   }
+
+  /// The `chat` capture shows the bar's sub-agents button, which needs at least one active
+  /// sub-agent. Read through a real `TranscriptReader`, so the meta and the file's age are
+  /// parsed as the pane parses them. No turns are merged, because the tour's page carries no
+  /// spawn line; the rows are what the files alone say.
+  @Test("The store tour serves two running sub-agents, and an ordinary launch serves none")
+  func theStoreTourServesActiveSubagents() async throws {
+    let tour = AppEnvironment.defaultConversation(isStoreTour: true)
+    let session = try #require(tour.sessions.first)
+    let list = try await TranscriptReader(run: tour.run)
+      .subagentList(directory: tour.directory, sessionID: session.sessionID)
+    let active = list.activeRows(merging: [], asOf: .now)
+    #expect(active.count == 2)
+    #expect(active.allSatisfy { $0.state == .running })
+
+    #expect(AppEnvironment.defaultConversation(isStoreTour: false).subagents.isEmpty)
+  }
 }
 
 extension FakeTranscriptHost.Turn.Speaker {

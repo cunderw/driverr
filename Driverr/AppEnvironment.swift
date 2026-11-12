@@ -1312,6 +1312,15 @@ struct AppEnvironment {
   /// lines, and the call is written at four minutes, so the header still reads "written 4m
   /// ago". They carry no elapsed time here: on the 6.9-inch phone that line pushes the turn's
   /// name under the chat's header.
+  ///
+  /// **How long it is below the person's reply decides what Show the Screen covers.** On the
+  /// phones the chat rests at its end and the capsule floats just under the bar, so moving
+  /// any line below the reply moves what sits under the capsule. As written, both the 6.9-inch
+  /// phone and iPhone Duo put it over a tool card whose short lines end left of it, with 8 pt
+  /// clear. Measured on both, the length below the capsule can shrink by 151 to 259 pt on the
+  /// 6.9-inch phone and by 158 to 199 pt on Duo from the version with a third reply, a
+  /// three-line code block and a third call, and this cut is about 172 on each. Look at the
+  /// `chat` capture after any change here.
   static let storeTourTranscript: FakeTranscriptHost = {
     let seeded = seededTranscript.sessions.first?.turns ?? []
     return FakeTranscriptHost(
@@ -1336,7 +1345,6 @@ struct AppEnvironment {
             speaker: .tools([
               ToolCall(name: "Edit", target: "pool.rs"),
               ToolCall(name: "Bash", target: "cargo test"),
-              ToolCall(name: "Read", target: "routes/session.rs"),
             ]),
             secondsAgo: 360
           ),
@@ -1346,20 +1354,10 @@ struct AppEnvironment {
               **`Pool::acquire`** was still blocking. Fixed in `pool.rs`:
 
               ```rust
-              pub async fn acquire(&self) -> Connection {
-                  self.wait_for_slot().await
-              }
+              pub async fn acquire(&self) -> Connection
               ```
               """,
             secondsAgo: 330
-          ),
-          .init(
-            speaker: .assistant,
-            text: """
-              Both handlers in `routes/session.rs` already run inside async routes, so only \
-              their signatures change. Anything outside this crate that calls them would see it.
-              """,
-            secondsAgo: 300
           ),
         ]
         + [
@@ -1370,8 +1368,49 @@ struct AppEnvironment {
           )
         ],
       codexSessions: [seededCodexRollout]
-    )
+    ).serving(storeTourSubagents)
   }()
+
+  /// Two sub-agents still writing while the tour's agent waits, so the chat's bar shows its
+  /// sub-agents button with a count in the `chat` capture.
+  ///
+  /// Spawned before the page's first turn, so no spawn line is added to the conversation the
+  /// capture shows. Off the page a file written within `SubagentList.liveWindow` reads as
+  /// running, and a file's age is `secondsAgo` from each answer, so both read as running at
+  /// every read. The fake serves sub-agents to whichever session asks, so every Claude pane
+  /// on the tour's host shows the button.
+  static let storeTourSubagents = [
+    FakeTranscriptHost.SubagentFixture(
+      agentID: "a0tourcallers00001",
+      toolUseID: "toolu_tour_callers",
+      secondsAgo: 8,
+      prompt: "Find every caller of open_session outside this crate and list the file and line of each.",
+      turns: [
+        .init(
+          speaker: .tools([ToolCall(name: "Grep", target: "open_session")]),
+          secondsAgo: 10
+        )
+      ],
+      description: "Find open_session's callers",
+      agentType: "Explore",
+      spawnedSecondsAgo: 1_000
+    ),
+    FakeTranscriptHost.SubagentFixture(
+      agentID: "a0tourbench000001",
+      toolUseID: "toolu_tour_bench",
+      secondsAgo: 15,
+      prompt: "Run the pool benchmarks before and after the change and report the difference.",
+      turns: [
+        .init(
+          speaker: .tools([ToolCall(name: "Bash", target: "cargo bench pool")]),
+          secondsAgo: 20
+        )
+      ],
+      description: "Benchmark the connection pool",
+      agentType: "general-purpose",
+      spawnedSecondsAgo: 960
+    ),
+  ]
 
   /// A conversation with two runs and more turns than fit on a phone: the fixture that shows
   /// whether opening a run moves the reader.
@@ -2877,12 +2916,19 @@ struct AppEnvironment {
   /// A plausible agent session, sized to fill a terminal on both store devices.
   ///
   /// Every line is under 48 columns, because the 6.9-inch portrait terminal is 55 wide and a
-  /// wrapped line looks like a bug. It is longer than either device's terminal with the
-  /// keyboard down, because the iPad then shows about 68 rows and the phone about 44, and a
-  /// terminal shows its tail, so both devices end on the same lines with no blank rows under
-  /// them. It ends on a question, which is what the app is about.
+  /// wrapped line looks like a bug. It is longer than every store device's terminal, because
+  /// the iPad with the keyboard down shows 71 rows, and a terminal shows its tail, so every
+  /// device ends on the same lines with no blank rows under them. It ends on a question, which
+  /// is what the app is about.
+  ///
+  /// **The lines 15, 26, 31, 48 and 70 from the end (the last line is 0) are blank.** The top row
+  /// of a terminal can be cut where the view meets the bar, and those are the rows that sit
+  /// there in the tour: iPhone Duo with the keyboard down and up, the 6.9-inch phone with the
+  /// keyboard up, and the iPad with the keyboard up and down. A cut blank row draws nothing.
+  /// Where a row is cut also moved when the line count changed, so keep the count at 73, and
+  /// look at the top of each terminal capture after any change here.
   static let demoTranscript = [
-    "carson@workbox:~/api$ herdr attach api-refactor",
+    "dev@workbox:~/api$ herdr attach api-refactor",
     "[herdr] attached to pane 3 (claude)",
     "",
     "● Task: make the connection pool async",
@@ -2910,6 +2956,7 @@ struct AppEnvironment {
     "● Reading src/routes/health.rs",
     "  The health check pings the pool directly.",
     "  It already awaits.",
+    "  Nothing to change there.",
     "",
     "● Ran tests: 41 passed, 0 failed",
     "  Baseline is green.",
@@ -2924,6 +2971,7 @@ struct AppEnvironment {
     "  are already async.",
     "",
     "● Edited src/db/pool.rs",
+    "  1 addition, 1 removal",
     "  -  pub fn open_session(&self)",
     "  +  pub async fn open_session(&self)",
     "",
@@ -2932,11 +2980,9 @@ struct AppEnvironment {
     "  +  let conn = pool.acquire().await;",
     "",
     "● cargo check",
-    "   Compiling driverr-api v0.4.1",
     "    Finished dev [unoptimized] in 4.21s",
     "",
     "● cargo clippy",
-    "    Checking driverr-api v0.4.1",
     "    Finished dev [unoptimized] in 2.87s",
     "  No warnings.",
     "",
@@ -2947,9 +2993,11 @@ struct AppEnvironment {
     "● Reading tests/session.rs",
     "  Both failures call open_session from a",
     "  sync test. They need #[tokio::test].",
+    "  The fix is one attribute each.",
     "",
     "● The pool is async now. Migrating the two",
     "  call sites changes the public API.",
+    "  Both are in src/routes/session.rs.",
     "",
     "  Proceed with the migration? (y/n)",
     "",

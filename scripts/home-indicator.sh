@@ -12,12 +12,20 @@
 # otherwise ship unnoticed. It reads the raw captures, not the framed store images, because
 # the rows it samples are a bare capture's.
 #
-# It reads the 6.9" phone's and iPhone Duo's outer display captures in light appearance and
-# nothing else, and it fails on a capture it cannot read. The rows it samples are those
-# screens', which draw the indicator the same distance from the bottom edge. On the iPad they cross the
-# keyboard's bottom edge, which read as an indicator in three of five captures. The dark
-# indicator sits within the threshold of its background, so a dark capture that drew it
-# read as "none".
+# It reads the 6.9" phone's and iPhone Duo's outer display captures and nothing else, and it
+# fails on a capture it cannot read. The rows it samples are those screens', which draw the
+# indicator the same distance from the bottom edge. On the iPad they cross the keyboard's
+# bottom edge, which read as an indicator in three of five captures.
+#
+# A light capture and a dark one are judged with different tolerances. On a light capture a
+# column counts as crossing the indicator when the two rows differ by more than 25. A dark
+# indicator reads about 25 above its background (53 to 58 on 28 to 32, measured on Driverr
+# iPhone 17 captures from scripts/look.sh), so 25 sits right at its edge and a dark capture
+# that drew it read as "none". A dark capture is judged at 4 instead, which that indicator
+# clears with a wide margin. The dark tour's captures measured the two rows identical in
+# every sampled column, except where content runs off the bottom edge: the pane switcher's
+# list put one tile's label across one of the 50 columns, and the indicator crosses nine in
+# ten. So a dark capture reads "none" with up to one column in ten differing.
 
 set -euo pipefail
 
@@ -33,9 +41,14 @@ for tool in python3 sips; do
 done
 
 readonly SIZES="1320x2868 1398x2034"
-# The darkest background a light capture may have on the row above the indicator. The light
-# captures measured 225 to 255 and the dark ones 32 to 34.
+# The darkest background a light capture may have on the row above the indicator; a capture
+# with anything darker there is judged as dark. The light captures measured 225 to 255 and
+# the dark tour's 0 to 50.
 readonly LIGHT=128
+# How far a column's two rows may differ and still count as the same, on a light capture and
+# on a dark one.
+readonly LIGHT_DELTA=25
+readonly DARK_DELTA=4
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
@@ -59,10 +72,11 @@ for shot in "$dir"/*.png; do
   # One line: the verdict, then what was read. An empty line is an image that could not be
   # read, and it fails below with the rest.
   got="" detail=""
-  read -r got detail < <(python3 - "$work/shot.bmp" "$LIGHT" <<'PY'
+  read -r got detail < <(python3 - "$work/shot.bmp" "$LIGHT" "$LIGHT_DELTA" "$DARK_DELTA" <<'PY'
 import struct, sys
 data = open(sys.argv[1], "rb").read()
 light = int(sys.argv[2])
+light_delta, dark_delta = int(sys.argv[3]), int(sys.argv[4])
 offset = struct.unpack_from("<I", data, 10)[0]
 width, height = struct.unpack_from("<ii", data, 18)
 depth = struct.unpack_from("<H", data, 28)[0] // 8
@@ -82,18 +96,19 @@ inside, above = height - 32, height - 50
 columns = range(width * 35 // 100, width * 65 // 100, 8)
 through = [luminance(x, inside) for x in columns]
 clear = [luminance(x, above) for x in columns]
-hits = sum(1 for a, b in zip(through, clear) if abs(a - b) > 25)
+appearance = "dark" if min(clear) < light else "light"
+delta = dark_delta if appearance == "dark" else light_delta
+hits = sum(1 for a, b in zip(through, clear) if abs(a - b) > delta)
 beside = abs(luminance(width // 5, inside) - luminance(width // 5, above))
-if min(clear) < light:
-    verdict = "dark"
-elif hits * 10 >= len(columns) * 9 and beside <= 25:
+if hits * 10 >= len(columns) * 9 and beside <= delta:
     verdict = "drawn"
-elif hits == 0:
+elif hits == 0 or (appearance == "dark" and hits * 10 <= len(columns)):
     verdict = "none"
 else:
     verdict = "unclear"
-print(f"{verdict} luminance {min(through)}-{max(through)} on the indicator's row and "
-      f"{min(clear)}-{max(clear)} above it, {hits} of {len(columns)} columns differ")
+print(f"{verdict} {appearance}, luminance {min(through)}-{max(through)} on the indicator's row "
+      f"and {min(clear)}-{max(clear)} above it, {hits} of {len(columns)} columns differ "
+      f"by more than {delta}")
 PY
 ) || true
   case "$got" in
@@ -103,10 +118,6 @@ PY
     none|drawn)
       echo "$name: home indicator is $got, expected $want ($detail)" >&2
       wrong=$((wrong + 1))
-      ;;
-    dark)
-      echo "$name: cannot classify, not a light capture ($detail)" >&2
-      unread=$((unread + 1))
       ;;
     *)
       echo "$name: cannot classify ($detail)" >&2
