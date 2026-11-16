@@ -1,0 +1,212 @@
+import DriverrCore
+import Foundation
+
+/// How a value becomes one argument of a tmux command that crosses a remote shell.
+///
+/// Two layers, and each needs its own protection:
+///
+/// - **The remote shell** reads the command string. `shellQuoted` makes a value one literal
+///   word, so a quote, a `$(…)` or a newline in typed text is data.
+/// - **tmux** then reads its own argument list. An argument that ends in `;` is a command
+///   separator to tmux, and the text before it is kept, so typed `ls;` would send `ls` and
+///   open a second, empty command. tmux's escape is `\;`, which it turns back into `;`.
+///   Measured against tmux 3.7c: `foo;` types `foo`, and `foo\;` types `foo;`.
+enum TmuxArgument {
+  /// `value` as tmux must be given it to read `value` back.
+  ///
+  /// Only the final `;` is escaped, because only a trailing one means anything. tmux strips
+  /// the `;`, and replaces the backslash before it, if there is one, with `;`. So a value
+  /// that ends in a backslash and a `;` goes with two backslashes and a `;`, and still reads
+  /// back as it was.
+  static func escaped(_ value: String) -> String {
+    guard value.hasSuffix(";") else { return value }
+    return String(value.dropLast()) + #"\;"#
+  }
+
+  /// One shell word that reaches tmux as `value`.
+  static func quoted(_ value: String) -> String {
+    shellQuoted(escaped(value))
+  }
+
+  /// Between two tmux commands in one invocation. The shell turns `\;` into a bare `;`, which
+  /// tmux reads as a separator.
+  static let separator = #" \; "#
+}
+
+/// Every tmux command line Driverr sends, as a string a remote `/bin/sh` runs.
+///
+/// Static and pure, so a test asserts the whole string. `binary` is `shellQuoted(binaryPath)`.
+/// A pane, window or session id arrives already shell-quoted, as `shellQuoted(TmuxID.raw(of:))`:
+/// `$1` unquoted is the shell's first parameter, and `%3` is a job in some shells.
+enum TmuxCommands {
+  static func listPanes(binary: String) -> String {
+    "\(binary) list-panes -a -F \(shellQuoted(TmuxPaneFormat.format))"
+  }
+
+  /// Types `text` into a pane, and then Enter when `submit`. `nil` when there is nothing to
+  /// send.
+  ///
+  /// **`-l`, so every character is literal.** Without it tmux reads `Enter`, `C-c` and `Up` in
+  /// typed text as key names. **`--`, so text that starts with `-` is not a flag.**
+  ///
+  /// A submit is one invocation, `send-keys -l … \; send-keys Enter`, because a failure
+  /// between two would leave a half-typed answer in the pane. Claude Code reads a line feed
+  /// as a line break and Enter as submit, so the text goes as typed and Enter follows.
+  static func input(binary: String, pane: String, text: String, submit: Bool) -> String? {
+    var commands: [String] = []
+    if !text.isEmpty {
+      commands.append("send-keys -t \(pane) -l -- \(TmuxArgument.quoted(text))")
+    }
+    if submit { commands.append("send-keys -t \(pane) Enter") }
+    guard !commands.isEmpty else { return nil }
+    return "\(binary) " + commands.joined(separator: TmuxArgument.separator)
+  }
+
+  /// A reply as it goes over: trailing newlines and spaces trimmed, everything else as typed.
+  /// The same rule as `CLIControl.submittable`, for the same reason: Enter submits the whole
+  /// message, so a trailing newline would only add a stray blank line.
+  static func submittable(_ text: String) -> String {
+    var text = Substring(text)
+    while let last = text.last, last.isNewline || last == " " || last == "\t" {
+      text = text.dropLast()
+    }
+    return String(text)
+  }
+
+  /// tmux's name for a key, and whether it is a name or a character to type.
+  static func key(_ key: PaneKey) -> (name: String, isLiteral: Bool) {
+    switch key {
+    case .enter: ("Enter", false)
+    case .esc: ("Escape", false)
+    case .up: ("Up", false)
+    case .down: ("Down", false)
+    case .left: ("Left", false)
+    case .right: ("Right", false)
+    case .tab: ("Tab", false)
+    case .interrupt: ("C-c", false)
+    case .yes, .no, .digit1, .digit2, .digit3, .digit4, .digit5, .digit6, .digit7, .digit8,
+      .digit9:
+      (key.rawValue, true)
+    }
+  }
+
+  /// One tmux call per key, chained in one exec.
+  ///
+  /// Two keys in one `send-keys` arrive as one burst, and Claude Code's picker drops both.
+  /// Separate processes are spaced by their own start-up. `&&` stops at the first refusal.
+  static func keys(binary: String, pane: String, keys: [PaneKey]) -> String? {
+    guard !keys.isEmpty else { return nil }
+    return keys.map { pressed in
+      let (name, isLiteral) = key(pressed)
+      return isLiteral
+        ? "\(binary) send-keys -t \(pane) -l -- \(shellQuoted(name))"
+        : "\(binary) send-keys -t \(pane) \(shellQuoted(name))"
+    }
+    .joined(separator: " && ")
+  }
+
+  /// What separates one pane's rows from the next in a batched read. It carries the pane id,
+  /// because pane output is arbitrary: a bare marker in a pane's text would shift every later
+  /// pane onto the wrong tile.
+  static let paneMarker = "__DRIVERR_PANE__"
+
+  /// One command that reads every pane's visible screen, a boundary printed before each.
+  ///
+  /// A pane that is gone makes tmux print `can't find pane` and nothing else, which reads as
+  /// an empty pane, and the batch goes on. `readPanes` is the one that tells a refused batch
+  /// from one closed pane.
+  static func readPanes(binary: String, panes: [(id: String, quoted: String)]) -> String {
+    panes.map { id, quoted in
+      #"printf '\n%s\n' "# + shellQuoted("\(paneMarker) \(id)") + "; "
+        + "\(binary) capture-pane -p -t \(quoted)"
+    }
+    .joined(separator: "; ")
+  }
+
+  /// One pane's visible screen with its styling, for the reply surface. `-e` keeps the escape
+  /// sequences the parser turns into `PaneScreenStyle`, as `--format ansi` does for herdr.
+  static func readScreen(binary: String, pane: String) -> String {
+    "\(binary) capture-pane -p -e -t \(pane)"
+  }
+
+  /// Splits `output` back into one array of rows per pane. Every id asked for gets an entry,
+  /// so "asked and got nothing" differs from "never asked".
+  static func panes(from output: String, ids: [String], lines: Int) -> [String: [String]] {
+    var boundaries: [String: String] = [:]
+    for id in ids { boundaries["\(paneMarker) \(id)"] = id }
+    var panes = [String: [String]](minimumCapacity: ids.count)
+    for id in ids { panes[id] = [] }
+
+    var current: String?
+    var chunk: [String] = []
+    func flush() {
+      if let current { panes[current] = rows(of: chunk, limit: lines) }
+      chunk = []
+    }
+    for line in output.split(separator: "\n", omittingEmptySubsequences: false) {
+      if let id = boundaries[String(line)] {
+        flush()
+        current = id
+      } else if current != nil {
+        chunk.append(String(line))
+      }
+      // Output before the first boundary belongs to no pane.
+    }
+    flush()
+    return panes
+  }
+
+  /// One pane's chunk as the rows a thumbnail draws: trailing blank rows gone, then the tail.
+  static func rows(of chunk: [String], limit: Int) -> [String] {
+    var rows = chunk.map { line -> String in
+      var line = line
+      while let last = line.last, last.isWhitespace { line.removeLast() }
+      return line
+    }
+    while rows.last?.isEmpty == true { rows.removeLast() }
+    return Array(rows.suffix(limit))
+  }
+
+  static func perform(binary: String, action: PaneAction, pane: String) -> String {
+    switch action {
+    case .split(let direction):
+      // `-d` leaves the desk's focus where it is. `-c` starts the new pane where this one is,
+      // which tmux expands as a format. `-h` is side by side, so `.right`.
+      let flag = direction == .right ? "-h" : "-v"
+      return "\(binary) split-window -d \(flag) -t \(pane) -c \(shellQuoted("#{pane_current_path}"))"
+    case .rename(let label):
+      // tmux has no pane name. The title is what the pane's program may overwrite, and it is
+      // the closest thing.
+      return "\(binary) select-pane -t \(pane) -T \(TmuxArgument.quoted(label))"
+    case .close:
+      return "\(binary) kill-pane -t \(pane)"
+    }
+  }
+
+  static func rename(binary: String, target: RenameTarget, id: String, label: String) -> String {
+    switch target {
+    case .workspace:
+      "\(binary) rename-session -t \(id) \(TmuxArgument.quoted(label))"
+    case .tab:
+      "\(binary) rename-window -t \(id) \(TmuxArgument.quoted(label))"
+    }
+  }
+
+  /// A window in the most recently used session, which prints the id its pane has. `-d`, so
+  /// the desk's current window stays current.
+  static func newWindow(binary: String) -> String {
+    "\(binary) new-window -d -P -F \(shellQuoted("#{pane_id}"))"
+  }
+
+  /// For a host with no server, which `new-window` cannot target.
+  static func newSession(binary: String) -> String {
+    "\(binary) new-session -d -P -F \(shellQuoted("#{pane_id}"))"
+  }
+
+  /// What a PTY runs to show a pane's session: read-only and with `ignore-size`, so the phone's
+  /// size never reaches the desk's window. A stand-in until the live terminal slice, which
+  /// replaces it with a control client per pane.
+  static func attach(binary: String, session: String) -> String {
+    "\(binary) attach-session -t \(session) -f read-only,ignore-size"
+  }
+}
