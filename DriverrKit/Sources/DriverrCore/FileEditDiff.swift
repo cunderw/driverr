@@ -75,6 +75,47 @@ public struct FileEdit: Hashable, Sendable {
     "\(turnID).edit.\(callIndex)"
   }
 
+  // MARK: - The path a card shows
+
+  /// The path a card's header shows: relative to the pane's directory when the file is
+  /// under it, else with the home directory written as `~`, else as the call gave it.
+  ///
+  /// The call's path is absolute and its head is the same on every card, so on a phone the
+  /// part that names the file was the part cut off. The card's spoken label keeps the
+  /// absolute path.
+  ///
+  /// herdr reports a pane's directory either absolute or as `~/…`, so both sides are put in
+  /// the `~` form before they are compared. The home directory is read off the path's shape
+  /// (`/Users/<name>`, `/home/<name>` or `/root`), because the remote's `$HOME` is not known.
+  public static func displayPath(_ path: String, paneDirectory: String?) -> String {
+    let file = homeRelative(path)
+    if let paneDirectory, !paneDirectory.isEmpty {
+      var base = homeRelative(paneDirectory)
+      while base.count > 1, base.hasSuffix("/") { base.removeLast() }
+      let prefix = base + "/"
+      if file.hasPrefix(prefix), file.count > prefix.count {
+        return String(file.dropFirst(prefix.count))
+      }
+    }
+    return file
+  }
+
+  /// `path` with a home directory at its head written as `~`.
+  static func homeRelative(_ path: String) -> String {
+    let parts = path.split(separator: "/", omittingEmptySubsequences: false)
+    // An absolute path splits to "" first.
+    guard parts.count >= 2, parts[0].isEmpty else { return path }
+    let homeDepth: Int
+    switch parts[1] {
+    case "Users", "home": homeDepth = 3
+    case "root": homeDepth = 2
+    default: return path
+    }
+    guard parts.count >= homeDepth, !parts[homeDepth - 1].isEmpty else { return path }
+    let rest = parts.dropFirst(homeDepth)
+    return rest.isEmpty ? "~" : "~/" + rest.joined(separator: "/")
+  }
+
   // MARK: - Building the lines
 
   private static func lines(of change: Change) -> [TranscriptDiff.Line] {

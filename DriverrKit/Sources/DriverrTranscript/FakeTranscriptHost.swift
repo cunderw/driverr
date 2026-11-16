@@ -1334,6 +1334,10 @@ public struct FakeTranscriptHost: Sendable {
 
   /// An `Edit`, `MultiEdit` or `Write` call's input, with the keys each tool writes:
   /// `old_string` and `new_string`, an `edits` array of those, or `content`.
+  ///
+  /// The keys follow the tool's name, as the parse does. An `Edit` carries one replacement,
+  /// so a fixture that gives it several is a mistake in the fixture: written as `edits`, it
+  /// would parse back as no edit at all.
   private func editInput(name: String, _ edit: FileEdit) -> String {
     let path = #""file_path":"\#(quoted(edit.filePath))""#
     switch edit.change {
@@ -1343,9 +1347,11 @@ public struct FakeTranscriptHost: Sendable {
       let pairs = replacements.map {
         #""old_string":"\#(quoted($0.old))","new_string":"\#(quoted($0.new))""#
       }
-      guard name != "MultiEdit", pairs.count == 1 else {
+      if name == "MultiEdit" {
         return #"{\#(path),"edits":[\#(pairs.map { "{\($0)}" }.joined(separator: ","))]}"#
       }
+      precondition(
+        pairs.count == 1, "An \(name) carries one replacement; use MultiEdit for several")
       return #"{\#(path),\#(pairs[0])}"#
     }
   }

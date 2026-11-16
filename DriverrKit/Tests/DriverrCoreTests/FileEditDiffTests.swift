@@ -132,4 +132,48 @@ struct FileEditDiffTests {
     #expect(TranscriptChatCopy.editLinesShown(12, of: 40) == "Showing 12 of 40 lines")
     #expect(TranscriptChatCopy.editLinesNotShown(1) == "1 more line not shown")
   }
+
+  // MARK: - The path a card shows
+
+  @Test("A file under the pane's directory shows relative to it, whichever form each side has")
+  func pathUnderThePaneDirectory() {
+    let path = "/Users/dev/dev/driverr/src/pool.rs"
+    #expect(FileEdit.displayPath(path, paneDirectory: "~/dev/driverr") == "src/pool.rs")
+    #expect(FileEdit.displayPath(path, paneDirectory: "/Users/dev/dev/driverr") == "src/pool.rs")
+    #expect(FileEdit.displayPath(path, paneDirectory: "/Users/dev/dev/driverr/") == "src/pool.rs")
+    #expect(
+      FileEdit.displayPath("/srv/app/main.go", paneDirectory: "/srv/app") == "main.go")
+  }
+
+  @Test("A file outside the pane's directory shows from home, or whole")
+  func pathOutsideThePaneDirectory() {
+    #expect(
+      FileEdit.displayPath("/Users/dev/notes/todo.md", paneDirectory: "~/dev/driverr")
+        == "~/notes/todo.md")
+    // A sibling whose name starts with the directory's is not under it.
+    #expect(
+      FileEdit.displayPath("/Users/dev/dev/driverr-old/a.rs", paneDirectory: "~/dev/driverr")
+        == "~/dev/driverr-old/a.rs")
+    #expect(FileEdit.displayPath("/etc/hosts", paneDirectory: "~/dev/driverr") == "/etc/hosts")
+  }
+
+  @Test("A home directory is written as ~", arguments: [
+    ("/Users/dev/a.rs", "~/a.rs"),
+    ("/home/dev/src/a.rs", "~/src/a.rs"),
+    ("/root/a.rs", "~/a.rs"),
+    ("/Users/dev", "~"),
+    ("/Users", "/Users"),
+    ("/usr/local/bin/x", "/usr/local/bin/x"),
+    ("src/a.rs", "src/a.rs"),
+  ])
+  func homeIsTilde(path: String, shown: String) {
+    #expect(FileEdit.homeRelative(path) == shown)
+  }
+
+  @Test("With no pane directory, the path shows from home")
+  func pathWithNoPaneDirectory() {
+    #expect(FileEdit.displayPath("/Users/dev/dev/x.rs", paneDirectory: nil) == "~/dev/x.rs")
+    #expect(FileEdit.displayPath("/Users/dev/dev/x.rs", paneDirectory: "") == "~/dev/x.rs")
+    #expect(FileEdit.displayPath("/opt/x.rs", paneDirectory: nil) == "/opt/x.rs")
+  }
 }
