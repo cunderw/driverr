@@ -182,25 +182,60 @@ struct TranscriptDiffCard: View {
   }
 
   /// The file the patch is about, and how much changed.
+  ///
+  /// An edit card at an accessibility text size stacks the path above the count and wraps
+  /// it. On one line the path cut to "/Us….md", and under a closed run the card's header is
+  /// the only place that names the file. The markdown path keeps its one line.
+  @ViewBuilder
   private var header: some View {
-    HStack(spacing: 8) {
-      Image(systemName: "plusminus")
-        .font(.caption2)
-        .foregroundStyle(.secondary)
-      Text(diff.filePath ?? TranscriptChatCopy.diffWithNoFile)
-        .font(.caption.weight(.semibold))
-        .lineLimit(1)
-        // A path's head and tail identify it.
-        .truncationMode(.middle)
-      Spacer(minLength: 0)
-      Text(diff.changeSummary)
-        .font(.caption2.monospaced())
-        .foregroundStyle(.secondary)
+    if lines != nil, dynamicTypeSize.isAccessibilitySize {
+      headerBand(
+        VStack(alignment: .leading, spacing: 2) {
+          HStack(alignment: .firstTextBaseline, spacing: 8) {
+            headerIcon
+            headerPath
+              .fixedSize(horizontal: false, vertical: true)
+          }
+          headerSummary
+        })
+    } else {
+      headerBand(
+        HStack(spacing: 8) {
+          headerIcon
+          headerPath
+            .lineLimit(1)
+            // A path's head and tail identify it.
+            .truncationMode(.middle)
+          Spacer(minLength: 0)
+          headerSummary
+        })
     }
-    .padding(.horizontal, 10)
-    .padding(.vertical, 6)
-    .frame(maxWidth: .infinity, alignment: .leading)
-    .background(Color(.quaternarySystemFill))
+  }
+
+  private var headerIcon: some View {
+    Image(systemName: "plusminus")
+      .font(.caption2)
+      .foregroundStyle(.secondary)
+  }
+
+  private var headerPath: some View {
+    Text(diff.filePath ?? TranscriptChatCopy.diffWithNoFile)
+      .font(.caption.weight(.semibold))
+  }
+
+  private var headerSummary: some View {
+    Text(diff.changeSummary)
+      .font(.caption2.monospaced())
+      .foregroundStyle(.secondary)
+  }
+
+  /// The header's band, one line or stacked.
+  private func headerBand(_ content: some View) -> some View {
+    content
+      .padding(.horizontal, 10)
+      .padding(.vertical, 6)
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .background(Color(.quaternarySystemFill))
   }
 
   private var shownLines: [TranscriptDiff.Line] {
