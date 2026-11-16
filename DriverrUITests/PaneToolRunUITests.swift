@@ -328,4 +328,65 @@ final class PaneToolRunUITests: XCTestCase {
       "A run the reader opened must still be open after a look at the terminal"
     )
   }
+
+  // MARK: - File edits as diffs
+
+  /// Each edit call's diff card shows under its run while the run is closed, a pending
+  /// edit's card shows beside its prompt, and a long `Write` starts collapsed and opens on
+  /// `Show All`.
+  ///
+  /// The lines and the collapse are `FileEditDiffTests`. This covers the wiring: that the
+  /// parse reaches the card, and that the toggle reaches `shown.expanded` and back.
+  func testEditCallsDrawDiffsAndALongWriteExpandsOnShowAll() {
+    XCUIDevice.shared.orientation = .portrait
+    let app = connectedHostApp(["-uiTestingEditTranscript", "-uiTestingSlowTranscript"])
+    require(app, "session.workspace", "Expected the session tree")
+    let chat = openChat(app)
+    let session = "3f8c1d20-0000-4000-8000-000000000002"
+    let finished = "pane.chat.turn.tools.\(session)-1"
+
+    // The pending edit, at rest beside its prompt.
+    let pending = require(
+      app, "pane.chat.turn.tools.\(session)-3.edit.0", "Expected the pending Edit's diff")
+    XCTAssertEqual(
+      pending.label, "Diff of /Users/dev/pool/docs/index.md, 1 line added, 0 lines removed",
+      "The pending card names its file and its change.\nTree was:\n\(app.debugDescription)")
+
+    // The long Write, collapsed, with its control.
+    let write = require(app, "\(finished).edit.3", "Expected the Write's diff")
+    let expand = require(app, "\(finished).edit.3.expand", "Expected the long Write to offer Show All")
+    scrollBackTo(expand, in: chat)
+    XCTAssertEqual(expand.label, "Show All")
+    XCTAssertEqual(
+      write.value as? String, "Showing 12 of 40 lines",
+      "A collapsed card says it is cut.\nTree was:\n\(app.debugDescription)")
+    let collapsedHeight = write.frame.height
+
+    expand.tap()
+    let expanded = expectation(
+      for: NSPredicate(format: "label == %@", "Show Less"), evaluatedWith: expand)
+    wait(for: [expanded], timeout: 5)
+    XCTAssertGreaterThan(
+      write.frame.height, collapsedHeight * 2,
+      "Show All must draw the rest of the Write's 40 lines, not only relabel the button")
+    XCTAssertEqual(
+      write.value as? String ?? "", "",
+      "An expanded card under the cap is whole and says nothing about a cut.\nTree was:\n\(app.debugDescription)")
+
+    // The Edit and the MultiEdit, above, while the run itself stays closed.
+    let multi = element(app, "\(finished).edit.2")
+    scrollBackTo(multi, in: chat)
+    XCTAssertEqual(
+      multi.label, "Diff of /Users/dev/pool/src/config.rs, 3 lines added, 2 lines removed",
+      "The MultiEdit's card counts both of its edits.\nTree was:\n\(app.debugDescription)")
+    let edit = element(app, "\(finished).edit.1")
+    scrollBackTo(edit, in: chat)
+    XCTAssertEqual(
+      edit.label, "Diff of /Users/dev/pool/src/pool.rs, 2 lines added, 2 lines removed",
+      "The Edit's card counts its change.\nTree was:\n\(app.debugDescription)")
+    requireGone(app, "\(finished).edit.1.expand", "A short card offers nothing to expand")
+    requireGone(app, "\(finished).edit.0", "The Read in the run draws no card")
+    requireGone(
+      app, "\(finished).call.3", "The cards show while the run stays closed, three rows named")
+  }
 }
