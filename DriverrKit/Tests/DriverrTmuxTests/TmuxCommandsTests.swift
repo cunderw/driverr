@@ -289,9 +289,10 @@ struct TmuxCommandsTests {
       let stub = try LocalShell.argumentPrinter(in: directory)
 
       for label in Self.hostile + ["-x", "--flag", "#S", "a#{pane_id}b", "#(id)", "x\ny"] {
-        // What tmux is given: newlines as spaces, and every # doubled so tmux's format
-        // expansion gives the label back as it was.
-        let given = String(label.map { $0.isNewline ? " " : $0 })
+        // What tmux is given: control characters as spaces, and every # doubled so tmux's
+        // format expansion gives the label back as it was.
+        let given = String(
+          label.map { ($0.isNewline || $0.unicodeScalars.contains { $0.value < 0x20 || $0.value == 0x7F }) ? " " : $0 })
           .replacingOccurrences(of: "#", with: "##")
 
         let rename = TmuxCommands.rename(
