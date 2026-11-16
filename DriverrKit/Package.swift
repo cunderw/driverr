@@ -10,6 +10,7 @@ let package = Package(
     .library(name: "DriverrTerm", targets: ["DriverrTerm"]),
     .library(name: "DriverrHerdr", targets: ["DriverrHerdr"]),
     .library(name: "DriverrHC", targets: ["DriverrHC"]),
+    .library(name: "DriverrTmux", targets: ["DriverrTmux"]),
     .library(name: "DriverrTranscript", targets: ["DriverrTranscript"]),
   ],
   dependencies: [
@@ -86,6 +87,11 @@ let package = Package(
     // that protocol and for `HerdrStream`, and DriverrHerdr knows nothing of it:
     // `CombinedControl` holds two `any HerdrControl`.
     .target(name: "DriverrHC", dependencies: ["DriverrCore", "DriverrHerdr"]),
+    // tmux's command-line client and Claude Code's session record, as a third `HerdrControl`.
+    // It imports DriverrHerdr for that protocol and nothing else of ours, and DriverrHerdr knows
+    // nothing of it, as with DriverrHC. tmux's formats stay in here.
+    .target(name: "DriverrTmux", dependencies: ["DriverrCore", "DriverrHerdr"]),
+    .testTarget(name: "DriverrTmuxTests", dependencies: ["DriverrTmux"]),
     // DriverrTranscript only in the tests, to drive the real reader over a fake core's
     // `machine.exec`. The modules themselves still meet only in the app target.
     .testTarget(name: "DriverrHCTests", dependencies: ["DriverrHC", "DriverrTranscript"]),
