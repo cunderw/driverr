@@ -253,7 +253,8 @@ struct AppEnvironment {
       },
       // Nothing from a UI run reaches the system notification centre. See
       // `SilentNotificationCenter`.
-      notifications: SilentNotificationCenter(),
+      notifications: SilentNotificationCenter(
+        status: isNotificationsAuthorized ? .authorized : .denied),
       // In memory, so one test's announced set cannot reach the next launch and make tests
       // order-dependent.
       announcedPanes: InMemoryAnnouncedPaneStore(),
@@ -1599,6 +1600,11 @@ struct AppEnvironment {
   /// Whether this launch should serve the usage-limit fixture.
   static var isTranscriptUsageLimited: Bool {
     ProcessInfo.processInfo.arguments.contains("-uiTestingUsageLimited")
+  }
+
+  /// Whether this launch's notifications report `.authorized`. See `SilentNotificationCenter`.
+  static var isNotificationsAuthorized: Bool {
+    ProcessInfo.processInfo.arguments.contains("-uiTestingNotificationsAuthorized")
   }
 
   /// Whether this launch should serve the usage-limit fixture past its reset.

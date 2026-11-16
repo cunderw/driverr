@@ -108,7 +108,7 @@ final class TerminalPresenter {
       await resumeRememberedPane(
         host: host, connections: connections, environment: environment)
       return
-    case .pane(let paneID), .paneSending(let paneID, _): target = .pane(id: paneID)
+    case .pane(let paneID), .paneSending(let paneID, _, _): target = .pane(id: paneID)
     case .shell: target = .shell
     }
 
@@ -127,8 +127,8 @@ final class TerminalPresenter {
     present(host: host, model: model, target: target)
     // Once, here, after the pane is up. Every early return above drops it, so a host that
     // must ask for a password, or a connect that fails, sends nothing.
-    if case .paneSending(let paneID, let text) = intent {
-      await model.submit(text, toPane: paneID)
+    if case .paneSending(let paneID, let witness, let text) = intent {
+      await model.submit(text, toPane: paneID, witness: witness)
     }
   }
 
@@ -196,8 +196,9 @@ final class TerminalPresenter {
     /// second pending slot, so the last-request-wins rule covers it.
     enum Intent: Equatable, Sendable {
       case pane(String)
-      /// The pane, then `text` submitted to it once connected. The reset alert's Continue.
-      case paneSending(String, text: String)
+      /// The pane, then `text` submitted to it once connected, if the pane still has
+      /// `witness` (`Pane.sessionWitness`). The reset alert's Continue.
+      case paneSending(String, witness: String, text: String)
       case shell
       case host
     }

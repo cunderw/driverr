@@ -86,9 +86,11 @@ struct AgentStopRow: View {
       .padding(.trailing, 14)
       .padding(.vertical, continuePadding)
       .frame(minHeight: 2 * ChatCapsuleGlass.radius)
-      .chatCapsuleGlass(Capsule())
+      // The notice's shape, not a capsule: at large text the label wraps, and a capsule's
+      // ends would round into it.
+      .chatCapsuleGlass(RoundedRectangle(cornerRadius: ChatCapsuleGlass.radius, style: .continuous))
       .padding(.vertical, (44 - 2 * ChatCapsuleGlass.radius) / 2)
-      .contentShape(Capsule())
+      .contentShape(RoundedRectangle(cornerRadius: ChatCapsuleGlass.radius, style: .continuous))
     }
     .buttonStyle(.plain)
     .accessibilityElement(children: .ignore)

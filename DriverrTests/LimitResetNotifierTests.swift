@@ -183,6 +183,7 @@ struct LimitResetNotifierTests {
     let center = FakeNotificationCenter(status: .authorized)
     let notifier = notifier(center)
     await report(notifier, stop: Self.limit())
+    #expect(notifier.offersContinue(paneID: "w1:p2"))
     #expect(!notifier.continues(paneID: "w1:p2"))
 
     notifier.setContinues(true, paneID: "w1:p2")
@@ -198,6 +199,33 @@ struct LimitResetNotifierTests {
     #expect(await center.pending[Self.id]?.categoryID == nil)
   }
 
+  /// With no card in the system there is nothing for Continue to be on, so the stop notice
+  /// draws no control, and a call that slips through changes nothing it would show.
+  @Test("without permission Continue is not offered and cannot be turned on")
+  func noContinueWithoutPermission() async {
+    let center = FakeNotificationCenter(status: .denied)
+    let notifier = notifier(center)
+    await report(notifier, stop: Self.limit())
+    #expect(!notifier.offersContinue(paneID: "w1:p2"))
+
+    notifier.setContinues(true, paneID: "w1:p2")
+    await notifier.work?.value
+    #expect(!notifier.continues(paneID: "w1:p2"))
+    #expect(await center.schedules.isEmpty)
+  }
+
+  @Test("a reset that has passed offers no Continue")
+  func noContinueAfterTheReset() async {
+    let center = FakeNotificationCenter(status: .authorized)
+    let clock = Clock()
+    let notifier = notifier(center, now: { clock.now })
+    await report(notifier, stop: Self.limit())
+    #expect(notifier.offersContinue(paneID: "w1:p2"))
+
+    clock.now = Self.resetsAt.addingTimeInterval(1)
+    #expect(!notifier.offersContinue(paneID: "w1:p2"))
+  }
+
   @Test("a re-read, a relaunch or a second host does not take Continue off the card")
   func continueSurvivesAReRead() async {
     let center = FakeNotificationCenter(status: .authorized)
@@ -210,11 +238,56 @@ struct LimitResetNotifierTests {
 
     // A fresh notifier is a relaunch, or the host whose core added the same machine. It finds
     // the card already there for the same instant and keeps it.
+    // It names another pane, so it schedules the card again under its own pane, Continue
+    // and all.
     let fresh = self.notifier(center, host: adder)
     await report(fresh, stop: Self.limit(), pane: Self.pane("core:em/t1"))
-    #expect(await center.schedules.count == 2)
+    #expect(await center.schedules.count == 3)
     #expect(await center.pending[Self.id]?.categoryID == LimitResetReminder.continueCategoryID)
+    #expect(await center.pending[Self.id]?.userInfo[NotificationTapRouter.paneIDKey] == "core:em/t1")
     #expect(fresh.continues(paneID: "core:em/t1"))
+
+    // The same notifier and pane once more leaves the card alone.
+    let again = self.notifier(center, host: adder)
+    await report(again, stop: Self.limit(), pane: Self.pane("core:em/t1"))
+    #expect(await center.schedules.count == 3)
+    #expect(again.continues(paneID: "core:em/t1"))
+  }
+
+  /// A previous process scheduled the card when `w1:p2` was another terminal. herdr reuses
+  /// positional pane ids, so that card's pane id and witness are stale.
+  @Test("a card a previous process left for the pane before a rebuild is replaced, Continue kept")
+  func aStaleCardIsReplaced() async throws {
+    let center = FakeNotificationCenter(status: .authorized)
+    let reminder = try #require(
+      LimitResetReminder.schedule(
+        for: Self.limit(), conversation: Self.conversation, asOf: Self.now,
+        timeZone: TimeZone(identifier: "America/Chicago")!))
+    await center.seedPending(
+      TimedNotification(
+        id: Self.id, title: LimitResetReminder.title, body: "",
+        userInfo: [
+          NotificationTapRouter.hostIDKey: workbox.id.uuidString,
+          NotificationTapRouter.paneIDKey: "w1:p2",
+          NotificationTapRouter.paneWitnessKey: "term_before_rebuild",
+        ],
+        trigger: reminder.trigger, categoryID: LimitResetReminder.continueCategoryID))
+
+    let notifier = notifier(center)
+    await report(notifier, stop: Self.limit(), pane: claudePane)
+
+    let card = try #require(await center.pending[Self.id])
+    #expect(card.userInfo[NotificationTapRouter.paneWitnessKey] == "term_w1p2")
+    #expect(card.categoryID == LimitResetReminder.continueCategoryID)
+    #expect(notifier.continues(paneID: "w1:p2"))
+  }
+
+  @Test("the card carries the pane's witness")
+  func theCardCarriesTheWitness() async throws {
+    let center = FakeNotificationCenter(status: .authorized)
+    await report(notifier(center), stop: Self.limit(), pane: claudePane)
+    let card = try #require(await center.pending[Self.id])
+    #expect(card.userInfo[NotificationTapRouter.paneWitnessKey] == "term_w1p2")
   }
 
   @Test("two hosts reading one conversation hold one card between them")
@@ -226,7 +299,8 @@ struct LimitResetNotifierTests {
     await report(own, stop: Self.limit(), pane: Self.pane("core:t1"))
     await report(adding, stop: Self.limit(), pane: Self.pane("core:em/t1"))
 
-    #expect(await center.schedules.map(\.id) == [Self.id])
+    // The second replaces the first under the same id, so the system holds one.
+    #expect(await center.schedules.map(\.id) == [Self.id, Self.id])
     #expect(await center.pending.count == 1)
   }
 
@@ -345,13 +419,24 @@ struct LimitResetNotifierTests {
     let userInfo = [
       NotificationTapRouter.hostIDKey: hostID.uuidString,
       NotificationTapRouter.paneIDKey: "w1:p2",
+      NotificationTapRouter.paneWitnessKey: "term_w1p2",
     ]
 
     let continuing = TerminalPresenter()
     NotificationTapRouter.route(
       action: LimitResetReminder.continueActionID, userInfo: userInfo, to: continuing)
     #expect(
-      continuing.pendingOpen == .init(hostID: hostID, intent: .paneSending("w1:p2", text: "continue")))
+      continuing.pendingOpen
+        == .init(
+          hostID: hostID, intent: .paneSending("w1:p2", witness: "term_w1p2", text: "continue")))
+
+    // A card with no witness cannot prove its pane, so Continue only opens it.
+    let unproven = TerminalPresenter()
+    var noWitness = userInfo
+    noWitness[NotificationTapRouter.paneWitnessKey] = nil
+    NotificationTapRouter.route(
+      action: LimitResetReminder.continueActionID, userInfo: noWitness, to: unproven)
+    #expect(unproven.pendingOpen == .init(hostID: hostID, paneID: "w1:p2"))
 
     let tapped = TerminalPresenter()
     NotificationTapRouter.route(

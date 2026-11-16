@@ -45,10 +45,13 @@ struct TimedNotification: Equatable, Sendable {
   let categoryID: String?
 }
 
-/// What the system holds for a scheduled card: when it fires and which actions it offers.
+/// What the system holds for a scheduled card: when it fires, which actions it offers and
+/// which pane it names.
 struct PendingNotification: Equatable, Sendable {
   let fireDate: Date?
   let categoryID: String?
+  /// The card's `userInfo`, as strings. See `NotificationTapRouter`.
+  let userInfo: [String: String]
 }
 
 /// Turns one host's polls into notifications about panes that have gone blocked.

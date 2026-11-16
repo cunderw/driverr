@@ -80,6 +80,7 @@ public struct LimitResetReminder: Hashable, Sendable {
   /// What the action sends to the pane.
   public static let continueText = "continue"
 
-  /// The stop notice's opt-in, as the control reads it.
-  public static let optInTitle = "Add Continue to the reset alert"
+  /// The stop notice's opt-in, as the control reads it. It names the state the check mark
+  /// shows, not an action.
+  public static let optInTitle = "Offer Continue when it resets"
 }

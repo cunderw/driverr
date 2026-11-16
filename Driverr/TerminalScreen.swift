@@ -800,8 +800,11 @@ struct TerminalScreen: View {
   }
 
   /// The pane's Continue opt-in, read from and written to `ConnectionModel.limitResets`.
-  private func continueAtReset(forPane paneID: String) -> Binding<Bool> {
+  /// `nil`, so no control, until the pane's reminder is in the system: with notifications
+  /// off there is no card for Continue to be on.
+  private func continueAtReset(forPane paneID: String) -> Binding<Bool>? {
     let resets = model.limitResets
+    guard resets.offersContinue(paneID: paneID) else { return nil }
     return Binding(
       get: { resets.continues(paneID: paneID) },
       set: { resets.setContinues($0, paneID: paneID) })

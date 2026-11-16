@@ -35,12 +35,14 @@ final class LimitResetNotifier {
     let reminder: LimitResetReminder?
     var phase: Phase
 
-    /// The same conversation, stopped the same way with the same reset. Not `AgentStop`'s
-    /// `==`, which also compares the record's text and time: two records of one limit are
-    /// one card.
+    /// The same conversation, stopped the same way with the same reset, in the same pane.
+    /// Not `AgentStop`'s `==`, which also compares the record's text and time: two records
+    /// of one limit are one card. The witness is compared because the card carries it, and
+    /// Continue sends only to a pane that still has it.
     func isSameLimit(as report: Report) -> Bool {
       conversation == report.conversation && stop?.kind == report.stop?.kind
         && stop?.resetsAt == report.stop?.resetsAt
+        && pane.sessionWitness == report.pane.sessionWitness
     }
   }
 
@@ -60,6 +62,10 @@ final class LimitResetNotifier {
   /// The reminders that carry Continue, by notification id. Observed, because the stop
   /// notice's control draws it.
   private(set) var continuing: Set<String> = []
+
+  /// The panes whose reminder the system holds. Observed, because the stop notice offers
+  /// Continue only for a card that exists: with notifications off there is none to change.
+  private(set) var scheduled: Set<String> = []
 
   init(
     host: DriverrCore.Host,
@@ -111,6 +117,7 @@ final class LimitResetNotifier {
     held[paneID] = Held(
       pane: report.pane, conversation: report.conversation, stop: report.stop,
       reminder: reminder, phase: reminder == nil ? .done : .scheduling)
+    scheduled.remove(paneID)
 
     if !withdrawals.isEmpty {
       // On the same chain as the schedules, so a withdrawal cannot land after a newer card.
@@ -130,26 +137,42 @@ final class LimitResetNotifier {
     return continuing.contains(id)
   }
 
+  /// Whether the stop notice offers Continue for the pane: its reminder is in the system and
+  /// its reset is still ahead.
+  func offersContinue(paneID: String) -> Bool {
+    guard scheduled.contains(paneID), let reminder = held[paneID]?.reminder else { return false }
+    return reminder.fireDate > now()
+  }
+
   /// Turns the pane's Continue on or off, and schedules its reminder again with or without
-  /// the action. Does nothing once the reset has passed.
+  /// the action. Does nothing once the reset has passed, or without permission. The control
+  /// changes only once the card has been scheduled again, so it never shows a state the card
+  /// does not have.
   func setContinues(_ on: Bool, paneID: String) {
     guard let held = held[paneID], let reminder = held.reminder, reminder.fireDate > now() else {
       return
     }
-    if on { continuing.insert(reminder.id) } else { continuing.remove(reminder.id) }
     let notification = timed(reminder, pane: held.pane, continues: on)
     let center = center
     let previous = work
-    work = Task {
+    work = Task { [weak self] in
       await previous?.value
       guard await center.authorizationStatus() == .authorized else { return }
       await center.schedule(notification)
+      self?.recordContinues(on, reminder, paneID: paneID)
     }
   }
 
-  /// Schedules `reminder`, unless the system already holds it for the same instant. That
-  /// request is kept, Continue and all: a relaunch, or a second host reading the same
-  /// conversation, must not replace it with a plain one.
+  private func recordContinues(_ on: Bool, _ reminder: LimitResetReminder, paneID: String) {
+    guard held[paneID]?.reminder == reminder else { return }
+    if on { continuing.insert(reminder.id) } else { continuing.remove(reminder.id) }
+  }
+
+  /// Schedules `reminder`. A request the system already holds for the same instant keeps
+  /// its Continue: a relaunch, or a second host reading the same conversation, must not
+  /// replace it with a plain one. It is kept as it is only when it also names this pane, with
+  /// this witness. One left by a process that saw the pane before a rebuild names a pane id
+  /// that may now be another pane's, so it is replaced.
   private func start(_ reminder: LimitResetReminder, pane: Pane) {
     let center = center
     let previous = work
@@ -159,13 +182,16 @@ final class LimitResetNotifier {
         self?.settle(pane.id, reminder, as: .waiting)
         return
       }
-      if let pending = await center.pendingNotification(id: reminder.id),
-        pending.fireDate == reminder.fireDate
+      let pending = await center.pendingNotification(id: reminder.id)
+      if let pending, pending.fireDate == reminder.fireDate,
+        pending.categoryID == LimitResetReminder.continueCategoryID
       {
-        if pending.categoryID == LimitResetReminder.continueCategoryID {
-          self?.adoptContinue(reminder, paneID: pane.id)
-        }
-      } else if let notification = self?.timedIfCurrent(reminder, paneID: pane.id) {
+        self?.adoptContinue(reminder, paneID: pane.id)
+      }
+      if let notification = self?.timedIfCurrent(reminder, paneID: pane.id),
+        pending.map({ $0.fireDate != reminder.fireDate || $0.userInfo != notification.userInfo })
+          ?? true
+      {
         await center.schedule(notification)
       }
       self?.settle(pane.id, reminder, as: .done)
@@ -175,6 +201,7 @@ final class LimitResetNotifier {
   private func settle(_ paneID: String, _ reminder: LimitResetReminder, as phase: Phase) {
     guard held[paneID]?.reminder == reminder else { return }
     held[paneID]?.phase = phase
+    if phase == .done { scheduled.insert(paneID) }
   }
 
   private func adoptContinue(_ reminder: LimitResetReminder, paneID: String) {
@@ -188,6 +215,15 @@ final class LimitResetNotifier {
     return timed(reminder, pane: held.pane, continues: continuing.contains(reminder.id))
   }
 
+  private static func userInfo(host: DriverrCore.Host, pane: Pane) -> [String: String] {
+    var userInfo = [
+      NotificationTapRouter.hostIDKey: host.id.uuidString,
+      NotificationTapRouter.paneIDKey: pane.id,
+    ]
+    if let witness = pane.sessionWitness { userInfo[NotificationTapRouter.paneWitnessKey] = witness }
+    return userInfo
+  }
+
   private func timed(
     _ reminder: LimitResetReminder, pane: Pane, continues: Bool
   ) -> TimedNotification {
@@ -195,11 +231,9 @@ final class LimitResetNotifier {
       id: reminder.id,
       title: LimitResetReminder.title,
       body: LimitResetReminder.body(paneTitle: pane.title, hostName: host.name),
-      // The keys a tap reads; see `NotificationTapRouter`.
-      userInfo: [
-        NotificationTapRouter.hostIDKey: host.id.uuidString,
-        NotificationTapRouter.paneIDKey: pane.id,
-      ],
+      // The keys a tap reads; see `NotificationTapRouter`. A pane with no witness gets
+      // none, and its Continue then opens the pane and sends nothing.
+      userInfo: Self.userInfo(host: host, pane: pane),
       trigger: reminder.trigger,
       categoryID: continues ? LimitResetReminder.continueCategoryID : nil)
   }

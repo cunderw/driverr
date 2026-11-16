@@ -73,7 +73,9 @@ actor FakeNotificationCenter: NotificationScheduling {
     guard let held = pending[id] else { return nil }
     var calendar = Calendar(identifier: .gregorian)
     calendar.timeZone = held.trigger.timeZone ?? .current
-    return PendingNotification(fireDate: calendar.date(from: held.trigger), categoryID: held.categoryID)
+    return PendingNotification(
+      fireDate: calendar.date(from: held.trigger), categoryID: held.categoryID,
+      userInfo: held.userInfo)
   }
 
   /// Puts a request under `id` as a previous process would have left it, without counting it

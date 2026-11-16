@@ -13,6 +13,9 @@ final class NotificationTapRouter: NSObject, UNUserNotificationCenterDelegate {
   /// a card posted by an older build.
   static let hostIDKey = "hostID"
   static let paneIDKey = "paneID"
+  /// `Pane.sessionWitness` when the card was scheduled. Only the reset alert carries it, and
+  /// its Continue sends only to a pane that still has it.
+  static let paneWitnessKey = "paneWitness"
 
   private let presenter: TerminalPresenter
 
@@ -37,16 +40,21 @@ final class NotificationTapRouter: NSObject, UNUserNotificationCenterDelegate {
   }
 
   /// The same, for a card's action. The reset alert's Continue opens the pane and asks for
-  /// `LimitResetReminder.continueText` to be sent once the connection is up; every other
-  /// action, and a plain tap, only opens it.
+  /// `LimitResetReminder.continueText` to be sent once the connection is up, to the pane only
+  /// if it still has the card's witness. herdr reuses positional pane ids, so the id alone
+  /// can name another conversation. A card with no witness only opens the pane, as every
+  /// other action and a plain tap do.
   @MainActor
   static func route(action: String, userInfo: [String: String], to presenter: TerminalPresenter) {
     guard let hostID = userInfo[hostIDKey].flatMap(UUID.init(uuidString:)),
       let paneID = userInfo[paneIDKey], !paneID.isEmpty
     else { return }
-    if action == LimitResetReminder.continueActionID {
+    if action == LimitResetReminder.continueActionID,
+      let witness = userInfo[paneWitnessKey], !witness.isEmpty
+    {
       presenter.requestOpen(
-        hostID: hostID, intent: .paneSending(paneID, text: LimitResetReminder.continueText))
+        hostID: hostID,
+        intent: .paneSending(paneID, witness: witness, text: LimitResetReminder.continueText))
     } else {
       presenter.requestOpen(hostID: hostID, paneID: paneID)
     }
@@ -75,7 +83,7 @@ final class NotificationTapRouter: NSObject, UNUserNotificationCenterDelegate {
 
   /// The `String`-to-`String` part of a `userInfo`, which is all Driverr puts there and all
   /// that can cross an actor boundary.
-  private static func strings(in userInfo: [AnyHashable: Any]) -> [String: String] {
+  static func strings(in userInfo: [AnyHashable: Any]) -> [String: String] {
     userInfo.reduce(into: [:]) { result, pair in
       guard let key = pair.key as? String, let value = pair.value as? String else { return }
       result[key] = value

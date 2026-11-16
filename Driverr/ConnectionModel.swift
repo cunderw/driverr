@@ -919,12 +919,17 @@ final class ConnectionModel {
   }
 
   /// Sends `text` to a pane through its composer, so it shows as `Sent` and offers Retry
-  /// like a typed reply. For the reset alert's Continue, once the connection is up. Does
-  /// nothing when the pane is not in the session.
-  func submit(_ text: String, toPane paneID: String) async {
+  /// like a typed reply. For the reset alert's Continue, once the connection is up.
+  ///
+  /// Does nothing when the pane is not in the session, or when its `sessionWitness` is not
+  /// `witness`: herdr reuses positional pane ids, so after a rebuild the id names another
+  /// pane, and the word would reach a conversation the reader never saw stop.
+  func submit(_ text: String, toPane paneID: String, witness: String) async {
     guard phase == .connected, let session else { return }
     if session.reportedTree.isEmpty { await session.refresh() }
-    guard let pane = session.reportedTree.pane(id: paneID), let composers else { return }
+    guard let pane = session.reportedTree.pane(id: paneID), pane.sessionWitness == witness,
+      let composers
+    else { return }
     await composers.model(for: pane).send(text: text)
   }
 

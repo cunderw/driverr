@@ -668,6 +668,11 @@ struct TerminalPresenterTests {
     return seeded
   }
 
+  /// The witness `w1:p1` has in `FakeControl.seededTree`.
+  private func seededWitness() throws -> String {
+    try #require(FakeControl.seededTree.pane(id: "w1:p1")?.sessionWitness)
+  }
+
   @Test("Continue opens the pane and submits continue to it once")
   func continueSendsOnce() async throws {
     let control = FakeControl()
@@ -675,34 +680,53 @@ struct TerminalPresenterTests {
     configured(
       presenter, environment(knowingThePassword: true, control: control), selection: Selection())
 
-    await presenter.open(hostID: host.id, intent: .paneSending("w1:p1", text: "continue"))
+    let witness = try seededWitness()
+    await presenter.open(hostID: host.id, intent: .paneSending("w1:p1", witness: witness, text: "continue"))
 
     let request = try #require(presenter.request)
     #expect(request.scene.current == .pane(id: "w1:p1"))
     #expect(await control.sent == [.submit(paneID: "w1:p1", text: "continue")])
   }
 
+  /// herdr reuses positional pane ids, so after a rebuild the card's id can name another
+  /// pane. The witness tells them apart.
+  @Test("Continue to a pane id now held by another pane opens it and sends nothing")
+  func continueToARebuiltPaneSendsNothing() async throws {
+    let control = FakeControl()
+    let presenter = TerminalPresenter()
+    configured(
+      presenter, environment(knowingThePassword: true, control: control), selection: Selection())
+
+    await presenter.open(
+      hostID: host.id, intent: .paneSending("w1:p1", witness: "term_before_rebuild", text: "continue"))
+
+    let request = try #require(presenter.request)
+    #expect(request.scene.current == .pane(id: "w1:p1"))
+    #expect(await control.sent.isEmpty)
+  }
+
   @Test("Continue on a host that would have to ask sends nothing")
-  func continueOnAPasswordHostSendsNothing() async {
+  func continueOnAPasswordHostSendsNothing() async throws {
     let control = FakeControl()
     let presenter = TerminalPresenter()
     configured(
       presenter, environment(knowingThePassword: false, control: control), selection: Selection())
 
-    await presenter.open(hostID: host.id, intent: .paneSending("w1:p1", text: "continue"))
+    let witness = try seededWitness()
+    await presenter.open(hostID: host.id, intent: .paneSending("w1:p1", witness: witness, text: "continue"))
 
     #expect(presenter.request == nil)
     #expect(await control.sent.isEmpty)
   }
 
   @Test("Continue on a pane the host no longer has sends nothing")
-  func continueOnAGonePaneSendsNothing() async {
+  func continueOnAGonePaneSendsNothing() async throws {
     let control = FakeControl()
     let presenter = TerminalPresenter()
     configured(
       presenter, environment(knowingThePassword: true, control: control), selection: Selection())
 
-    await presenter.open(hostID: host.id, intent: .paneSending("w9:p9", text: "continue"))
+    await presenter.open(hostID: host.id, intent: .paneSending("w9:p9", witness: "term_w9p9", text: "continue"))
 
     #expect(await control.sent.isEmpty)
   }
@@ -710,11 +734,12 @@ struct TerminalPresenterTests {
   /// `ContentView` drains from its launch `.task` and from an `onChange`, so a card's action
   /// can be drained twice while the first drain is still connecting.
   @Test("a Continue drained twice at once sends once")
-  func continueDrainedTwiceSendsOnce() async {
+  func continueDrainedTwiceSendsOnce() async throws {
     let control = FakeControl()
     let presenter = TerminalPresenter()
     // Before `configure`, as a cold launch from the card's action is.
-    await presenter.open(hostID: host.id, intent: .paneSending("w1:p1", text: "continue"))
+    let witness = try seededWitness()
+    await presenter.open(hostID: host.id, intent: .paneSending("w1:p1", witness: witness, text: "continue"))
     configured(
       presenter, environment(knowingThePassword: true, control: control), selection: Selection())
 

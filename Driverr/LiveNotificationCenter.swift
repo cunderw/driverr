@@ -55,7 +55,8 @@ struct LiveNotificationCenter: NotificationScheduling {
     let category = request.content.categoryIdentifier
     return PendingNotification(
       fireDate: (request.trigger as? UNCalendarNotificationTrigger)?.nextTriggerDate(),
-      categoryID: category.isEmpty ? nil : category)
+      categoryID: category.isEmpty ? nil : category,
+      userInfo: NotificationTapRouter.strings(in: request.content.userInfo))
   }
 
   /// The categories whose actions a card can offer. Set once at launch, before any card that
@@ -86,8 +87,12 @@ struct LiveNotificationCenter: NotificationScheduling {
 /// If a `-uiTesting` launch reached `LiveNotificationCenter`, the first blocked pane would
 /// raise a system permission alert over the app, and UI tests would fail on elements behind
 /// it. It reports `.denied`, so `BlockedPaneNotifier` never reaches the permission path.
+///
+/// `-uiTestingNotificationsAuthorized` makes it report `.authorized` instead, so the stop
+/// notice offers the reset alert's Continue. It still delivers nothing and asks for nothing.
 struct SilentNotificationCenter: NotificationScheduling {
-  func authorizationStatus() async -> NotificationAuthorization { .denied }
+  var status: NotificationAuthorization = .denied
+  func authorizationStatus() async -> NotificationAuthorization { status }
   @discardableResult func requestAuthorization() async -> Bool { false }
   func post(id: String, title: String, body: String, userInfo: [String: String]) async {}
   func schedule(_ notification: TimedNotification) async {}

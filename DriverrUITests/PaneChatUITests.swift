@@ -85,6 +85,7 @@ final class PaneChatUITests: XCTestCase {
     screenQuestionHandover: Bool = false,
     usageLimited: Bool = false,
     usageLimitReset: Bool = false,
+    notificationsAuthorized: Bool = false,
     subagents: Bool = false,
     endingSubagents: Bool = false
   ) -> XCUIApplication {
@@ -131,6 +132,9 @@ final class PaneChatUITests: XCTestCase {
     if usageLimited { flags += ["-uiTestingUsageLimited"] }
     // The same limit, reset an hour before launch.
     if usageLimitReset { flags += ["-uiTestingUsageLimitReset"] }
+    // Notifications report `.authorized`, so a live limit's reminder is scheduled and the
+    // stop notice offers Continue. Nothing is delivered.
+    if notificationsAuthorized { flags += ["-uiTestingNotificationsAuthorized"] }
     // Two spawn lines with a sub-agent file behind each: a finished plain spawn and a running
     // teammate.
     if subagents { flags += ["-uiTestingSubagents"] }
@@ -1409,17 +1413,18 @@ final class PaneChatUITests: XCTestCase {
   /// The stop notice's opt-in for the reset alert's Continue: its own element under the
   /// notice, off at first, and flipped by a tap.
   ///
-  /// A UI launch reports notifications `.denied`, so this proves the control and its state,
-  /// not a scheduled card. The scheduling is `LimitResetNotifierTests`.
+  /// Notifications report `.authorized` here, but nothing is delivered, so this proves the
+  /// control's wiring, not a card. The scheduling, and no control without permission, are
+  /// `LimitResetNotifierTests`.
   func testAUsageLimitOffersContinueAtTheResetOffByDefault() {
-    let app = connectedHost(slowTranscript: true, usageLimited: true)
+    let app = connectedHost(slowTranscript: true, usageLimited: true, notificationsAuthorized: true)
 
     tapPane(app, titled: "needs a decision")
 
     require(app, "pane.chat.agentStop", "Expected the stop notice")
     let control = require(
       app, "pane.chat.agentStop.continue", "Expected the Continue opt-in under the notice")
-    XCTAssertEqual(control.label, "Add Continue to the reset alert")
+    XCTAssertEqual(control.label, "Offer Continue when it resets")
     XCTAssertEqual(control.value as? String, "Off", "Continue must start off")
 
     control.tap()
@@ -1430,7 +1435,9 @@ final class PaneChatUITests: XCTestCase {
 
   /// Past the reset there is no alert left to change, so the notice offers no Continue.
   func testAResetLimitOffersNoContinue() {
-    let app = connectedHost(slowTranscript: true, usageLimitReset: true)
+    // Authorized, so the control's absence is the reset's doing and not permission's.
+    let app = connectedHost(
+      slowTranscript: true, usageLimitReset: true, notificationsAuthorized: true)
 
     tapPane(app, titled: "needs a decision")
 
