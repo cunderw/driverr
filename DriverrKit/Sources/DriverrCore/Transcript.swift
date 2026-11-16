@@ -45,19 +45,32 @@ public struct ToolCall: Hashable, Sendable {
   /// Separate from `outcome`: the call's own result comes back at once and succeeded, while
   /// the command runs on. Folding them together would show a launched task as finished.
   public let task: TaskProgress?
+  /// The change an `Edit`, `MultiEdit` or `Write` call asked for, or `nil` for any other
+  /// tool and for an edit whose arguments did not read.
+  public let edit: FileEdit?
 
   public init(
     name: String,
     target: String? = nil,
     outcome: Outcome = .unknown,
     questions: [PendingQuestion] = [],
-    task: TaskProgress? = nil
+    task: TaskProgress? = nil,
+    edit: FileEdit? = nil
   ) {
     self.name = name
     self.target = target
     self.outcome = outcome
     self.questions = questions
     self.task = task
+    self.edit = edit
+  }
+
+  /// This call with another outcome and everything else kept, for a parse that learns the
+  /// outcome after it built the call.
+  public func with(outcome: Outcome) -> ToolCall {
+    ToolCall(
+      name: name, target: target, outcome: outcome, questions: questions, task: task, edit: edit
+    )
   }
 }
 

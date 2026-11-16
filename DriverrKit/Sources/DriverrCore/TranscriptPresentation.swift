@@ -640,6 +640,23 @@ public enum TranscriptChatCopy {
   /// A diff card's header when the patch has no file header, as in a bare hunk.
   public static let diffWithNoFile = "Diff"
 
+  // MARK: - A file edit's diff card
+
+  /// The line before each edit of a `MultiEdit`, in the card's hunk-header style.
+  public static func editSeparator(_ number: Int, of total: Int) -> String {
+    "Edit \(number) of \(total)"
+  }
+
+  /// A cut card's accessibility value, so VoiceOver says the card is not whole.
+  public static func editLinesShown(_ shown: Int, of total: Int) -> String {
+    "Showing \(shown) of \(total) lines"
+  }
+
+  /// Under an expanded card that `FileEdit.expandedLineCap` still cut.
+  public static func editLinesNotShown(_ hidden: Int) -> String {
+    hidden == 1 ? "1 more line not shown" : "\(hidden.formatted()) more lines not shown"
+  }
+
   // MARK: - What a call with no result can be
 
   /// herdr reports the pane `blocked`, which means a person is needed.

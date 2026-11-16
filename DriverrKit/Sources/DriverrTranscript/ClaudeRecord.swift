@@ -321,14 +321,30 @@ struct ToolQuestion: Decodable {
   let multiSelect: Bool?
 }
 
+/// One entry of a `MultiEdit` call's `edits`. Both strings are required, so an entry
+/// without them fails the decode of the whole list.
+struct ToolEditEntry: Decodable {
+  let oldString: String
+  let newString: String
+
+  private enum CodingKeys: String, CodingKey {
+    case oldString = "old_string"
+    case newString = "new_string"
+  }
+}
+
 /// A tool call's arguments, reduced to what Driverr reads.
 ///
 /// The string-valued members feed `TranscriptParser.target(of:)`; everything else is
-/// dropped at the decode. `questions` is the exception, because `AskUserQuestion`'s input
-/// is an array of objects and the string-only rule would lose the question.
+/// dropped at the decode. `questions` and `edits` are the exceptions, because
+/// `AskUserQuestion`'s and `MultiEdit`'s inputs are arrays of objects and the string-only
+/// rule would lose them.
 struct ToolInput: Decodable {
   let values: [String: String]
   let questions: [ToolQuestion]
+  /// A `MultiEdit` call's edits, in order. `nil` when the key is missing or any entry does
+  /// not decode; never a throw, so a malformed call keeps the rest of its record.
+  let edits: [ToolEditEntry]?
   /// `run_in_background` on a `Bash` call whose command outlives it. Usually a bool, but
   /// some calls write the string `"true"`, which counts too.
   let runsInBackground: Bool
@@ -342,6 +358,7 @@ struct ToolInput: Decodable {
 
   private enum Structured: String, CodingKey {
     case questions
+    case edits
     case runInBackground = "run_in_background"
   }
 
@@ -350,6 +367,7 @@ struct ToolInput: Decodable {
       // Not an object, such as a bare array or string. Nothing to read.
       values = [:]
       questions = []
+      edits = nil
       runsInBackground = false
       return
     }
@@ -367,6 +385,8 @@ struct ToolInput: Decodable {
     } else {
       questions = []
     }
+    edits = try? decoder.container(keyedBy: Structured.self)
+      .decode([ToolEditEntry].self, forKey: .edits)
     runsInBackground =
       (try? decoder.container(keyedBy: Structured.self)
         .decode(Bool.self, forKey: .runInBackground)) ?? (found["run_in_background"] == "true")

@@ -267,6 +267,42 @@ struct FakeTranscriptHostTests {
     #expect(transcript.turns.last?.toolRun?.failedCount == 1)
   }
 
+  /// The fixture writes each edit tool's real keys, so the chat's edit fixture goes through
+  /// the same parse as a live file. A bare `Edit` with only a target stays plain.
+  @Test("an edit the fixture writes comes back as the same edit")
+  func editsSurviveTheParser() async throws {
+    let edit = FileEdit(
+      filePath: "/src/pool.rs", change: .replacements([.init(old: "a\n\"b\"", new: "a\n\tc")]))
+    let multi = FileEdit(
+      filePath: "/src/config.rs",
+      change: .replacements([.init(old: "x", new: "y"), .init(old: "p", new: "q")]))
+    let write = FileEdit(filePath: "/README.md", change: .write("# Pool\n\nAsync.\n"))
+    let host = FakeTranscriptHost(
+      sessionID: sessionID,
+      turns: [
+        .init(speaker: .human, text: "tidy it", secondsAgo: 600),
+        .init(
+          speaker: .tools([
+            ToolCall(name: "Edit", target: "pool.rs", outcome: .succeeded, edit: edit),
+            ToolCall(name: "MultiEdit", target: "config.rs", outcome: .succeeded, edit: multi),
+            ToolCall(name: "Write", target: "README.md", outcome: .succeeded, edit: write),
+            ToolCall(name: "Edit", target: "session.rs", outcome: .succeeded),
+            ToolCall(name: "Edit", target: "pool.rs", outcome: .pending, edit: edit),
+          ]),
+          secondsAgo: 120
+        ),
+      ]
+    )
+    let reader = TranscriptReader(run: host.run)
+    let source = try #require(try await reader.resolve(for: pane(session: sessionID)).source)
+    let transcript = try await reader.read(source.file)
+
+    let calls = try #require(transcript.turns.last?.toolRun?.calls)
+    #expect(calls.map(\.edit) == [edit, multi, write, nil, edit])
+    #expect(calls.map(\.target) == ["pool.rs", "config.rs", "README.md", "session.rs", "pool.rs"])
+    #expect(transcript.pendingToolCall?.edit == edit)
+  }
+
   /// The Codex counterpart. `.pending` needs the host's `!` mark, which says the outcomes
   /// were scanned, and an `exec_command` call with no completion at the end of the page.
   @Test("a Codex call the fixture leaves pending comes back as the pane's pending call")

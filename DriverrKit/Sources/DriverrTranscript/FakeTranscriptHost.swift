@@ -1313,6 +1313,9 @@ public struct FakeTranscriptHost: Sendable {
       // A call with questions writes `AskUserQuestion`'s real input: one object per question
       // with its own `options` and `multiSelect`.
       guard call.questions.isEmpty else { return askUserQuestionInput(call.questions) }
+      // An edit writes the tool's real keys, so the parse reads it as it reads a live file.
+      // A bare `Edit` with only a target keeps writing `file_path` alone and stays plain.
+      if let edit = call.edit { return editInput(name: call.name, edit) }
       guard let target = call.target else { return "{}" }
       let key: String
       switch call.name {
@@ -1326,6 +1329,24 @@ public struct FakeTranscriptHost: Sendable {
       default: key = "file_path"
       }
       return #"{"\#(key)":"\#(quoted(target))"}"#
+    }
+  }
+
+  /// An `Edit`, `MultiEdit` or `Write` call's input, with the keys each tool writes:
+  /// `old_string` and `new_string`, an `edits` array of those, or `content`.
+  private func editInput(name: String, _ edit: FileEdit) -> String {
+    let path = #""file_path":"\#(quoted(edit.filePath))""#
+    switch edit.change {
+    case .write(let content):
+      return #"{\#(path),"content":"\#(quoted(content))"}"#
+    case .replacements(let replacements):
+      let pairs = replacements.map {
+        #""old_string":"\#(quoted($0.old))","new_string":"\#(quoted($0.new))""#
+      }
+      guard name != "MultiEdit", pairs.count == 1 else {
+        return #"{\#(path),"edits":[\#(pairs.map { "{\($0)}" }.joined(separator: ","))]}"#
+      }
+      return #"{\#(path),\#(pairs[0])}"#
     }
   }
 
