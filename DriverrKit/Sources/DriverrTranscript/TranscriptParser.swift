@@ -67,10 +67,7 @@ enum TranscriptParser {
       let couldBeWaiting =
         answers.scanned && open.lastCallHasIdentifier && calls.last?.outcome == .unknown
       if atEndOfPage, couldBeWaiting, let last = calls.last {
-        calls[calls.count - 1] = ToolCall(
-          name: last.name, target: last.target, outcome: .pending, questions: last.questions,
-          task: last.task
-        )
+        calls[calls.count - 1] = last.with(outcome: .pending)
       }
       page.turns.append(
         TranscriptTurn(id: open.id, speech: .tools(ToolRun(calls: calls)), at: open.at)
@@ -272,7 +269,8 @@ enum TranscriptParser {
                 outcome: answers.outcome(for: block.id),
                 questions: replyQuestions(of: block, answers: block.id.flatMap { asked[$0] }),
                 task: block.input?.runsInBackground == true
-                  ? backgroundProgress(of: block.id, at: at, answers: answers, ends: ends) : nil
+                  ? backgroundProgress(of: block.id, at: at, answers: answers, ends: ends) : nil,
+                edit: fileEdit(of: block)
               )
             )
             run?.lastCallHasIdentifier = block.id?.isEmpty == false
@@ -383,10 +381,7 @@ enum TranscriptParser {
     else { return }
     let turn = page.turns[index]
     guard var calls = turn.toolRun?.calls, let last = calls.last else { return }
-    calls[calls.count - 1] = ToolCall(
-      name: last.name, target: last.target, outcome: .pending, questions: last.questions,
-      task: last.task
-    )
+    calls[calls.count - 1] = last.with(outcome: .pending)
     page.turns[index] = TranscriptTurn(
       id: turn.id, speech: .tools(ToolRun(calls: calls)), at: turn.at
     )
@@ -1161,6 +1156,34 @@ enum TranscriptParser {
       default:
         return nil
       }
+    }
+  }
+
+  /// The file change an `Edit`, `MultiEdit` or `Write` call asked for, or `nil`.
+  ///
+  /// Keyed on the tool's name, because another tool can carry `file_path` and `content` for
+  /// some other purpose. `nil` whenever a field the tool needs is missing or not a string,
+  /// so a malformed call keeps its plain row. A `MultiEdit` with one unreadable entry is
+  /// `nil` as a whole, because a partial list would number its edits falsely.
+  static func fileEdit(of block: ClaudeBlock) -> FileEdit? {
+    guard let name = block.name, let input = block.input,
+      let path = nonEmpty(input["file_path"])
+    else { return nil }
+    switch name {
+    case "Edit":
+      guard let old = input["old_string"], let new = input["new_string"] else { return nil }
+      return FileEdit(filePath: path, change: .replacements([.init(old: old, new: new)]))
+    case "MultiEdit":
+      guard let edits = input.edits, !edits.isEmpty else { return nil }
+      return FileEdit(
+        filePath: path,
+        change: .replacements(edits.map { .init(old: $0.oldString, new: $0.newString) })
+      )
+    case "Write":
+      guard let content = input["content"] else { return nil }
+      return FileEdit(filePath: path, change: .write(content))
+    default:
+      return nil
     }
   }
 

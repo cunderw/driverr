@@ -138,10 +138,20 @@ private struct TranscriptCodeBlock: View {
 ///
 /// Colour is never the only signal. Each changed line keeps its `+` or `−` in a gutter,
 /// and the card speaks as one sentence (`TranscriptDiff.accessibilityLabel`).
-private struct TranscriptDiffCard: View {
+///
+/// Drawn by an assistant turn's markdown and by `ToolEditCards`, under a run of tool calls.
+struct TranscriptDiffCard: View {
   let diff: TranscriptDiff
   let lineLimit: Int?
   let contentWidth: CGFloat
+  /// The lines to draw, for an edit card, which draws `FileEdit.shownLines(isExpanded:)`.
+  /// `nil` on the markdown path, which draws `diff.body` cut to `lineLimit`.
+  var lines: [TranscriptDiff.Line]? = nil
+  /// Spoken after the label, such as how much of a cut card is drawn. Empty for none.
+  var spokenValue: String = ""
+  /// The path the header shows, when it differs from the patch's own, as an edit card's
+  /// does (`FileEdit.displayPath`). The spoken label keeps `diff.filePath`.
+  var shownPath: String? = nil
 
   @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
@@ -166,36 +176,77 @@ private struct TranscriptDiffCard: View {
         }
         .scrollBounceBehavior(.basedOnSize)
       }
+      // The lines stop growing at accessibility2, by the owner's choice: past it a phone
+      // shows a dozen characters of each line. The header and Show All are not capped.
+      .dynamicTypeSize(...Self.largestLineSize)
     }
     .background(Color(.tertiarySystemFill), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
     .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
     .accessibilityElement(children: .ignore)
     .accessibilityLabel(diff.accessibilityLabel)
+    .accessibilityValue(spokenValue)
   }
 
   /// The file the patch is about, and how much changed.
+  ///
+  /// At an accessibility text size the header stacks the path above the count and wraps it.
+  /// On one line the path cut to "/Us….md", and under a closed run an edit card's header is
+  /// the only place that names the file.
+  @ViewBuilder
   private var header: some View {
-    HStack(spacing: 8) {
-      Image(systemName: "plusminus")
-        .font(.caption2)
-        .foregroundStyle(.secondary)
-      Text(diff.filePath ?? TranscriptChatCopy.diffWithNoFile)
-        .font(.caption.weight(.semibold))
-        .lineLimit(1)
-        // A path's head and tail identify it.
-        .truncationMode(.middle)
-      Spacer(minLength: 0)
-      Text(diff.changeSummary)
-        .font(.caption2.monospaced())
-        .foregroundStyle(.secondary)
+    if dynamicTypeSize.isAccessibilitySize {
+      headerBand(
+        VStack(alignment: .leading, spacing: 2) {
+          HStack(alignment: .firstTextBaseline, spacing: 8) {
+            headerIcon
+            headerPath
+              .fixedSize(horizontal: false, vertical: true)
+          }
+          headerSummary
+        })
+    } else {
+      headerBand(
+        HStack(spacing: 8) {
+          headerIcon
+          headerPath
+            .lineLimit(1)
+            // A path's head and tail identify it.
+            .truncationMode(.middle)
+          Spacer(minLength: 0)
+          headerSummary
+        })
     }
-    .padding(.horizontal, 10)
-    .padding(.vertical, 6)
-    .frame(maxWidth: .infinity, alignment: .leading)
-    .background(Color(.quaternarySystemFill))
+  }
+
+  private var headerIcon: some View {
+    Image(systemName: "plusminus")
+      .font(.caption2)
+      .foregroundStyle(.secondary)
+  }
+
+  private var headerPath: some View {
+    Text(shownPath ?? diff.filePath ?? TranscriptChatCopy.diffWithNoFile)
+      .font(.caption.weight(.semibold))
+  }
+
+  private var headerSummary: some View {
+    // `.primary`: `.secondary` on the header's fill read 3.02:1 in light.
+    Text(diff.changeSummary)
+      .font(.caption2.monospaced())
+      .foregroundStyle(.primary)
+  }
+
+  /// The header's band, one line or stacked.
+  private func headerBand(_ content: some View) -> some View {
+    content
+      .padding(.horizontal, 10)
+      .padding(.vertical, 6)
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .background(Color(.quaternarySystemFill))
   }
 
   private var shownLines: [TranscriptDiff.Line] {
+    if let lines { return lines }
     guard let lineLimit else { return diff.body }
     // One line of the budget is the header, which is always drawn.
     return Array(diff.body.prefix(max(0, lineLimit - 1)))
@@ -240,16 +291,19 @@ private struct TranscriptDiffCard: View {
   }
 
   private func markerTint(for line: TranscriptDiff.Line) -> Color {
-    // `.secondary` for every case. The stripe carries the colour and the glyph the shape;
-    // a green `+` on the green stripe failed contrast.
-    .secondary
+    // `.primary` for every case. The stripe carries the colour and the glyph the shape. A
+    // green `+` on the green stripe failed contrast, and `.secondary` read 2.9:1 on both
+    // stripes in light.
+    .primary
   }
 
   private func textTint(for line: TranscriptDiff.Line) -> Color {
     switch line {
     // Full-strength ink, because green text on a green stripe fails contrast.
-    case .addition, .removal, .context: .primary
-    case .hunk, .meta: .secondary
+    // A hunk line too, which on an edit card is "Edit 2 of 3": `.secondary` on its fill read
+    // 3.02:1 in light.
+    case .addition, .removal, .context, .hunk: .primary
+    case .meta: .secondary
     }
   }
 
@@ -258,11 +312,16 @@ private struct TranscriptDiffCard: View {
   /// A square gutter, so every line's text starts at the same x at any text size.
   private var markerWidth: CGFloat { rowHeight }
 
-  /// One row's height, from the rows' font, so it grows with text size. Both stacks in
-  /// `body` use it, or the stripes drift from their lines. Reading `dynamicTypeSize`
-  /// recomputes it when the size changes.
+  /// The largest size the lines are drawn at. See `body`.
+  private static let largestLineSize = DynamicTypeSize.accessibility2
+
+  /// One row's height, from the rows' font at the rows' capped size, so it grows with text
+  /// size and stops where the lines do. Both stacks in `body` use it, or the stripes drift
+  /// from their lines.
   private var rowHeight: CGFloat {
-    _ = dynamicTypeSize
-    return (UIFont.preferredFont(forTextStyle: .caption1).lineHeight + 4).rounded()
+    let size = min(dynamicTypeSize, Self.largestLineSize)
+    let traits = UITraitCollection(preferredContentSizeCategory: UIContentSizeCategory(size))
+    return (UIFont.preferredFont(forTextStyle: .caption1, compatibleWith: traits).lineHeight + 4)
+      .rounded()
   }
 }

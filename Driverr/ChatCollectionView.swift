@@ -95,8 +95,9 @@ struct ChatProvenance: Equatable {
 /// Everything a row draws from that is not part of its own `TranscriptTurn`.
 ///
 /// A `UIHostingConfiguration`'s content is built once, at configuration time. Open tool runs,
-/// expanded turns, chosen reply chips, a send in flight, the rendered markdown and the paging
-/// state all live in `PaneChatView`, and none of it reaches an existing cell by itself.
+/// expanded turns and edit cards, chosen reply chips, a send in flight, the rendered markdown
+/// and the paging state all live in `PaneChatView`, and none of it reaches an existing cell by
+/// itself.
 ///
 /// So cells are reconfigured when this value differs, and on no other update. Two
 /// alternatives fail:
@@ -172,9 +173,9 @@ struct ChatCollectionView<Row: View>: UIViewRepresentable {
   /// composer focus and a pane switch. The coordinator acts on the change, not the value, so a
   /// rebuild cannot scroll a reader who has since scrolled back.
   var jumpToken: Int
-  /// Bumped when a tool run is opened or a bounded turn expanded. The growth looks like a turn
-  /// growing at the end, and only `PaneChatView` knows the reader asked for it. See
-  /// `ChatReaderPlace.Event.rowExpansionChanged`.
+  /// Bumped when a tool run is opened, or a bounded turn or an edit card expanded. The growth
+  /// looks like a turn growing at the end, and only `PaneChatView` knows the reader asked for
+  /// it. See `ChatReaderPlace.Event.rowExpansionChanged`.
   var expansionToken: Int
   /// `.immediately` (`.onDrag`) in the collapsed landscape composer, `.interactively`
   /// (`.interactive`) everywhere else.
