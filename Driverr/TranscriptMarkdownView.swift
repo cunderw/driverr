@@ -138,10 +138,17 @@ private struct TranscriptCodeBlock: View {
 ///
 /// Colour is never the only signal. Each changed line keeps its `+` or `−` in a gutter,
 /// and the card speaks as one sentence (`TranscriptDiff.accessibilityLabel`).
-private struct TranscriptDiffCard: View {
+///
+/// Drawn by an assistant turn's markdown and by `ToolEditCards`, under a run of tool calls.
+struct TranscriptDiffCard: View {
   let diff: TranscriptDiff
   let lineLimit: Int?
   let contentWidth: CGFloat
+  /// The lines to draw, for an edit card, which draws `FileEdit.shownLines(isExpanded:)`.
+  /// `nil` on the markdown path, which draws `diff.body` cut to `lineLimit`.
+  var lines: [TranscriptDiff.Line]? = nil
+  /// Spoken after the label, such as how much of a cut card is drawn. Empty for none.
+  var spokenValue: String = ""
 
   @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
@@ -171,6 +178,7 @@ private struct TranscriptDiffCard: View {
     .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
     .accessibilityElement(children: .ignore)
     .accessibilityLabel(diff.accessibilityLabel)
+    .accessibilityValue(spokenValue)
   }
 
   /// The file the patch is about, and how much changed.
@@ -196,6 +204,7 @@ private struct TranscriptDiffCard: View {
   }
 
   private var shownLines: [TranscriptDiff.Line] {
+    if let lines { return lines }
     guard let lineLimit else { return diff.body }
     // One line of the budget is the header, which is always drawn.
     return Array(diff.body.prefix(max(0, lineLimit - 1)))

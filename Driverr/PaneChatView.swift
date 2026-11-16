@@ -798,7 +798,13 @@ struct PaneChatView: View {
           model.openSubagent(link: link, title: title)
         },
       estimatedContentWidth: contentWidthEstimate,
-      render: shown.render[turn.id]
+      render: shown.render[turn.id],
+      isEditExpanded: { index in
+        shown.expanded.contains(FileEdit.expansionKey(turnID: turn.id, callIndex: index))
+      },
+      onToggleEdit: { index in
+        toggleExpand(FileEdit.expansionKey(turnID: turn.id, callIndex: index))
+      }
     )
     // Whether `@AccessibilityFocusState` reaches across a `UIHostingConfiguration` cannot be
     // tested in-process (see `HostedProbe`), so it is kept rather than replaced by an equally

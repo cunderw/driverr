@@ -48,6 +48,11 @@ struct TranscriptTurnView: View {
   /// This turn's markdown, parsed when the page settled. `nil` for a preview, which parses
   /// on the spot.
   var render: TranscriptTurnRender?
+  /// Whether the edit card for the call at this position in the run is expanded. See
+  /// `FileEdit.expansionKey(turnID:callIndex:)`.
+  var isEditExpanded: (Int) -> Bool = { _ in false }
+  /// Expands or collapses the edit card for the call at this position in the run.
+  var onToggleEdit: (Int) -> Void = { _ in }
 
   /// How many lines of a bounded (not newest, not expanded) turn are drawn before `Show all`.
   /// Compared against measured wrapped lines, not source lines.
@@ -59,6 +64,17 @@ struct TranscriptTurnView: View {
         separator
       }
       row
+      // Each file edit's diff, under the run whether it is open or closed (the owner's
+      // choice). A pending edit's diff is what its permission prompt asks about.
+      if let run = turn.toolRun, run.calls.contains(where: { $0.edit != nil }) {
+        ToolEditCards(
+          run: run,
+          runID: turn.id,
+          contentWidth: estimatedContentWidth,
+          isExpanded: isEditExpanded,
+          onToggle: onToggleEdit
+        )
+      }
       // The answered questions, under the run that asked, because at rest the question
       // itself is scrolled off.
       if let answered = turn.toolRun?.answeredQuestions, !answered.isEmpty {

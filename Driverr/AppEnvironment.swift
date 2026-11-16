@@ -1274,6 +1274,7 @@ struct AppEnvironment {
     if isTranscriptImages { return imageTranscript }
     if isTranscriptSlashCommands { return slashCommandTranscript }
     if isTranscriptPending { return pendingCallTranscript }
+    if isTranscriptEdits { return editTranscript }
     if isTranscriptMultiQuestion { return multiQuestionTranscript }
     if isTranscriptAnsweredQuestion { return answeredQuestionTranscript }
     if isTranscriptDescribedQuestion { return describedQuestionTranscript }
@@ -1863,6 +1864,81 @@ struct AppEnvironment {
   /// Whether this launch should serve the pending-tool-call fixture.
   static var isTranscriptPending: Bool {
     ProcessInfo.processInfo.arguments.contains("-uiTestingPendingTranscript")
+  }
+
+  /// File edits drawn as diffs: an `Edit`, a two-edit `MultiEdit` and a 40-line `Write` in
+  /// one finished run, then a run ending on a pending `Edit`, the permission prompt's case.
+  ///
+  /// The edits go in as each tool's own input, so the chat reads them through the parse. The
+  /// `Write` is longer than `FileEdit.collapsedLines`, so its card starts collapsed. The
+  /// first run's id is `<session>-1`, the second's `<session>-3`.
+  static let editTranscript = FakeTranscriptHost(
+    sessionID: "3f8c1d20-0000-4000-8000-000000000002",
+    turns: [
+      .init(speaker: .human, text: "make the pool async and write it a README", secondsAgo: 600),
+      .init(
+        speaker: .tools([
+          ToolCall(name: "Read", target: "pool.rs", outcome: .succeeded),
+          ToolCall(
+            name: "Edit", target: "pool.rs", outcome: .succeeded,
+            edit: FileEdit(
+              filePath: "/Users/dev/pool/src/pool.rs",
+              change: .replacements([
+                .init(
+                  old: """
+                    pub fn acquire(&self) -> Connection {
+                        self.wait_for_slot()
+                    }
+                    """,
+                  new: """
+                    pub async fn acquire(&self) -> Connection {
+                        self.wait_for_slot().await
+                    }
+                    """)
+              ]))),
+          ToolCall(
+            name: "MultiEdit", target: "config.rs", outcome: .succeeded,
+            edit: FileEdit(
+              filePath: "/Users/dev/pool/src/config.rs",
+              change: .replacements([
+                .init(old: "const CAPACITY: usize = 8;", new: "const CAPACITY: usize = 32;"),
+                .init(
+                  old: "    timeout: Duration::from_secs(5),",
+                  new: "    timeout: Duration::from_secs(30),\n    retries: 3,"),
+              ]))),
+          ToolCall(
+            name: "Write", target: "README.md", outcome: .succeeded,
+            edit: FileEdit(filePath: "/Users/dev/pool/README.md", change: .write(poolReadme))),
+        ]),
+        secondsAgo: 300
+      ),
+      .init(
+        speaker: .assistant,
+        text: "The pool is async and the README is written. One more change, to the docs index.",
+        secondsAgo: 120),
+      .init(
+        speaker: .tools([
+          ToolCall(
+            name: "Edit", target: "index.md", outcome: .pending,
+            edit: FileEdit(
+              filePath: "/Users/dev/pool/docs/index.md",
+              change: .replacements([
+                .init(old: "- [Pool](pool.md)", new: "- [Pool](pool.md)\n- [README](../README.md)")
+              ])))
+        ]),
+        secondsAgo: 10
+      ),
+    ]
+  )
+
+  /// Forty lines, so the `Write` card is longer than it draws collapsed.
+  private static let poolReadme = (["# pool", "", "An async connection pool.", ""]
+    + (1...36).map { "- note \($0): the guard is dropped before every await" })
+    .joined(separator: "\n") + "\n"
+
+  /// Whether this launch should serve the file-edit fixture.
+  static var isTranscriptEdits: Bool {
+    ProcessInfo.processInfo.arguments.contains("-uiTestingEditTranscript")
   }
 
   /// A conversation ending on an `AskUserQuestion` with two questions.
