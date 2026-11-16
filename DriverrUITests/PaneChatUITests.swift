@@ -84,6 +84,7 @@ final class PaneChatUITests: XCTestCase {
     screenQuestion: Bool = false,
     screenQuestionHandover: Bool = false,
     usageLimited: Bool = false,
+    usageLimitReset: Bool = false,
     subagents: Bool = false,
     endingSubagents: Bool = false
   ) -> XCUIApplication {
@@ -128,6 +129,8 @@ final class PaneChatUITests: XCTestCase {
     if screenQuestionHandover { flags += ["-uiTestingScreenQuestionHandover"] }
     // Ends on Claude Code's usage-limit record, resetting two hours after the fetch.
     if usageLimited { flags += ["-uiTestingUsageLimited"] }
+    // The same limit, reset an hour before launch.
+    if usageLimitReset { flags += ["-uiTestingUsageLimitReset"] }
     // Two spawn lines with a sub-agent file behind each: a finished plain spawn and a running
     // teammate.
     if subagents { flags += ["-uiTestingSubagents"] }
@@ -1401,6 +1404,56 @@ final class PaneChatUITests: XCTestCase {
     XCTAssertNotNil(turn, readOrder)
     if let stop, let turn { XCTAssertLessThan(stop, turn, readOrder) }
     if let screen, let turn { XCTAssertLessThan(screen, turn, readOrder) }
+  }
+
+  /// The stop notice's opt-in for the reset alert's Continue: its own element under the
+  /// notice, off at first, and flipped by a tap.
+  ///
+  /// A UI launch reports notifications `.denied`, so this proves the control and its state,
+  /// not a scheduled card. The scheduling is `LimitResetNotifierTests`.
+  func testAUsageLimitOffersContinueAtTheResetOffByDefault() {
+    let app = connectedHost(slowTranscript: true, usageLimited: true)
+
+    tapPane(app, titled: "needs a decision")
+
+    require(app, "pane.chat.agentStop", "Expected the stop notice")
+    let control = require(
+      app, "pane.chat.agentStop.continue", "Expected the Continue opt-in under the notice")
+    XCTAssertEqual(control.label, "Add Continue to the reset alert")
+    XCTAssertEqual(control.value as? String, "Off", "Continue must start off")
+
+    control.tap()
+    requireValue(control, "On", "A tap must turn Continue on")
+    control.tap()
+    requireValue(control, "Off", "A second tap must turn Continue off")
+  }
+
+  /// Past the reset there is no alert left to change, so the notice offers no Continue.
+  func testAResetLimitOffersNoContinue() {
+    let app = connectedHost(slowTranscript: true, usageLimitReset: true)
+
+    tapPane(app, titled: "needs a decision")
+
+    let notice = require(app, "pane.chat.agentStop", "Expected the stop notice")
+    XCTAssertTrue(
+      notice.label.hasPrefix("Agent stopped. Usage limit reset."),
+      "Expected the reset state, got '\(notice.label)'")
+    requireGone(app, "pane.chat.agentStop.continue", "A reset limit must not offer Continue")
+  }
+
+  /// Waits for an element's accessibility value.
+  private func requireValue(
+    _ element: XCUIElement,
+    _ value: String,
+    _ message: String,
+    file: StaticString = #filePath,
+    line: UInt = #line
+  ) {
+    let predicate = NSPredicate(format: "value == %@", value)
+    let met = XCTNSPredicateExpectation(predicate: predicate, object: element)
+    XCTAssertEqual(
+      XCTWaiter().wait(for: [met], timeout: 5), .completed,
+      "\(message). Value was '\(String(describing: element.value))'", file: file, line: line)
   }
 
   /// `w1:p1` has no reported session, so its file is matched by directory and the header
