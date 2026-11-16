@@ -251,9 +251,14 @@ public struct TmuxControl: HerdrControl {
 
   /// tmux says one of these when no server is up. The two differ by whether the socket file
   /// exists, and mean the same to the user.
+  ///
+  /// **Only the two connect errors that mean nothing is listening.** `error connecting to … (Permission denied)`
+  /// is a server the user cannot reach, and reading it as an empty tree would show a host with
+  /// sessions as having none.
   static func isNoServer(_ message: String) -> Bool {
-    message.contains("no server running") || message.contains("error connecting to")
-      || message.contains("no sessions")
+    if message.contains("no server running") || message.contains("no sessions") { return true }
+    return message.contains("error connecting to")
+      && (message.contains("No such file or directory") || message.contains("Connection refused"))
   }
 
   /// Maps a non-zero exit to an `AppError`. 127 is the shell's "command not found".

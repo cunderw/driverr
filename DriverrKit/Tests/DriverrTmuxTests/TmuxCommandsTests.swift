@@ -30,6 +30,31 @@ struct TmuxArgumentTests {
   }
 }
 
+@Suite("TmuxArgument.label")
+struct TmuxLabelTests {
+  @Test("every # is doubled, because tmux expands formats in names and titles")
+  func hashes() {
+    #expect(TmuxArgument.label("plain") == "plain")
+    #expect(TmuxArgument.label("#S") == "'##S'")
+    #expect(TmuxArgument.label("a#{pane_id}b") == "'a##{pane_id}b'")
+    #expect(TmuxArgument.label("#(id)") == "'##(id)'")
+    #expect(TmuxArgument.label("##") == "'####'")
+    #expect(TmuxArgument.label("issue #3") == "'issue ##3'")
+  }
+
+  @Test("a newline is a space, whichever kind it is")
+  func newlines() {
+    #expect(TmuxArgument.label("a\nb") == "'a b'")
+    #expect(TmuxArgument.label("a\r\nb") == "'a b'")
+    #expect(TmuxArgument.label("a\rb") == "'a b'")
+  }
+
+  @Test("the semicolon rule still applies after the rest")
+  func semicolon() {
+    #expect(TmuxArgument.label("#;") == "'##" + backslash + ";'")
+  }
+}
+
 @Suite("TmuxCommands")
 struct TmuxCommandsTests {
   private let tmux = "tmux"
@@ -162,10 +187,34 @@ struct TmuxCommandsTests {
   func renames() {
     #expect(
       TmuxCommands.rename(binary: tmux, target: .workspace(id: "tmux:$1"), id: "'$1'", label: "api")
-        == "tmux rename-session -t '$1' api")
+        == "tmux rename-session -t '$1' -- api")
     #expect(
       TmuxCommands.rename(binary: tmux, target: .tab(id: "tmux:@2"), id: "'@2'", label: "a b")
-        == "tmux rename-window -t '@2' 'a b'")
+        == "tmux rename-window -t '@2' -- 'a b'")
+  }
+
+  @Test("a label that starts with - goes after --, and an expanding one is escaped")
+  func awkwardLabels() {
+    #expect(
+      TmuxCommands.rename(binary: tmux, target: .tab(id: "tmux:@2"), id: "'@2'", label: "-x")
+        == "tmux rename-window -t '@2' -- -x")
+    #expect(
+      TmuxCommands.rename(binary: tmux, target: .workspace(id: "tmux:$1"), id: "'$1'", label: "#S")
+        == "tmux rename-session -t '$1' -- '##S'")
+    #expect(
+      TmuxCommands.perform(binary: tmux, action: .rename("#{pane_id}"), pane: pane)
+        == "tmux select-pane -t '%3' -T '##{pane_id}'")
+    // The pane title takes its value as the flag's argument, so a leading `-` is safe there.
+    #expect(
+      TmuxCommands.perform(binary: tmux, action: .rename("-x"), pane: pane)
+        == "tmux select-pane -t '%3' -T -x")
+  }
+
+  @Test("typed text is not format-escaped, because send-keys -l expands nothing")
+  func typedHash() {
+    #expect(
+      TmuxCommands.input(binary: tmux, pane: pane, text: "#S ##", submit: false)
+        == "tmux send-keys -t '%3' -l -- '#S ##'")
   }
 
   @Test("a new window and a new session print the id of the pane they make")
@@ -226,23 +275,28 @@ struct TmuxCommandsTests {
       }
     }
 
-    @Test("a label reaches tmux whole, including one that ends in a semicolon")
+    @Test("a label reaches tmux as the text tmux must be given to store it")
     func labels() async throws {
       let directory = try LocalShell.temporaryDirectory()
       defer { try? FileManager.default.removeItem(at: directory) }
       let stub = try LocalShell.argumentPrinter(in: directory)
 
-      for label in Self.hostile {
+      for label in Self.hostile + ["-x", "--flag", "#S", "a#{pane_id}b", "#(id)", "x\ny"] {
+        // What tmux is given: newlines as spaces, and every # doubled so tmux's format
+        // expansion gives the label back as it was.
+        let given = String(label.map { $0.isNewline ? " " : $0 })
+          .replacingOccurrences(of: "#", with: "##")
+
         let rename = TmuxCommands.rename(
           binary: shellQuoted(stub), target: .tab(id: "tmux:@2"), id: shellQuoted("@2"), label: label)
         #expect(
-          try await read(rename) == [["rename-window", "-t", "@2", label]],
+          try await read(rename) == [["rename-window", "-t", "@2", "--", given]],
           "rename: \(label.debugDescription)")
 
         let pane = TmuxCommands.perform(
           binary: shellQuoted(stub), action: .rename(label), pane: shellQuoted("%3"))
         #expect(
-          try await read(pane) == [["select-pane", "-t", "%3", "-T", label]],
+          try await read(pane) == [["select-pane", "-t", "%3", "-T", given]],
           "pane title: \(label.debugDescription)")
       }
     }
@@ -256,7 +310,7 @@ struct TmuxCommandsTests {
       // `$1` unquoted is the shell's first parameter, and would arrive as nothing.
       let rename = TmuxCommands.rename(
         binary: shellQuoted(stub), target: .workspace(id: "tmux:$1"), id: shellQuoted("$1"), label: "x")
-      #expect(try await read(rename) == [["rename-session", "-t", "$1", "x"]])
+      #expect(try await read(rename) == [["rename-session", "-t", "$1", "--", "x"]])
 
       let close = TmuxCommands.perform(binary: shellQuoted(stub), action: .close, pane: shellQuoted("%12"))
       #expect(try await read(close) == [["kill-pane", "-t", "%12"]])

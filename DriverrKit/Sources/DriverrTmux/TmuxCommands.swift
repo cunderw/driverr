@@ -28,6 +28,21 @@ enum TmuxArgument {
     shellQuoted(escaped(value))
   }
 
+  /// A name or title that tmux stores, as the one line and the literal text it must be given.
+  ///
+  /// `rename-session`, `rename-window` and `select-pane -T` run their text through tmux's format
+  /// expansion: `format_single_from_target` in `cmd-rename-session.c`, `cmd-rename-window.c` and
+  /// `cmd-select-pane.c`, the same calls in the 3.2 tag, which is the floor. So `#S`,
+  /// `#{pane_id}` and `#(…)` are consumed, and `##` is the only way to a `#`. Every `#` is
+  /// doubled. `send-keys -l` does no expansion, so typed text never goes through this.
+  ///
+  /// A newline is a space: `select-pane -T` with one exits 0 and changes nothing, and the two
+  /// renames refuse it.
+  static func label(_ value: String) -> String {
+    let oneLine = String(value.map { $0.isNewline ? " " : $0 })
+    return quoted(oneLine.replacingOccurrences(of: "#", with: "##"))
+  }
+
   /// Between two tmux commands in one invocation. The shell turns `\;` into a bare `;`, which
   /// tmux reads as a separator.
   static let separator = #" \; "#
@@ -177,7 +192,7 @@ enum TmuxCommands {
     case .rename(let label):
       // tmux has no pane name. The title is what the pane's program may overwrite, and it is
       // the closest thing.
-      return "\(binary) select-pane -t \(pane) -T \(TmuxArgument.quoted(label))"
+      return "\(binary) select-pane -t \(pane) -T \(TmuxArgument.label(label))"
     case .close:
       return "\(binary) kill-pane -t \(pane)"
     }
@@ -185,10 +200,11 @@ enum TmuxCommands {
 
   static func rename(binary: String, target: RenameTarget, id: String, label: String) -> String {
     switch target {
+    // `--`, so a label that starts with `-` is not a flag.
     case .workspace:
-      "\(binary) rename-session -t \(id) \(TmuxArgument.quoted(label))"
+      "\(binary) rename-session -t \(id) -- \(TmuxArgument.label(label))"
     case .tab:
-      "\(binary) rename-window -t \(id) \(TmuxArgument.quoted(label))"
+      "\(binary) rename-window -t \(id) -- \(TmuxArgument.label(label))"
     }
   }
 

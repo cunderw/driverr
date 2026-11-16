@@ -93,4 +93,36 @@ struct FakeTmuxHostTests {
     let result = try await host.runner("tmux list-panes -a -F '[#{pane_id}][#{nonsense}]'")
     #expect(result.standardOutput.hasPrefix("[%0][]\n[%1][]\n"))
   }
+
+  @Test("a flag no command takes is refused, as a label that starts with - is without --")
+  func unknownFlag() async throws {
+    let host = FakeTmuxHost.seeded()
+    let bare = try await host.runner("tmux rename-window -t '@0' '-x'")
+    #expect(bare.exitStatus == 1)
+    #expect(bare.standardError.contains("unknown flag -x"))
+    #expect(try await host.runner("tmux rename-window -t '@0' -- '-x'").exitStatus == 0)
+    #expect(await host.sessions[0].windows[0].name == "-x")
+  }
+
+  @Test("names and titles go through format expansion, and ## is the way to a #")
+  func expansion() async throws {
+    let host = FakeTmuxHost.seeded()
+    _ = try await host.runner("tmux rename-session -t '$0' -- '#S-#{pane_id}-#(id)-##-#W'")
+    #expect(await host.sessions[0].name == "work-%0--#-editor")
+
+    _ = try await host.runner("tmux select-pane -t '%0' -T '##S'")
+    #expect(await host.sessions[0].windows[0].panes[0].title == "#S")
+  }
+
+  @Test("a title with a newline exits 0 and changes nothing, and a name with one is refused")
+  func newlines() async throws {
+    let host = FakeTmuxHost.seeded()
+    let title = try await host.runner("tmux select-pane -t '%1' -T 'a\nb'")
+    #expect(title.exitStatus == 0)
+    #expect(await host.sessions[0].windows[0].panes[1].title == "✳ Claude Code")
+
+    let name = try await host.runner("tmux rename-session -t '$0' -- 'a\nb'")
+    #expect(name.exitStatus == 1)
+    #expect(await host.sessions[0].name == "work")
+  }
 }

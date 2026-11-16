@@ -406,6 +406,7 @@ public actor FakeTmuxHost {
 
   private func tmuxCommand(_ command: [String]) -> CommandResult {
     var flags = Flags(Array(command.dropFirst()))
+    if let bad = flags.unknown.first { return Self.failure("unknown flag \(bad)", status: 1) }
     switch command[0] {
     case "list-panes":
       return listPanes(&flags)
@@ -422,20 +423,38 @@ public actor FakeTmuxHost {
     case "select-pane":
       guard let location = target(flags.value("-t")) else { return Self.noPane(flags.value("-t")) }
       if let title = flags.value("-T") {
-        sessions[location.session].windows[location.window].panes[location.pane].title = title
+        let session = sessions[location.session]
+        let window = session.windows[location.window]
+        let expanded = expand(title, session: session, window: window, pane: window.panes[location.pane], printed: false)
+        // Measured on 3.7c: a title with a newline exits 0 and changes nothing.
+        if !expanded.contains(where: \.isNewline) {
+          sessions[location.session].windows[location.window].panes[location.pane].title = expanded
+        }
       }
       return Self.success("")
     case "rename-session":
-      guard let session = sessionIndex(flags.value("-t")), let name = flags.positional.first else {
+      guard let index = sessionIndex(flags.value("-t")), let name = flags.positional.first else {
         return Self.failure("can't find session", status: 1)
       }
-      sessions[session].name = name
+      let session = sessions[index]
+      let window = session.windows.first(where: \.isActive) ?? session.windows[0]
+      let expanded = expand(name, session: session, window: window, pane: window.panes[0], printed: false)
+      guard !expanded.contains(where: { $0.isNewline || $0 == "\t" }) else {
+        return Self.failure("invalid session name: \(expanded)", status: 1)
+      }
+      sessions[index].name = expanded
       return Self.success("")
     case "rename-window":
-      guard let window = windowLocation(flags.value("-t")), let name = flags.positional.first
+      guard let location = windowLocation(flags.value("-t")), let name = flags.positional.first
       else { return Self.failure("can't find window", status: 1) }
-      sessions[window.session].windows[window.window].name = name
-      sessions[window.session].windows[window.window].isAutoNamed = false
+      let session = sessions[location.session]
+      let window = session.windows[location.window]
+      let expanded = expand(name, session: session, window: window, pane: window.panes[0], printed: false)
+      guard !expanded.contains(where: { $0.isNewline || $0 == "\t" }) else {
+        return Self.failure("invalid window name: \(expanded)", status: 1)
+      }
+      sessions[location.session].windows[location.window].name = expanded
+      sessions[location.session].windows[location.window].isAutoNamed = false
       return Self.success("")
     case "new-window":
       return newWindow(&flags)
@@ -451,7 +470,11 @@ public actor FakeTmuxHost {
     private(set) var values: [String: String] = [:]
     private(set) var switches: Set<String> = []
     private(set) var positional: [String] = []
+    /// Flags tmux would refuse as `unknown flag`: a dash and something, before any `--`, that
+    /// no command here takes. This is what a label that starts with `-` becomes without `--`.
+    private(set) var unknown: [String] = []
 
+    private static let known: Set<String> = ["-a", "-d", "-h", "-v", "-P", "-l", "-H", "-e", "-p"]
     private static let withValue: Set<String> = ["-t", "-F", "-c", "-T", "-s", "-n", "-f"]
 
     init(_ arguments: [String]) {
@@ -462,8 +485,10 @@ public actor FakeTmuxHost {
           parsing = false
         } else if parsing, Self.withValue.contains(argument), let value = rest.popFirst() {
           values[argument] = value
-        } else if parsing, argument.hasPrefix("-"), argument.count == 2 {
+        } else if parsing, Self.known.contains(argument) {
           switches.insert(argument)
+        } else if parsing, argument.hasPrefix("-"), argument.count >= 2 {
+          unknown.append(argument)
         } else {
           positional.append(argument)
         }
@@ -527,9 +552,17 @@ public actor FakeTmuxHost {
     return Self.success(lines)
   }
 
-  /// `#{name}` in `format`, as tmux fills it. A name it does not know is empty, which is what
-  /// tmux does, so a format that asks for something misspelled shows up as an empty field.
-  private func expand(_ format: String, session: Session, window: Window, pane: Pane) -> String {
+  /// A format as tmux expands it: `##` is `#`, `#S`, `#W` and `#T` are the session, window and
+  /// pane title, `#{name}` is a variable, and `#(…)` runs a command, which the fake models as
+  /// consuming its text and printing nothing. Another `#x` is left as it is. A variable it does
+  /// not know is empty, which is what tmux does, so a misspelt one shows as an empty field.
+  ///
+  /// `printed` is for an answer tmux prints, as `-F` does, and not for text it stores: an answer
+  /// is ASCII-only without `-u`.
+  private func expand(
+    _ format: String, session: Session, window: Window, pane: Pane, printed: Bool = true
+  ) -> String {
+    let title = pane.title.isEmpty ? Self.hostName : pane.title
     let values: [String: String] = [
       "pane_id": "%\(pane.id)",
       "window_id": "@\(window.id)",
@@ -546,26 +579,41 @@ public actor FakeTmuxHost {
       "pane_width": String(pane.width),
       "pane_height": String(pane.height),
       // tmux's default title is the host's name.
-      "pane_title": pane.title.isEmpty ? Self.hostName : pane.title,
+      "pane_title": title,
       "host": Self.hostName,
       "host_short": String(Self.hostName.split(separator: ".").first ?? ""),
       "pane_current_command": pane.command,
       "pane_current_path": pane.path,
     ]
+    let chars = Array(format)
     var out = ""
-    var rest = format[...]
-    while let start = rest.range(of: "#{") {
-      out += rest[..<start.lowerBound]
-      let after = rest[start.upperBound...]
-      guard let end = after.firstIndex(of: "}") else {
-        out += rest[start.lowerBound...]
-        return out
+    var i = 0
+    while i < chars.count {
+      guard chars[i] == "#", i + 1 < chars.count else {
+        out.append(chars[i])
+        i += 1
+        continue
       }
-      out += values[String(after[..<end])] ?? ""
-      rest = after[after.index(after: end)...]
+      switch chars[i + 1] {
+      case "#": out += "#"; i += 2
+      case "S": out += session.name; i += 2
+      case "W": out += window.name; i += 2
+      case "T": out += title; i += 2
+      case "{", "(":
+        let close: Character = chars[i + 1] == "{" ? "}" : ")"
+        guard let end = chars[(i + 2)...].firstIndex(of: close) else {
+          out += String(chars[i...])
+          i = chars.count
+          continue
+        }
+        if close == "}" { out += values[String(chars[(i + 2)..<end])] ?? "" }
+        i = end + 1
+      default:
+        out.append("#")
+        i += 1
+      }
     }
-    out += rest
-    return utf8 ? out : Self.asciiOnly(out)
+    return printed && !utf8 ? Self.asciiOnly(out) : out
   }
 
   private func sendKeys(_ flags: inout Flags) -> CommandResult {

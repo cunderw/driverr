@@ -96,6 +96,23 @@
         try await control.rename(.workspace(id: split.workspaces[0].id), to: "probé;")
         #expect(try await control.snapshot().workspaces[0].label == "probé;")
 
+        // Names that tmux would expand, or read as a flag, are stored as typed. `#(echo hi)` would
+        // run a command on the host if it were not escaped.
+        let session = split.workspaces[0].id
+        let window = split.workspaces[0].tabs[0].id
+        for (label, stored) in [
+          ("#S", "#S"), ("-x", "-x"), ("a#{pane_id}b", "a#{pane_id}b"), ("#(echo hi)", "#(echo hi)"),
+          ("issue #3", "issue #3"), ("two\nlines", "two lines"),
+        ] {
+          try await control.rename(.workspace(id: session), to: label)
+          try await control.rename(.tab(id: window), to: label)
+          try await control.perform(.rename(label), on: first)
+          let named = try await control.snapshot()
+          #expect(named.workspaces[0].label == stored, "session \(label.debugDescription)")
+          #expect(named.workspaces[0].tabs[0].label == stored, "window \(label.debugDescription)")
+          #expect(named.pane(id: first)?.title == stored, "pane \(label.debugDescription)")
+        }
+
         try await control.perform(.close, on: split.allPanes[1].id)
         #expect(try await control.snapshot().allPanes.count == 1)
       }

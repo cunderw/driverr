@@ -99,6 +99,42 @@ struct TmuxControlSnapshotTests {
     #expect(try await control.snapshot() == .empty)
   }
 
+  @Test(
+    "a socket that cannot be reached is not an empty server",
+    arguments: [
+      "error connecting to /tmp/tmux-1000/default (Permission denied)",
+      "error connecting to /tmp/tmux-1000/default (Operation not permitted)",
+      "error connecting to /tmp/tmux-1000/default (Not a directory)",
+    ])
+  func unreachableSocket(message: String) async {
+    let control = TmuxControl(run: { _ in
+      CommandResult(standardOutput: "", standardError: message + "\n", exitStatus: 1)
+    })
+    await #expect(throws: AppError.herdrCommandFailed(reason: message)) {
+      try await control.snapshot()
+    }
+    // A new terminal must not start a second server beside one the user cannot reach.
+    await #expect(throws: AppError.herdrCommandFailed(reason: message)) {
+      try await control.startTerminal()
+    }
+    await #expect(throws: AppError.herdrCommandFailed(reason: message)) {
+      try await control.readPanes(ids: ["tmux:%1"], lines: 3)
+    }
+  }
+
+  @Test("the words that do mean no server, and the ones that do not")
+  func noServerWords() {
+    for yes in [
+      "no server running on /tmp/x", "no sessions",
+      "error connecting to /tmp/x (No such file or directory)",
+      "error connecting to /tmp/x (Connection refused)",
+    ] { #expect(TmuxControl.isNoServer(yes), "\(yes)") }
+    for no in [
+      "error connecting to /tmp/x (Permission denied)", "can't find pane: %1", "unknown flag -x",
+      "",
+    ] { #expect(!TmuxControl.isNoServer(no), "\(no)") }
+  }
+
   @Test("a real failure is not an empty tree")
   func failure() async {
     let control = TmuxControl(run: { _ in
@@ -502,6 +538,41 @@ struct TmuxControlActionTests {
     let control = TmuxControl(run: host.runner)
     try await control.perform(.rename("build; watch"), on: "tmux:%0")
     #expect(try await control.snapshot().pane(id: "tmux:%0")?.title == "build; watch")
+  }
+
+  @Test(
+    "a name tmux would expand or refuse as a flag is stored as typed",
+    arguments: ["#S", "-x", "--flag", "a#{pane_id}b", "#(id)", "##", "issue #3", "x;", "-"])
+  func awkwardLabels(label: String) async throws {
+    let host = FakeTmuxHost.seeded()
+    let control = TmuxControl(run: host.runner)
+
+    try await control.rename(.workspace(id: "tmux:$1"), to: label)
+    try await control.rename(.tab(id: "tmux:@2"), to: label)
+    try await control.perform(.rename(label), on: "tmux:%3")
+
+    let tree = try await control.snapshot()
+    #expect(tree.workspaces[1].label == label)
+    #expect(tree.workspaces[1].tabs[0].label == label)
+    // A title of only symbols is trimmed to nothing for display, as any title is, and the pane
+    // then takes its command's name.
+    if label.contains(where: { $0.isLetter || $0.isNumber }) {
+      #expect(tree.pane(id: "tmux:%3")?.title == label)
+    }
+    #expect(await host.sessions[1].windows[0].panes[0].title == label)
+  }
+
+  @Test("a newline in a name or a title is a space, and the rename still lands")
+  func newlineLabels() async throws {
+    let host = FakeTmuxHost.seeded()
+    let control = TmuxControl(run: host.runner)
+    try await control.rename(.workspace(id: "tmux:$1"), to: "two\nlines")
+    try await control.rename(.tab(id: "tmux:@2"), to: "two\r\nlines")
+    try await control.perform(.rename("two\nlines"), on: "tmux:%3")
+    let tree = try await control.snapshot()
+    #expect(tree.workspaces[1].label == "two lines")
+    #expect(tree.workspaces[1].tabs[0].label == "two lines")
+    #expect(tree.pane(id: "tmux:%3")?.title == "two lines")
   }
 
   @Test("a session and a window rename; the window then stops being auto-named")
