@@ -102,7 +102,8 @@
         let window = split.workspaces[0].tabs[0].id
         for (label, stored) in [
           ("#S", "#S"), ("-x", "-x"), ("a#{pane_id}b", "a#{pane_id}b"), ("#(echo hi)", "#(echo hi)"),
-          ("issue #3", "issue #3"), ("two\nlines", "two lines"),
+          ("issue #3", "issue #3"), ("two\nlines", "two lines"), ("tab\tseparated", "tab separated"),
+          ("bell\u{7}esc\u{1B}del\u{7F}x", "bell esc del x"),
         ] {
           try await control.rename(.workspace(id: session), to: label)
           try await control.rename(.tab(id: window), to: label)

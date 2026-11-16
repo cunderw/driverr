@@ -49,6 +49,13 @@ struct TmuxLabelTests {
     #expect(TmuxArgument.label("a\rb") == "'a b'")
   }
 
+  @Test("a tab and every other control character is a space")
+  func controls() {
+    #expect(TmuxArgument.label("a\tb") == "'a b'")
+    #expect(TmuxArgument.label("a\u{1}b\u{1B}c\u{7F}d") == "'a b c d'")
+    #expect(TmuxArgument.label("é✓ x") == "'é✓ x'", "printable text is untouched")
+  }
+
   @Test("the semicolon rule still applies after the rest")
   func semicolon() {
     #expect(TmuxArgument.label("#;") == "'##" + backslash + ";'")

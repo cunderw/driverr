@@ -426,8 +426,9 @@ public actor FakeTmuxHost {
         let session = sessions[location.session]
         let window = session.windows[location.window]
         let expanded = expand(title, session: session, window: window, pane: window.panes[location.pane], printed: false)
-        // Measured on 3.7c: a title with a newline exits 0 and changes nothing.
-        if !expanded.contains(where: \.isNewline) {
+        // Measured on 3.7c: a title with a control character, a newline or a tab, exits 0 and
+        // changes nothing.
+        if !expanded.contains(where: Self.isControl) {
           sessions[location.session].windows[location.window].panes[location.pane].title = expanded
         }
       }
@@ -439,7 +440,7 @@ public actor FakeTmuxHost {
       let session = sessions[index]
       let window = session.windows.first(where: \.isActive) ?? session.windows[0]
       let expanded = expand(name, session: session, window: window, pane: window.panes[0], printed: false)
-      guard !expanded.contains(where: { $0.isNewline || $0 == "\t" }) else {
+      guard !expanded.contains(where: Self.isControl) else {
         return Self.failure("invalid session name: \(expanded)", status: 1)
       }
       sessions[index].name = expanded
@@ -450,7 +451,7 @@ public actor FakeTmuxHost {
       let session = sessions[location.session]
       let window = session.windows[location.window]
       let expanded = expand(name, session: session, window: window, pane: window.panes[0], printed: false)
-      guard !expanded.contains(where: { $0.isNewline || $0 == "\t" }) else {
+      guard !expanded.contains(where: Self.isControl) else {
         return Self.failure("invalid window name: \(expanded)", status: 1)
       }
       sessions[location.session].windows[location.window].name = expanded
@@ -671,6 +672,11 @@ public actor FakeTmuxHost {
     nextSession += 1
     sessions.append(session)
     return Self.success(flags.has("-P") ? expand(flags.value("-F") ?? "", session: session, window: window, pane: pane) + "\n" : "")
+  }
+
+  private static func isControl(_ character: Character) -> Bool {
+    character.isNewline
+      || character.unicodeScalars.contains { $0.value < 0x20 || $0.value == 0x7F }
   }
 
   private static func success(_ output: String) -> CommandResult {

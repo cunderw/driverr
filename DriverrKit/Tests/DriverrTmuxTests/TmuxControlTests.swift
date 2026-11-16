@@ -575,6 +575,19 @@ struct TmuxControlActionTests {
     #expect(tree.pane(id: "tmux:%3")?.title == "two lines")
   }
 
+  @Test("a tab or another control character in a name or a title is a space, and the rename lands")
+  func controlLabels() async throws {
+    let host = FakeTmuxHost.seeded()
+    let control = TmuxControl(run: host.runner)
+    try await control.rename(.workspace(id: "tmux:$1"), to: "a\tb")
+    try await control.rename(.tab(id: "tmux:@2"), to: "c\u{1B}d")
+    try await control.perform(.rename("e\u{7F}f\tg"), on: "tmux:%3")
+    let tree = try await control.snapshot()
+    #expect(tree.workspaces[1].label == "a b")
+    #expect(tree.workspaces[1].tabs[0].label == "c d")
+    #expect(tree.pane(id: "tmux:%3")?.title == "e f g")
+  }
+
   @Test("a session and a window rename; the window then stops being auto-named")
   func renameContainers() async throws {
     let host = FakeTmuxHost.seeded()

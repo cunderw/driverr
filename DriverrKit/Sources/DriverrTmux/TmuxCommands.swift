@@ -36,10 +36,11 @@ enum TmuxArgument {
   /// `#{pane_id}` and `#(…)` are consumed, and `##` is the only way to a `#`. Every `#` is
   /// doubled. `send-keys -l` does no expansion, so typed text never goes through this.
   ///
-  /// A newline is a space: `select-pane -T` with one exits 0 and changes nothing, and the two
-  /// renames refuse it.
+  /// A control character is a space. A newline or a tab makes `select-pane -T` exit 0 and
+  /// change nothing, and the two renames refuse it with `invalid … name`. Measured on 3.7c for
+  /// the whole range below 0x20, and DEL is treated the same way here.
   static func label(_ value: String) -> String {
-    let oneLine = String(value.map { $0.isNewline ? " " : $0 })
+    let oneLine = String(value.map { $0.isControl ? " " : $0 })
     return quoted(oneLine.replacingOccurrences(of: "#", with: "##"))
   }
 
@@ -224,5 +225,12 @@ enum TmuxCommands {
   /// replaces it with a control client per pane.
   static func attach(binary: String, session: String) -> String {
     "\(binary) attach-session -t \(session) -f read-only,ignore-size"
+  }
+}
+
+extension Character {
+  /// A control character below 0x20, DEL, or a newline of any kind, such as `\r\n`.
+  fileprivate var isControl: Bool {
+    isNewline || unicodeScalars.contains { $0.value < 0x20 || $0.value == 0x7F }
   }
 }

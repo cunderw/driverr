@@ -125,4 +125,16 @@ struct FakeTmuxHostTests {
     #expect(name.exitStatus == 1)
     #expect(await host.sessions[0].name == "work")
   }
+
+  @Test("any control character, a tab included, is refused by a rename and ignored by a title")
+  func controls() async throws {
+    let host = FakeTmuxHost.seeded()
+    for text in ["a\tb", "a\u{1}b", "a\u{7F}b"] {
+      #expect(try await host.runner("tmux select-pane -t '%1' -T '\(text)'").exitStatus == 0)
+      #expect(await host.sessions[0].windows[0].panes[1].title == "✳ Claude Code")
+      #expect(try await host.runner("tmux rename-window -t '@0' -- '\(text)'").exitStatus == 1)
+      #expect(try await host.runner("tmux rename-session -t '$0' -- '\(text)'").exitStatus == 1)
+    }
+    #expect(await host.sessions[0].name == "work")
+  }
 }
