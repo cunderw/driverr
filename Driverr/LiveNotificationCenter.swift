@@ -1,3 +1,4 @@
+import DriverrCore
 import Foundation
 import UserNotifications
 
@@ -35,6 +36,43 @@ struct LiveNotificationCenter: NotificationScheduling {
     try? await center.add(request)
   }
 
+  func schedule(_ notification: TimedNotification) async {
+    let content = UNMutableNotificationContent()
+    content.title = notification.title
+    content.body = notification.body
+    content.sound = .default
+    content.userInfo = notification.userInfo
+    content.categoryIdentifier = notification.categoryID ?? ""
+    let trigger = UNCalendarNotificationTrigger(dateMatching: notification.trigger, repeats: false)
+    let request = UNNotificationRequest(
+      identifier: notification.id, content: content, trigger: trigger)
+    try? await center.add(request)
+  }
+
+  func pendingNotification(id: String) async -> PendingNotification? {
+    guard let request = await center.pendingNotificationRequests().first(where: { $0.identifier == id })
+    else { return nil }
+    let category = request.content.categoryIdentifier
+    return PendingNotification(
+      fireDate: (request.trigger as? UNCalendarNotificationTrigger)?.nextTriggerDate(),
+      categoryID: category.isEmpty ? nil : category)
+  }
+
+  /// The categories whose actions a card can offer. Set once at launch, before any card that
+  /// names one can be delivered.
+  static func registerCategories() {
+    let proceed = UNNotificationAction(
+      identifier: LimitResetReminder.continueActionID,
+      title: LimitResetReminder.continueActionTitle,
+      // `.foreground`: the action opens the app, which connects and then sends. Nothing is
+      // sent from the background.
+      options: [.foreground])
+    let category = UNNotificationCategory(
+      identifier: LimitResetReminder.continueCategoryID, actions: [proceed],
+      intentIdentifiers: [])
+    UNUserNotificationCenter.current().setNotificationCategories([category])
+  }
+
   func withdraw(ids: [String]) async {
     // Delivered is a card on screen; pending is one added but not shown yet.
     center.removeDeliveredNotifications(withIdentifiers: ids)
@@ -52,6 +90,8 @@ struct SilentNotificationCenter: NotificationScheduling {
   func authorizationStatus() async -> NotificationAuthorization { .denied }
   @discardableResult func requestAuthorization() async -> Bool { false }
   func post(id: String, title: String, body: String, userInfo: [String: String]) async {}
+  func schedule(_ notification: TimedNotification) async {}
+  func pendingNotification(id: String) async -> PendingNotification? { nil }
   func withdraw(ids: [String]) async {}
 }
 #endif

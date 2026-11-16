@@ -33,10 +33,23 @@ final class NotificationTapRouter: NSObject, UNUserNotificationCenterDelegate {
   /// main actor.
   @MainActor
   static func route(userInfo: [String: String], to presenter: TerminalPresenter) {
+    route(action: UNNotificationDefaultActionIdentifier, userInfo: userInfo, to: presenter)
+  }
+
+  /// The same, for a card's action. The reset alert's Continue opens the pane and asks for
+  /// `LimitResetReminder.continueText` to be sent once the connection is up; every other
+  /// action, and a plain tap, only opens it.
+  @MainActor
+  static func route(action: String, userInfo: [String: String], to presenter: TerminalPresenter) {
     guard let hostID = userInfo[hostIDKey].flatMap(UUID.init(uuidString:)),
       let paneID = userInfo[paneIDKey], !paneID.isEmpty
     else { return }
-    presenter.requestOpen(hostID: hostID, paneID: paneID)
+    if action == LimitResetReminder.continueActionID {
+      presenter.requestOpen(
+        hostID: hostID, intent: .paneSending(paneID, text: LimitResetReminder.continueText))
+    } else {
+      presenter.requestOpen(hostID: hostID, paneID: paneID)
+    }
   }
 
   func userNotificationCenter(
@@ -44,8 +57,9 @@ final class NotificationTapRouter: NSObject, UNUserNotificationCenterDelegate {
     didReceive response: UNNotificationResponse
   ) async {
     let userInfo = Self.strings(in: response.notification.request.content.userInfo)
+    let action = response.actionIdentifier
     let presenter = presenter
-    await MainActor.run { Self.route(userInfo: userInfo, to: presenter) }
+    await MainActor.run { Self.route(action: action, userInfo: userInfo, to: presenter) }
   }
 
   /// Nothing is shown while the app is in front.

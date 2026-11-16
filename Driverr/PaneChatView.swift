@@ -194,6 +194,10 @@ struct PaneChatView: View {
   /// as `ProvenanceRow.onCaptionFrame` is. See `floatingCapsules(for:)`.
   var onCapsulesFrame: (@MainActor (CGRect) -> Void)?
 
+  /// Whether this pane's usage-limit reset alert offers Continue, for the stop notice's
+  /// opt-in. `nil` draws no control. See `AgentStopRow.continueAtReset`.
+  var continueAtReset: Binding<Bool>?
+
   /// VoiceOver focus, moved to the newest turn when the transcript first renders, where a
   /// sighted reader's eye lands anyway.
   @AccessibilityFocusState private var focusedTurnID: TranscriptTurn.ID?
@@ -1367,7 +1371,7 @@ struct PaneChatView: View {
     let stop = floatingStop(in: transcript)
     if stop != nil || offersScreenCapsule {
       VStack(spacing: 0) {
-        if let stop { AgentStopRow(stop: stop) }
+        if let stop { AgentStopRow(stop: stop, continueAtReset: continueAtReset) }
         if offersScreenCapsule { showScreenCapsule }
       }
       .frame(maxWidth: ChatColumn.width)

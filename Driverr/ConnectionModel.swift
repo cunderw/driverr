@@ -184,6 +184,7 @@ final class ConnectionModel {
       // cannot both announce one pane.
       store: environment.announcedPanes
     )
+    limitResets = LimitResetNotifier(host: host, center: environment.notifications)
   }
 
   // MARK: - Which pane this host was last open on
@@ -270,6 +271,10 @@ final class ConnectionModel {
   /// This host's blocked-pane notifications. Per host, and here because this object sees
   /// every poll's result through `onSessionChanged`.
   @ObservationIgnored private let notifier: BlockedPaneNotifier
+
+  /// This host's usage-limit reset reminders, and the stop notice's Continue opt-in. Here, not
+  /// on the transcript cache, so it outlives `disconnect()`.
+  @ObservationIgnored let limitResets: LimitResetNotifier
 
   /// Whether the app is in front, asked when a poll lands.
   ///
@@ -585,7 +590,9 @@ final class ConnectionModel {
           // `PaneTranscriptModel.onAdvanced`.
           onAdvanced: { [weak self] paneID in
             self?.composers?.existingModel(for: paneID)?.transcriptAdvanced()
-          }
+          },
+          // A usage limit's reset reminder. See `LimitResetNotifier`.
+          onStopReport: { [weak self] report in self?.limitResets.report(report) }
         )
         carriedTranscripts.takeOver(from: transcripts)
         transcripts = carriedTranscripts
@@ -909,6 +916,16 @@ final class ConnectionModel {
     ) { command in
       ExecStreamBridge(stream: try await coordinator.openStream(command: command))
     }
+  }
+
+  /// Sends `text` to a pane through its composer, so it shows as `Sent` and offers Retry
+  /// like a typed reply. For the reset alert's Continue, once the connection is up. Does
+  /// nothing when the pane is not in the session.
+  func submit(_ text: String, toPane paneID: String) async {
+    guard phase == .connected, let session else { return }
+    if session.reportedTree.isEmpty { await session.refresh() }
+    guard let pane = session.reportedTree.pane(id: paneID), let composers else { return }
+    await composers.model(for: pane).send(text: text)
   }
 
   func disconnect() async {
