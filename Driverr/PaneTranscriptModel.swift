@@ -63,7 +63,9 @@ final class PaneTranscriptModel {
   /// chat down. `OpenToolRuns` owns what survives a re-read.
   var openRuns = OpenToolRuns()
 
-  /// Turns the reader expanded past the length bound. Held here for `openRuns`' reason.
+  /// What the reader expanded: turns past the length bound, by turn id, and edit cards past
+  /// their collapsed length, by `FileEdit.expansionKey(turnID:callIndex:)`. Held here for
+  /// `openRuns`' reason.
   var expanded: Set<String> = []
 
   /// A reply that went over and is not in the file yet.

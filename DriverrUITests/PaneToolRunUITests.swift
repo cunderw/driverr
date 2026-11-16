@@ -349,7 +349,7 @@ final class PaneToolRunUITests: XCTestCase {
     let pending = require(
       app, "pane.chat.turn.tools.\(session)-3.edit.0", "Expected the pending Edit's diff")
     XCTAssertEqual(
-      pending.label, "Diff of /Users/dev/pool/docs/index.md, 1 line added, 0 lines removed",
+      pending.label, "Diff of /Users/dev/dev/driverr/docs/index.md, 1 line added, 0 lines removed",
       "The pending card names its file and its change.\nTree was:\n\(app.debugDescription)")
 
     // The long Write, collapsed, with its control.
@@ -377,12 +377,12 @@ final class PaneToolRunUITests: XCTestCase {
     let multi = element(app, "\(finished).edit.2")
     scrollBackTo(multi, in: chat)
     XCTAssertEqual(
-      multi.label, "Diff of /Users/dev/pool/src/config.rs, 3 lines added, 2 lines removed",
+      multi.label, "Diff of /Users/dev/dev/driverr/src/config.rs, 3 lines added, 2 lines removed",
       "The MultiEdit's card counts both of its edits.\nTree was:\n\(app.debugDescription)")
     let edit = element(app, "\(finished).edit.1")
     scrollBackTo(edit, in: chat)
     XCTAssertEqual(
-      edit.label, "Diff of /Users/dev/pool/src/pool.rs, 2 lines added, 2 lines removed",
+      edit.label, "Diff of /Users/dev/dev/driverr/src/pool.rs, 2 lines added, 2 lines removed",
       "The Edit's card counts its change.\nTree was:\n\(app.debugDescription)")
     requireGone(app, "\(finished).edit.1.expand", "A short card offers nothing to expand")
     requireGone(app, "\(finished).edit.0", "The Read in the run draws no card")

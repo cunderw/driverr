@@ -17,6 +17,8 @@ struct ToolEditCards: View {
   /// The run's turn id, for the identifiers.
   let runID: String
   let contentWidth: CGFloat
+  /// The pane's working directory, which each card's path is shown relative to.
+  let paneDirectory: String?
   /// Whether the card for the call at this position in the run is expanded.
   let isExpanded: (Int) -> Bool
   let onToggle: (Int) -> Void
@@ -48,7 +50,8 @@ struct ToolEditCards: View {
         contentWidth: contentWidth,
         lines: shown,
         spokenValue: hidden > 0
-          ? TranscriptChatCopy.editLinesShown(shown.count, of: edit.diff.lines.count) : ""
+          ? TranscriptChatCopy.editLinesShown(shown.count, of: edit.diff.lines.count) : "",
+        shownPath: FileEdit.displayPath(edit.filePath, paneDirectory: paneDirectory)
       )
       .accessibilityIdentifier(identifier)
 

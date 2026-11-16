@@ -804,7 +804,8 @@ struct PaneChatView: View {
       },
       onToggleEdit: { index in
         toggleExpand(FileEdit.expansionKey(turnID: turn.id, callIndex: index))
-      }
+      },
+      paneDirectory: model.pane.directory
     )
     // Whether `@AccessibilityFocusState` reaches across a `UIHostingConfiguration` cannot be
     // tested in-process (see `HostedProbe`), so it is kept rather than replaced by an equally
@@ -953,13 +954,15 @@ struct PaneChatView: View {
     replySelection.markSent()
   }
 
-  private func toggleExpand(_ turnID: TranscriptTurn.ID) {
+  /// Expands or collapses what `key` names in `shown.expanded`: a turn's id, or an edit
+  /// card's `FileEdit.expansionKey(turnID:callIndex:)`.
+  private func toggleExpand(_ key: String) {
     // The growth must not move the reader. See `expansionToken`.
     expansionToken += 1
-    if shown.expanded.contains(turnID) {
-      shown.expanded.remove(turnID)
+    if shown.expanded.contains(key) {
+      shown.expanded.remove(key)
     } else {
-      shown.expanded.insert(turnID)
+      shown.expanded.insert(key)
     }
   }
 

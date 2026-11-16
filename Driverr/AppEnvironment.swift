@@ -1872,6 +1872,9 @@ struct AppEnvironment {
   /// The edits go in as each tool's own input, so the chat reads them through the parse. The
   /// `Write` is longer than `FileEdit.collapsedLines`, so its card starts collapsed. The
   /// first run's id is `<session>-1`, the second's `<session>-3`.
+  ///
+  /// The files are under the pane's directory, `~/dev/driverr`, so each card shows its path
+  /// relative to it. No line of the content starts with `-`, which reads as a removal.
   static let editTranscript = FakeTranscriptHost(
     sessionID: "3f8c1d20-0000-4000-8000-000000000002",
     turns: [
@@ -1882,7 +1885,7 @@ struct AppEnvironment {
           ToolCall(
             name: "Edit", target: "pool.rs", outcome: .succeeded,
             edit: FileEdit(
-              filePath: "/Users/dev/pool/src/pool.rs",
+              filePath: "/Users/dev/dev/driverr/src/pool.rs",
               change: .replacements([
                 .init(
                   old: """
@@ -1899,7 +1902,7 @@ struct AppEnvironment {
           ToolCall(
             name: "MultiEdit", target: "config.rs", outcome: .succeeded,
             edit: FileEdit(
-              filePath: "/Users/dev/pool/src/config.rs",
+              filePath: "/Users/dev/dev/driverr/src/config.rs",
               change: .replacements([
                 .init(old: "const CAPACITY: usize = 8;", new: "const CAPACITY: usize = 32;"),
                 .init(
@@ -1908,7 +1911,8 @@ struct AppEnvironment {
               ]))),
           ToolCall(
             name: "Write", target: "README.md", outcome: .succeeded,
-            edit: FileEdit(filePath: "/Users/dev/pool/README.md", change: .write(poolReadme))),
+            edit: FileEdit(
+              filePath: "/Users/dev/dev/driverr/README.md", change: .write(poolReadme))),
         ]),
         secondsAgo: 300
       ),
@@ -1921,9 +1925,9 @@ struct AppEnvironment {
           ToolCall(
             name: "Edit", target: "index.md", outcome: .pending,
             edit: FileEdit(
-              filePath: "/Users/dev/pool/docs/index.md",
+              filePath: "/Users/dev/dev/driverr/docs/index.md",
               change: .replacements([
-                .init(old: "- [Pool](pool.md)", new: "- [Pool](pool.md)\n- [README](../README.md)")
+                .init(old: "* [Pool](pool.md)", new: "* [Pool](pool.md)\n* [README](../README.md)")
               ])))
         ]),
         secondsAgo: 10
@@ -1933,7 +1937,7 @@ struct AppEnvironment {
 
   /// Forty lines, so the `Write` card is longer than it draws collapsed.
   private static let poolReadme = (["# pool", "", "An async connection pool.", ""]
-    + (1...36).map { "- note \($0): the guard is dropped before every await" })
+    + (1...36).map { "Note \($0): the guard is dropped before every await." })
     .joined(separator: "\n") + "\n"
 
   /// Whether this launch should serve the file-edit fixture.

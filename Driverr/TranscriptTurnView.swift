@@ -53,6 +53,8 @@ struct TranscriptTurnView: View {
   var isEditExpanded: (Int) -> Bool = { _ in false }
   /// Expands or collapses the edit card for the call at this position in the run.
   var onToggleEdit: (Int) -> Void = { _ in }
+  /// The pane's working directory, which an edit card's path is shown relative to.
+  var paneDirectory: String? = nil
 
   /// How many lines of a bounded (not newest, not expanded) turn are drawn before `Show all`.
   /// Compared against measured wrapped lines, not source lines.
@@ -71,6 +73,7 @@ struct TranscriptTurnView: View {
           run: run,
           runID: turn.id,
           contentWidth: estimatedContentWidth,
+          paneDirectory: paneDirectory,
           isExpanded: isEditExpanded,
           onToggle: onToggleEdit
         )
