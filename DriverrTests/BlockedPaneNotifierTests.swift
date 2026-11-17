@@ -33,6 +33,11 @@ actor FakeNotificationCenter: NotificationScheduling {
 
   func authorizationStatus() async -> NotificationAuthorization { status }
 
+  /// The user changing the answer in Settings.
+  func setStatus(_ status: NotificationAuthorization) {
+    self.status = status
+  }
+
   /// Run inside `requestAuthorization` before it answers, so a test can put a poll in the
   /// middle of a pending permission alert.
   private var whileAsking: (@Sendable () async -> Void)?
@@ -53,7 +58,34 @@ actor FakeNotificationCenter: NotificationScheduling {
     posts.append(Post(id: id, title: title, body: body, userInfo: userInfo))
   }
 
+  /// Every `schedule` call, in order, and what each id holds now. A schedule under a held id
+  /// replaces it, as the system does, and a withdrawal removes it.
+  private(set) var schedules: [TimedNotification] = []
+  private(set) var pending: [String: TimedNotification] = [:]
+
+  func schedule(_ notification: TimedNotification) async {
+    schedules.append(notification)
+    pending[notification.id] = notification
+    Waker.signalShared()
+  }
+
+  func pendingNotification(id: String) async -> PendingNotification? {
+    guard let held = pending[id] else { return nil }
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = held.trigger.timeZone ?? .current
+    return PendingNotification(
+      fireDate: calendar.date(from: held.trigger), categoryID: held.categoryID,
+      userInfo: held.userInfo)
+  }
+
+  /// Puts a request under `id` as a previous process would have left it, without counting it
+  /// as a schedule.
+  func seedPending(_ notification: TimedNotification) {
+    pending[notification.id] = notification
+  }
+
   func withdraw(ids: [String]) async {
+    for id in ids { pending[id] = nil }
     withdrawn.append(contentsOf: ids)
     // The wake-up for `TerminalPresenterWithdrawalTests.withdrawals(from:)`: the withdrawal is
     // an unstructured task, and `withdrawn` is actor state observation cannot reach.

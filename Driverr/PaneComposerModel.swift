@@ -127,6 +127,12 @@ final class PaneComposerModel: Identifiable {
     await perform { $0.beginSending() }
   }
 
+  /// Sends `text` and submits it, leaving whatever is typed in the field. For the reset
+  /// alert's Continue, which sends a fixed word.
+  func send(text: String) async {
+    await perform { $0.beginSending(text: text) }
+  }
+
   /// Sends one key press. A phone keyboard has no Escape and no Control.
   func send(_ key: PaneKey) async {
     await perform { $0.beginSending(key) }

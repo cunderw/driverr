@@ -14,8 +14,14 @@ import SwiftUI
 /// the part that shows.
 ///
 /// The only timeline entry is the reset time, so nothing animates while the notice is up.
+///
+/// A live limit with a reset time also offers the reset alert's Continue, off until the
+/// reader turns it on, as a second capsule under the notice. It is its own accessibility
+/// element, because the notice's capsule ignores its children.
 struct AgentStopRow: View {
   let stop: AgentStop
+  /// Whether this pane's reset alert offers Continue. `nil` draws no control.
+  var continueAtReset: Binding<Bool>?
 
   /// One width for all five glyphs, so the text does not move when the glyph changes.
   /// `wifi.exclamationmark`, the widest, is about 19 pt. Scaled with Dynamic Type.
@@ -24,6 +30,10 @@ struct AgentStopRow: View {
   /// At accessibility sizes two lines hold little more than the title, so the reset time
   /// would be cut. The limit is lifted there.
   @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+  @Environment(\.themeAccent) private var themeAccent
+
+  /// The Continue capsule's vertical padding, as `PaneChatView`'s Show the Screen capsule.
+  @ScaledMetric private var continuePadding: CGFloat = 8
 
   var body: some View {
     // Read the clock here, not `context.date`: an explicit schedule renders its first frame
@@ -31,23 +41,63 @@ struct AgentStopRow: View {
     // second past the reset so the clock read when it fires is past it too.
     TimelineView(.explicit(stop.resetsAt.map { [$0.addingTimeInterval(1)] } ?? [])) { _ in
       let notice = AgentStopNotice(stop: stop, asOf: Date())
-      HStack(alignment: .firstTextBaseline, spacing: 6) {
-        Image(systemName: notice.symbolName)
-          .foregroundStyle(notice.isStale ? Color.secondary : Color.orange)
-          .frame(width: glyphWidth, alignment: .center)
-          .accessibilityHidden(true)
-        words(for: notice)
+      VStack(spacing: 0) {
+        capsule(notice)
+        // Only while the reset is ahead: after it there is no alert left to change.
+        if let continueAtReset, stop.kind == .rateLimit, stop.resetsAt != nil, !notice.isStale {
+          continueControl(continueAtReset)
+        }
       }
-      .font(.footnote)
+    }
+  }
+
+  private func capsule(_ notice: AgentStopNotice) -> some View {
+    HStack(alignment: .firstTextBaseline, spacing: 6) {
+      Image(systemName: notice.symbolName)
+        .foregroundStyle(notice.isStale ? Color.secondary : Color.orange)
+        .frame(width: glyphWidth, alignment: .center)
+        .accessibilityHidden(true)
+      words(for: notice)
+    }
+    .font(.footnote)
+    .padding(.leading, 10)
+    .padding(.trailing, 14)
+    .padding(.vertical, 8)
+    .chatCapsuleGlass(RoundedRectangle(cornerRadius: ChatCapsuleGlass.radius, style: .continuous))
+    // One accessibility element, so VoiceOver reads title and detail as one statement.
+    .accessibilityElement(children: .ignore)
+    .accessibilityLabel(notice.accessibilityLabel)
+    .accessibilityIdentifier("pane.chat.agentStop")
+  }
+
+  /// The opt-in for the reset alert's Continue. A button with a check, not a `Toggle`, so it
+  /// sits in the chat's glass like Show the Screen. Its target is 44 pt, as that capsule's is.
+  private func continueControl(_ isOn: Binding<Bool>) -> some View {
+    Button { isOn.wrappedValue.toggle() } label: {
+      HStack(spacing: 6) {
+        Image(systemName: isOn.wrappedValue ? "checkmark.circle.fill" : "circle")
+          .foregroundStyle(isOn.wrappedValue ? themeAccent : Color.secondary)
+          .frame(width: glyphWidth, alignment: .center)
+        Text(LimitResetReminder.optInTitle)
+          .foregroundStyle(Color.primary)
+      }
+      .font(.footnote.weight(.semibold))
       .padding(.leading, 10)
       .padding(.trailing, 14)
-      .padding(.vertical, 8)
+      .padding(.vertical, continuePadding)
+      .frame(minHeight: 2 * ChatCapsuleGlass.radius)
+      // The notice's shape, not a capsule: at large text the label wraps, and a capsule's
+      // ends would round into it.
       .chatCapsuleGlass(RoundedRectangle(cornerRadius: ChatCapsuleGlass.radius, style: .continuous))
-      // One accessibility element, so VoiceOver reads title and detail as one statement.
-      .accessibilityElement(children: .ignore)
-      .accessibilityLabel(notice.accessibilityLabel)
-      .accessibilityIdentifier("pane.chat.agentStop")
+      .padding(.vertical, (44 - 2 * ChatCapsuleGlass.radius) / 2)
+      .contentShape(RoundedRectangle(cornerRadius: ChatCapsuleGlass.radius, style: .continuous))
     }
+    .buttonStyle(.plain)
+    .accessibilityElement(children: .ignore)
+    .accessibilityLabel(LimitResetReminder.optInTitle)
+    .accessibilityValue(isOn.wrappedValue ? "On" : "Off")
+    .accessibilityAddTraits([.isButton, .isToggle])
+    .accessibilityIdentifier("pane.chat.agentStop.continue")
   }
 
   /// Two lines at most, so a long error does not cover the conversation; none at

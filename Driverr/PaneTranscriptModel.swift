@@ -126,6 +126,14 @@ final class PaneTranscriptModel {
   /// only the file moves. A closure, so this model does not learn about composers.
   @ObservationIgnored var onAdvanced: (@MainActor (String) -> Void)?
 
+  /// Told every page of the pane's own conversation that lands, with the stop it ends on.
+  ///
+  /// Not `onAdvanced`: that fires only when the newest turn changes, and the parser hides the
+  /// stop's own turn. Every page, not every change, because the receiver decides what is
+  /// new, and it outlives this model. A sub-agent's model never reports; its stop is not the
+  /// pane's. See `LimitResetNotifier.report(_:)`.
+  @ObservationIgnored var onStopReport: (@MainActor (LimitResetNotifier.Report) -> Void)?
+
   /// How this conversation is read. A `var` because the reader is bound to a link, and
   /// `relink(to:)` moves it on a reconnect.
   @ObservationIgnored private var reader: TranscriptReader
@@ -932,6 +940,12 @@ final class PaneTranscriptModel {
       // The newest turn's id, not the turn count, because paging back grows the count.
       if let newest = transcript.turns.last?.id, newest != previous?.turns.last?.id {
         onAdvanced?(pane.id)
+      }
+      if subagent == nil {
+        onStopReport?(
+          LimitResetNotifier.Report(
+            pane: pane, conversation: Self.session(of: source.file).id,
+            stop: transcript.agentStop))
       }
     }
   }

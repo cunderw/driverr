@@ -16,16 +16,20 @@ final class PaneTranscriptCache {
   /// Told a pane id whenever a re-read finds a new turn. See
   /// `PaneTranscriptModel.onAdvanced`.
   private let onAdvanced: @MainActor (String) -> Void
+  /// Told every landed page's stop. See `PaneTranscriptModel.onStopReport`.
+  private let onStopReport: @MainActor (LimitResetNotifier.Report) -> Void
   private var models: [String: PaneTranscriptModel] = [:]
 
   init(
     reader: TranscriptReader,
     machineReader: @escaping @MainActor (Pane) -> TranscriptReader? = { _ in nil },
-    onAdvanced: @escaping @MainActor (String) -> Void = { _ in }
+    onAdvanced: @escaping @MainActor (String) -> Void = { _ in },
+    onStopReport: @escaping @MainActor (LimitResetNotifier.Report) -> Void = { _ in }
   ) {
     self.reader = reader
     self.machineReader = machineReader
     self.onAdvanced = onAdvanced
+    self.onStopReport = onStopReport
   }
 
   /// The reader that reaches the computer this pane is on.
@@ -45,6 +49,7 @@ final class PaneTranscriptCache {
     if let existing = models[pane.id] { return existing }
     let model = PaneTranscriptModel(pane: pane, reader: reader(for: pane))
     model.onAdvanced = onAdvanced
+    model.onStopReport = onStopReport
     models[pane.id] = model
     return model
   }
@@ -66,6 +71,7 @@ final class PaneTranscriptCache {
       // Re-hooked, because the hook is built per connection and the old one would notify
       // the previous link's composer.
       model.onAdvanced = onAdvanced
+      model.onStopReport = onStopReport
       model.relink(to: reader(for: model.pane))
       models[id] = model
     }

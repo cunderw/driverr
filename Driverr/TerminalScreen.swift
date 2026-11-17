@@ -799,6 +799,17 @@ struct TerminalScreen: View {
     .accessibilityIdentifier("pane.subagents")
   }
 
+  /// The pane's Continue opt-in, read from and written to `ConnectionModel.limitResets`.
+  /// `nil`, so no control, until the pane's reminder is in the system: with notifications
+  /// off there is no card for Continue to be on.
+  private func continueAtReset(forPane paneID: String) -> Binding<Bool>? {
+    let resets = model.limitResets
+    guard resets.offersContinue(paneID: paneID) else { return nil }
+    return Binding(
+      get: { resets.continues(paneID: paneID) },
+      set: { resets.setContinues($0, paneID: paneID) })
+  }
+
   /// The two surfaces: the terminals always laid out, the chat drawn over them.
   ///
   /// **The terminals are never torn down by the switch.** An `if` would take their
@@ -848,7 +859,10 @@ struct TerminalScreen: View {
             // Opens the surfaces' clip; see `slotClip`.
             onDrawsConversation: { chatDrawsConversation = $0 },
             // In place on the detail column; pushed over this chat on the phone.
-            followsSubagents: route == .detailColumn
+            followsSubagents: route == .detailColumn,
+            // The stop notice's opt-in for the reset alert's Continue, held per pane by the
+            // connection, so it outlives this view.
+            continueAtReset: continueAtReset(forPane: chatModel.pane.id)
           )
           // A readable measure on the detail route, centred by the `ZStack`. Never on the
           // terminal: its width is the remote pane's, and narrowing it would reflow the PTY.

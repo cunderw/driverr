@@ -657,6 +657,99 @@ struct TerminalPresenterTests {
     #expect(request.scene.current == .pane(id: "w1:p2"))
   }
 
+  // MARK: - The reset alert's Continue
+
+  /// `environment(hosts:knowingThePassword:)` with a control the test can read back.
+  private func environment(
+    knowingThePassword: Bool, control: FakeControl
+  ) -> AppEnvironment {
+    var seeded = environment(hosts: [host], knowingThePassword: knowingThePassword)
+    seeded.makeHerdrControl = { _ in control }
+    return seeded
+  }
+
+  /// The witness `w1:p1` has in `FakeControl.seededTree`.
+  private func seededWitness() throws -> String {
+    try #require(FakeControl.seededTree.pane(id: "w1:p1")?.sessionWitness)
+  }
+
+  @Test("Continue opens the pane and submits continue to it once")
+  func continueSendsOnce() async throws {
+    let control = FakeControl()
+    let presenter = TerminalPresenter()
+    configured(
+      presenter, environment(knowingThePassword: true, control: control), selection: Selection())
+
+    let witness = try seededWitness()
+    await presenter.open(hostID: host.id, intent: .paneSending("w1:p1", witness: witness, text: "continue"))
+
+    let request = try #require(presenter.request)
+    #expect(request.scene.current == .pane(id: "w1:p1"))
+    #expect(await control.sent == [.submit(paneID: "w1:p1", text: "continue")])
+  }
+
+  /// herdr reuses positional pane ids, so after a rebuild the card's id can name another
+  /// pane. The witness tells them apart.
+  @Test("Continue to a pane id now held by another pane opens it and sends nothing")
+  func continueToARebuiltPaneSendsNothing() async throws {
+    let control = FakeControl()
+    let presenter = TerminalPresenter()
+    configured(
+      presenter, environment(knowingThePassword: true, control: control), selection: Selection())
+
+    await presenter.open(
+      hostID: host.id, intent: .paneSending("w1:p1", witness: "term_before_rebuild", text: "continue"))
+
+    let request = try #require(presenter.request)
+    #expect(request.scene.current == .pane(id: "w1:p1"))
+    #expect(await control.sent.isEmpty)
+  }
+
+  @Test("Continue on a host that would have to ask sends nothing")
+  func continueOnAPasswordHostSendsNothing() async throws {
+    let control = FakeControl()
+    let presenter = TerminalPresenter()
+    configured(
+      presenter, environment(knowingThePassword: false, control: control), selection: Selection())
+
+    let witness = try seededWitness()
+    await presenter.open(hostID: host.id, intent: .paneSending("w1:p1", witness: witness, text: "continue"))
+
+    #expect(presenter.request == nil)
+    #expect(await control.sent.isEmpty)
+  }
+
+  @Test("Continue on a pane the host no longer has sends nothing")
+  func continueOnAGonePaneSendsNothing() async throws {
+    let control = FakeControl()
+    let presenter = TerminalPresenter()
+    configured(
+      presenter, environment(knowingThePassword: true, control: control), selection: Selection())
+
+    await presenter.open(hostID: host.id, intent: .paneSending("w9:p9", witness: "term_w9p9", text: "continue"))
+
+    #expect(await control.sent.isEmpty)
+  }
+
+  /// `ContentView` drains from its launch `.task` and from an `onChange`, so a card's action
+  /// can be drained twice while the first drain is still connecting.
+  @Test("a Continue drained twice at once sends once")
+  func continueDrainedTwiceSendsOnce() async throws {
+    let control = FakeControl()
+    let presenter = TerminalPresenter()
+    // Before `configure`, as a cold launch from the card's action is.
+    let witness = try seededWitness()
+    await presenter.open(hostID: host.id, intent: .paneSending("w1:p1", witness: witness, text: "continue"))
+    configured(
+      presenter, environment(knowingThePassword: true, control: control), selection: Selection())
+
+    async let first: Void = presenter.drainPendingOpen()
+    async let second: Void = presenter.drainPendingOpen()
+    _ = await (first, second)
+
+    #expect(await control.sent == [.submit(paneID: "w1:p1", text: "continue")])
+  }
+
   /// Presenting a pane is what writes the record, through the one funnel every open in the
   /// app goes through.
   @Test("presenting a pane records it as the host's last, with the pane's witness")

@@ -25,7 +25,33 @@ protocol NotificationScheduling: Sendable {
   /// the status is still `.notDetermined` and the next newly blocked pane asks again.
   @discardableResult func requestAuthorization() async -> Bool
   func post(id: String, title: String, body: String, userInfo: [String: String]) async
+  /// Adds a card that fires at `notification.trigger`. An existing request with the same id
+  /// is replaced, which is what makes a second schedule of one reminder harmless.
+  func schedule(_ notification: TimedNotification) async
+  /// The request waiting under `id`, or `nil` when none is. Delivered cards are not pending.
+  func pendingNotification(id: String) async -> PendingNotification?
   func withdraw(ids: [String]) async
+}
+
+/// A card set to fire later, as plain values.
+struct TimedNotification: Equatable, Sendable {
+  let id: String
+  let title: String
+  let body: String
+  let userInfo: [String: String]
+  /// Carries its own `timeZone`; see `LimitResetReminder.trigger`.
+  let trigger: DateComponents
+  /// The category whose actions the card offers, or `nil` for none.
+  let categoryID: String?
+}
+
+/// What the system holds for a scheduled card: when it fires, which actions it offers and
+/// which pane it names.
+struct PendingNotification: Equatable, Sendable {
+  let fireDate: Date?
+  let categoryID: String?
+  /// The card's `userInfo`, as strings. See `NotificationTapRouter`.
+  let userInfo: [String: String]
 }
 
 /// Turns one host's polls into notifications about panes that have gone blocked.

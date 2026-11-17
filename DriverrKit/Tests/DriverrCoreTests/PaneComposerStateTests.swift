@@ -26,6 +26,19 @@ struct PaneComposerStateTests {
     #expect(state.isSending)
   }
 
+  @Test("a fixed word is sent without touching the typed draft")
+  func sendingAFixedWordKeepsTheDraft() {
+    var state = PaneComposerState()
+    state.text = "half a reply"
+
+    #expect(state.beginSending(text: "continue") == .text("continue"))
+    #expect(state.isSending)
+    #expect(state.beginSending(text: "continue") == nil)
+    state.succeeded()
+    #expect(state.text == "half a reply")
+    #expect(state.beginSending(text: "  ") == nil)
+  }
+
   @Test("a second send while one is in flight is refused")
   func sendingCannotBeReEntered() {
     // A disabled button is a rendering, and a tap can land in the frame before the redraw.

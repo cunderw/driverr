@@ -52,6 +52,8 @@ struct DriverrApp: App {
       let router = NotificationTapRouter(presenter: TerminalPresenter.shared)
       notificationTaps = router
       UNUserNotificationCenter.current().delegate = router
+      // The reset alert's Continue, registered before a card that offers it can arrive.
+      LiveNotificationCenter.registerCategories()
     }
 
     // Registered from `init` because `BGTaskScheduler` requires every handler before launch

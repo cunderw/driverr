@@ -94,6 +94,15 @@ public struct PaneComposerState: Equatable, Sendable {
     return begin(.text(staged))
   }
 
+  /// Stages `text`, which was not typed: the reset alert's Continue sends a fixed word. What
+  /// is typed stays staged, because `succeeded()` clears only the text it sent.
+  public mutating func beginSending(text: String) -> Attempt? {
+    guard !isSending, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+      return nil
+    }
+    return begin(.text(text))
+  }
+
   /// Stages a key press, which needs nothing typed: a blocked agent is usually waiting on
   /// a keystroke a phone keyboard does not have.
   public mutating func beginSending(_ key: PaneKey) -> Attempt? {
