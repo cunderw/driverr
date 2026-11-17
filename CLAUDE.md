@@ -396,7 +396,9 @@ The release procedure lives outside this repo. These are only the facts about th
   upload in filename order. All three sets are `01-` to `06-` and start with Needs You. The
   phones' `hosts.png` is captured and not published.
 - **The product page header** is `docs/app-store-assets/header/header.png`, drawn by the
-  same script and uploaded by hand. Each run also writes `.build-logs/header-crops/`, which
+  same script. It is uploaded through the App Store Connect API's asset library, as a
+  product page header placement on the editable version, with the rest of the store
+  metadata. Each run also writes `.build-logs/header-crops/`, which
   shows what the header and search results keep after Apple's centre crop. The crops are
   not committed.
 - Before a release, the full UI suite on both simulators and the clean warnings sweep are
