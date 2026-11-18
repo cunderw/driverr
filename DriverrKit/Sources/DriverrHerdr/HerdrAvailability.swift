@@ -47,11 +47,32 @@ public enum HerdrAvailability: Equatable, Sendable {
     coreGeneration: Int?,
     coreMissingMethods: [String]
   )
+  /// tmux is here and new enough, and no herdr answered. A tmux with no server is ready too:
+  /// the first `new-session` starts one, so its tree is empty and there is nothing to start.
+  ///
+  /// **No protocol number.** tmux does not speak herdr's protocol, so nothing gated on one may
+  /// read a tmux host as a herdr host.
+  case tmuxReady(version: String)
+  /// The tmux Driverr found does not run.
+  case tmuxNotInstalled
+  /// tmux is older than `minimumVersion`. The floor travels with the answer, because it is
+  /// `DriverrTmux`'s, and this module does not import that one.
+  case tmuxTooOld(version: String, minimumVersion: String)
+  /// `tmux -V` ran and printed something this build cannot compare.
+  case tmuxUnreadable
+  /// A ready herdr answer, and a ready tmux beside it, so the host shows both. See
+  /// `CombinedControl.availability()`.
+  ///
+  /// Indirect rather than one case per herdr answer, because four herdr answers are ready and
+  /// each would need a tmux twin. The inner answer is always ready and never `.withTmux`.
+  indirect case withTmux(HerdrAvailability, tmuxVersion: String)
 
   public var isReady: Bool {
     switch self {
-    case .ready, .coreReady, .combined, .readyWithCoreRefused: true
-    case .serverNotRunning, .notInstalled, .tooOld, .statusUnreadable, .coreIncompatible: false
+    case .ready, .coreReady, .combined, .readyWithCoreRefused, .tmuxReady, .withTmux: true
+    case .serverNotRunning, .notInstalled, .tooOld, .statusUnreadable, .coreIncompatible,
+      .tmuxNotInstalled, .tmuxTooOld, .tmuxUnreadable:
+      false
     }
   }
 
@@ -65,12 +86,18 @@ public enum HerdrAvailability: Equatable, Sendable {
       .readyWithCoreRefused(let version, _, _, _, _):
       version
     case .coreReady(let version): "core \(version)"
-    case .serverNotRunning, .notInstalled, .tooOld, .statusUnreadable, .coreIncompatible: nil
+    // **`nil` for tmux alone.** The host list prints this after "herdr", so a tmux version
+    // there would name a herdr that is not on the host.
+    case .withTmux(let herdr, _): herdr.readyVersion
+    case .serverNotRunning, .notInstalled, .tooOld, .statusUnreadable, .coreIncompatible,
+      .tmuxReady, .tmuxNotInstalled, .tmuxTooOld, .tmuxUnreadable:
+      nil
     }
   }
 
   /// Why the core beside a working TUI is not in use, or `nil` when none is being passed over.
   public var coreRefusal: String? {
+    if case .withTmux(let herdr, _) = self { return herdr.coreRefusal }
     guard case let .readyWithCoreRefused(_, _, version, generation, missingMethods) = self else {
       return nil
     }
@@ -119,6 +146,16 @@ public enum HerdrAvailability: Equatable, Sendable {
         generation: generation,
         missingMethods: missingMethods
       )
+    case let .tmuxReady(version):
+      "tmux \(version)"
+    case .tmuxNotInstalled:
+      "tmux isn't installed on this host. Install tmux, then try again."
+    case let .tmuxTooOld(version, minimumVersion):
+      "tmux \(version) is older than the \(minimumVersion) that Driverr needs. Update tmux."
+    case .tmuxUnreadable:
+      "tmux is installed here, but this version of Driverr can't read its version."
+    case let .withTmux(herdr, tmuxVersion):
+      "\(herdr.message) · tmux \(tmuxVersion)"
     }
   }
 

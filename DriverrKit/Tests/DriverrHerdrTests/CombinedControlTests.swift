@@ -53,7 +53,7 @@ private actor Side: HerdrControl {
   }
 
   func availability() async -> HerdrAvailability { answer }
-  nonisolated func attachCommand(for pane: Pane) -> String { "\(binaryPath) attach" }
+  nonisolated func attachCommand(for pane: Pane) -> String? { "\(binaryPath) attach" }
 
   func sendText(paneID: String, text: String) async throws { calls.append("sendText \(paneID)") }
   func submitText(paneID: String, text: String) async throws {
@@ -105,7 +105,7 @@ private actor CountingTUI: HerdrControl {
     return answer
   }
 
-  nonisolated func attachCommand(for pane: Pane) -> String { "" }
+  nonisolated func attachCommand(for pane: Pane) -> String? { "" }
   func sendText(paneID: String, text: String) async throws {}
   func submitText(paneID: String, text: String) async throws {}
   func sendKeys(paneID: String, keys: [PaneKey]) async throws {}
@@ -140,7 +140,7 @@ private actor PushingCore: HerdrControl {
   }
 
   func availability() async -> HerdrAvailability { .notInstalled }
-  nonisolated func attachCommand(for pane: Pane) -> String { "" }
+  nonisolated func attachCommand(for pane: Pane) -> String? { "" }
   func sendText(paneID: String, text: String) async throws {}
   func submitText(paneID: String, text: String) async throws {}
   func sendKeys(paneID: String, keys: [PaneKey]) async throws {}
@@ -735,7 +735,7 @@ struct CombinedControlTests {
     let command = bound.attachCommand(
       for: Pane(id: "w1:p1", tabID: "t", workspaceID: "w", title: "x", terminalID: "term")
     )
-    #expect(command.hasPrefix("export HERDR_SOCKET_PATH=/run/x.sock;"))
+    #expect(command?.hasPrefix("export HERDR_SOCKET_PATH=/run/x.sock;") == true)
   }
 
   @Test("the default binding is no binding")
@@ -781,5 +781,214 @@ struct CombinedControlTests {
   func corePaneAddress() {
     #expect(CorePaneID.address(of: "core:box/t1") == "box/t1")
     #expect(CorePaneID.address(of: "t1") == "t1")
+  }
+}
+
+/// What `TmuxID.prefix` is. Spelled here, because this module cannot import DriverrTmux.
+private let tmuxPrefix = "tmux:"
+private let tmuxTree = tree("tmux:$0", panes: ["tmux:%0", "tmux:%1"], focused: "tmux:%0")
+private let tmuxFailure = AppError.herdrCommandFailed(reason: "tmux went away")
+
+private func tmuxSide(_ control: any HerdrControl) -> CombinedControl.Side {
+  CombinedControl.Side(prefix: tmuxPrefix, control: control)
+}
+
+private func coreSide(_ control: any HerdrControl) -> CombinedControl.Side {
+  CombinedControl.Side(prefix: CorePaneID.prefix, control: control)
+}
+
+@Suite("Combined control, more than two sides")
+struct CombinedControlSidesTests {
+  @Test("one found control is served alone, and nothing found is nil")
+  func joiningAlone() {
+    let tmux = Side(binaryPath: "tmux")
+    let alone = CombinedControl.joining(tui: nil, sides: [tmuxSide(tmux)])
+    #expect(alone as? Side === tmux)
+    #expect(CombinedControl.joining(tui: nil, sides: []) == nil)
+    #expect(CombinedControl.joining(tui: nil, core: nil) == nil)
+  }
+
+  @Test("the TUI, a core and tmux merge in that order, each pane once")
+  func threeTrees() async throws {
+    let combined = try #require(
+      CombinedControl.joining(
+        tui: Side(binaryPath: "herdr", tree: tuiTree),
+        sides: [
+          coreSide(Side(binaryPath: "hc", tree: coreTree)),
+          tmuxSide(Side(binaryPath: "tmux", tree: tmuxTree)),
+        ]))
+    let tree = try await combined.snapshot()
+    #expect(tree.allPanes.map(\.id) == ["w1:p1", "core:t1", "tmux:%0", "tmux:%1"])
+    #expect(tree.focusedPaneID == "w1:p1", "the TUI's focus, as with two")
+  }
+
+  @Test("tmux failing beside a working herdr leaves its panes out and throws nothing")
+  func tmuxFailureDoesNotFailTheHost() async throws {
+    let combined = CombinedControl(
+      tui: Side(binaryPath: "herdr", tree: tuiTree),
+      sides: [tmuxSide(Side(binaryPath: "tmux", snapshotFailure: tmuxFailure))])
+    #expect(try await combined.snapshot().allPanes.map(\.id) == ["w1:p1"])
+  }
+
+  @Test("with no herdr session running, tmux's tree stands alone")
+  func noSessionLeavesTmux() async throws {
+    let combined = CombinedControl(
+      tui: Side(
+        binaryPath: "herdr", snapshotFailure: tuiFailure,
+        answer: .serverNotRunning(version: "0.9.1")),
+      sides: [tmuxSide(Side(binaryPath: "tmux", tree: tmuxTree))])
+    let tree = try await combined.snapshot()
+    #expect(tree.allPanes.map(\.id) == ["tmux:%0", "tmux:%1"])
+    #expect(tree.focusedPaneID == "tmux:%0")
+  }
+
+  @Test("any other herdr failure is still thrown, so its panes are not forgotten")
+  func otherTUIFailureThrows() async {
+    let combined = CombinedControl(
+      tui: Side(binaryPath: "herdr", snapshotFailure: tuiFailure, answer: .ready(version: "0.9.1", protocolVersion: 22)),
+      sides: [tmuxSide(Side(binaryPath: "tmux", tree: tmuxTree))])
+    await #expect(throws: tuiFailure) { try await combined.snapshot() }
+  }
+
+  @Test("a core and tmux with no TUI: the core is the primary, and both trees show")
+  func coreAndTmux() async throws {
+    let core = Side(binaryPath: "hc", tree: coreTree, answer: .coreReady(version: "0.1.15"), startedID: "core:t9")
+    let tmux = Side(binaryPath: "tmux", tree: tmuxTree, answer: .tmuxReady(version: "3.7c"))
+    let combined = try #require(
+      CombinedControl.joining(tui: nil, sides: [coreSide(core), tmuxSide(tmux)]))
+    #expect(try await combined.snapshot().allPanes.map(\.id) == ["core:t1", "tmux:%0", "tmux:%1"])
+    #expect(
+      await combined.availability()
+        == .withTmux(.coreReady(version: "0.1.15"), tmuxVersion: "3.7c"))
+    #expect(combined.canStartTerminal, "a core with no TUI still starts one")
+    #expect(try await combined.startTerminal() == "core:t9")
+  }
+
+  @Test("each call goes to the side whose prefix the id carries")
+  func routing() async throws {
+    let tui = Side(binaryPath: "herdr")
+    let core = Side(binaryPath: "hc")
+    let tmux = Side(binaryPath: "tmux")
+    let combined = CombinedControl(tui: tui, sides: [coreSide(core), tmuxSide(tmux)])
+
+    try await combined.sendText(paneID: "tmux:%1", text: "x")
+    try await combined.submitText(paneID: "core:t1", text: "x")
+    try await combined.sendKeys(paneID: "w1:p1", keys: [])
+    try await combined.perform(.close, on: "tmux:%1")
+    try await combined.rename(.tab(id: "tmux:@2"), to: "x")
+    #expect(combined.attachCommand(for: pane("tmux:%1", in: "w")) == "tmux attach")
+    #expect(combined.attachCommand(for: pane("w1:p1", in: "w")) == "herdr attach")
+
+    let panes = try await combined.readPanes(
+      ids: ["w1:p1", "tmux:%1", "core:t1", "tmux:%2"], lines: 3)
+    #expect(panes["tmux:%2"] == ["from tmux"])
+    #expect(panes["core:t1"] == ["from hc"])
+    #expect(panes["w1:p1"] == ["from herdr"])
+
+    #expect(await tmux.calls == ["sendText tmux:%1", "perform tmux:%1", "rename tmux:@2", "readPanes tmux:%1,tmux:%2"])
+    #expect(await core.calls == ["submitText core:t1", "readPanes core:t1"])
+    #expect(await tui.calls == ["sendKeys w1:p1", "readPanes w1:p1"])
+  }
+
+  @Test("a change on the core runs no tmux command, and keeps tmux's last tree")
+  func changeKeepsTmuxTree() async throws {
+    let core = PushingCore(read: .success(coreTree))
+    let tmux = CountingTUI(read: .success(tmuxTree))
+    let combined = CombinedControl(
+      tui: Side(binaryPath: "herdr", tree: tuiTree), sides: [coreSide(core), tmuxSide(tmux)])
+
+    _ = try await combined.snapshot()
+    #expect(await tmux.snapshots == 1)
+    let tree = try await combined.changedSnapshot()
+    #expect(await tmux.snapshots == 1, "a core event must not poll tmux")
+    #expect(tree.allPanes.map(\.id) == ["w1:p1", "core:t1", "tmux:%0", "tmux:%1"])
+  }
+
+  @Test("the TUI never starts a terminal, and tmux is asked when it can")
+  func starter() async throws {
+    let combined = CombinedControl(
+      tui: Side(binaryPath: "herdr", startedID: "w1:p9"),
+      sides: [tmuxSide(Side(binaryPath: "tmux", startedID: "tmux:%9"))])
+    #expect(try await combined.startTerminal() == "tmux:%9")
+    let none = CombinedControl(
+      tui: Side(binaryPath: "herdr", startedID: "w1:p9"),
+      sides: [tmuxSide(Side(binaryPath: "tmux"))])
+    #expect(!none.canStartTerminal)
+  }
+}
+
+@Suite("Combined availability with tmux")
+struct CombinedTmuxAvailabilityTests {
+  private func answer(
+    tui: HerdrAvailability? = nil,
+    core: HerdrAvailability? = nil,
+    tmux: HerdrAvailability? = nil
+  ) async throws -> HerdrAvailability {
+    let sides = [
+      core.map { coreSide(Side(binaryPath: "hc", answer: $0)) },
+      tmux.map { tmuxSide(Side(binaryPath: "tmux", answer: $0)) },
+    ].compactMap { $0 }
+    let control = try #require(
+      CombinedControl.joining(tui: tui.map { Side(binaryPath: "herdr", answer: $0) }, sides: sides))
+    return await control.availability()
+  }
+
+  private let herdr = HerdrAvailability.ready(version: "0.9.1", protocolVersion: 22)
+  private let tmuxReady = HerdrAvailability.tmuxReady(version: "3.7c")
+  private let tmuxOld = HerdrAvailability.tmuxTooOld(version: "2.7", minimumVersion: "3.2")
+
+  @Test("herdr ready and tmux ready show both")
+  func bothReady() async throws {
+    let both = try await answer(tui: herdr, tmux: tmuxReady)
+    #expect(both == .withTmux(herdr, tmuxVersion: "3.7c"))
+    #expect(both.isReady)
+    #expect(both.message == "herdr 0.9.1 · tmux 3.7c")
+    #expect(both.readyVersion == "0.9.1")
+  }
+
+  @Test("herdr, a core and tmux all ready show all three")
+  func allThree() async throws {
+    let all = try await answer(tui: herdr, core: .coreReady(version: "0.1.15"), tmux: tmuxReady)
+    #expect(all == .withTmux(.combined(herdrVersion: "0.9.1", coreVersion: "0.1.15"), tmuxVersion: "3.7c"))
+    #expect(all.message == "herdr 0.9.1 · herdr-core 0.1.15 · tmux 3.7c")
+  }
+
+  @Test("a refused core is still named beside tmux")
+  func refusedCoreKeepsItsLine() async throws {
+    let refused = try await answer(
+      tui: herdr, core: .coreIncompatible(version: "0.0.1", generation: 0, missingMethods: []),
+      tmux: tmuxReady)
+    #expect(refused.isReady)
+    #expect(refused.coreRefusal != nil)
+  }
+
+  @Test("herdr ready and tmux not: herdr's answer, with no tmux problem on it")
+  func tmuxNotReady() async throws {
+    #expect(try await answer(tui: herdr, tmux: tmuxOld) == herdr)
+    #expect(try await answer(tui: herdr, tmux: .tmuxUnreadable) == herdr)
+  }
+
+  @Test("herdr found and not ready, tmux ready: ready, as tmux")
+  func herdrNotReady() async throws {
+    let answer = try await answer(tui: .serverNotRunning(version: "0.9.1"), tmux: tmuxReady)
+    #expect(answer == tmuxReady)
+    #expect(answer.isReady)
+    #expect(answer.readyVersion == nil, "the host list prints this after the word herdr")
+  }
+
+  @Test("only tmux found: tmux's own answer and words")
+  func tmuxOnly() async throws {
+    let ready = try await answer(tmux: tmuxReady)
+    #expect(ready == tmuxReady)
+    #expect(ready.message == "tmux 3.7c")
+    let old = try await answer(tmux: tmuxOld)
+    #expect(!old.isReady)
+    #expect(old.message == "tmux 2.7 is older than the 3.2 that Driverr needs. Update tmux.")
+  }
+
+  @Test("herdr and tmux both found and neither ready: herdr's answer")
+  func neitherReady() async throws {
+    let both = try await answer(tui: .serverNotRunning(version: "0.9.1"), tmux: tmuxOld)
+    #expect(both == .serverNotRunning(version: "0.9.1"))
   }
 }

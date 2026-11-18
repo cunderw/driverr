@@ -31,19 +31,36 @@ public enum CorePaneID {
   }
 }
 
-/// A host running both the TUI and a core, as one `HerdrControl`.
+/// A host running more than one source of panes, as one `HerdrControl`: herdr's TUI, a
+/// herdr-core, and tmux, in any combination of two or three.
 ///
-/// **One control and not two sessions.** About twenty sites read `model.herdr` and
+/// **One control and not several sessions.** About twenty sites read `model.herdr` and
 /// `model.session`, and two sessions applying snapshots would wipe each other's caches.
-/// Their terminals are different, so a host with both shows both: this merges the two trees
-/// and routes each call by the `CorePaneID` prefix.
+/// Their terminals are different, so a host with several shows them all: this merges the trees
+/// and routes each call by its id's prefix.
 ///
-/// Holds two `any HerdrControl`, because this module cannot see `CoreControl`.
+/// One side is the **primary**, whose ids carry no prefix: the TUI, or the first prefixed side
+/// when no TUI answered. Every other side is a `Side`, found by `CorePaneID.prefix` or
+/// `TmuxID.prefix`. A call for an id no side claims goes to the primary.
+///
+/// Holds `any HerdrControl`s, because this module cannot see `CoreControl` or `TmuxControl`.
 public struct CombinedControl: HerdrControl {
-  /// What the last poll made of the TUI, which a change on the core has no reason to ask again.
+  /// A control whose pane, tab and workspace ids all start with `prefix`.
+  public struct Side: Sendable {
+    public let prefix: String
+    public let control: any HerdrControl
+
+    public init(prefix: String, control: any HerdrControl) {
+      self.prefix = prefix
+      self.control = control
+    }
+  }
+
+  /// What the last poll made of the primary, which a change on a side has no reason to ask
+  /// again.
   private enum TUISide: Sendable {
     case tree(SessionTree)
-    /// No session is running, so the core's tree stands alone. The error is for when it can't.
+    /// No session is running, so the sides' trees stand alone. The error is for when they can't.
     case noSession(any Error)
     case failed(any Error)
   }
@@ -55,6 +72,9 @@ public struct CombinedControl: HerdrControl {
   /// sooner than one would.
   private actor Memory {
     var tui: TUISide?
+    /// What each side's last whole read gave, in `sides` order. `changedSnapshot()` answers a
+    /// side with no `changes` stream from here, so a change on the core runs no tmux command.
+    var sideReads: [Result<SessionTree, any Error>]?
     /// Polls left that answer from a remembered `.noSession` without asking the TUI.
     private var ticksToSkip = 0
     /// What the last check that found no session set `ticksToSkip` to. Zero once the TUI
@@ -79,6 +99,10 @@ public struct CombinedControl: HerdrControl {
       ticksToSkip = gap
     }
 
+    func read(_ sides: [Result<SessionTree, any Error>]) {
+      sideReads = sides
+    }
+
     func resetBackoff() {
       ticksToSkip = 0
       gap = 0
@@ -94,111 +118,175 @@ public struct CombinedControl: HerdrControl {
   /// polls 1, 3, 6, 11, 20 and then every eleventh.
   static let longestTUIBackoff = 10
 
+  /// The primary. Named for the TUI, which it is whenever one answered.
   private let tui: any HerdrControl
-  private let core: any HerdrControl
+  /// Whether the primary is herdr's TUI, which never starts a terminal. See `starter`.
+  private let primaryIsTUI: Bool
+  private let sides: [Side]
   private let memory = Memory()
 
+  /// The TUI and a core, the shape this control first had.
   public init(tui: any HerdrControl, core: any HerdrControl) {
-    self.tui = tui
-    self.core = core
+    self.init(tui: tui, sides: [Side(prefix: CorePaneID.prefix, control: core)])
   }
 
-  /// What serves a host, from what each discovery found. `nil` when neither found anything,
-  /// and the caller reports that through a bare `CLIControl`.
+  /// The TUI takes every id no side claims. Sides are asked in order, for routing and for
+  /// `availability()`, so a core goes before tmux.
+  public init(tui: any HerdrControl, sides: [Side]) {
+    self.init(primary: tui, primaryIsTUI: true, sides: sides)
+  }
+
+  /// A host with no TUI: `primary` is a side whose ids carry its own prefix.
+  public init(primary: any HerdrControl, sides: [Side]) {
+    self.init(primary: primary, primaryIsTUI: false, sides: sides)
+  }
+
+  private init(primary: any HerdrControl, primaryIsTUI: Bool, sides: [Side]) {
+    self.tui = primary
+    self.primaryIsTUI = primaryIsTUI
+    self.sides = sides
+  }
+
+  /// What serves a host, from what each discovery found. `nil` when nothing was found, and the
+  /// caller reports that through a bare `CLIControl`.
   public static func joining(
     tui: (any HerdrControl)?,
     core: (any HerdrControl)?
   ) -> (any HerdrControl)? {
-    guard let tui else { return core }
-    guard let core else { return tui }
-    return CombinedControl(tui: tui, core: core)
+    joining(tui: tui, sides: core.map { [Side(prefix: CorePaneID.prefix, control: $0)] } ?? [])
+  }
+
+  /// The same, with the prefixed sides found, in order. One control alone is returned as it
+  /// is. With no TUI, the first side is the primary.
+  public static func joining(tui: (any HerdrControl)?, sides: [Side]) -> (any HerdrControl)? {
+    if let tui {
+      return sides.isEmpty ? tui : CombinedControl(tui: tui, sides: sides)
+    }
+    guard let first = sides.first else { return nil }
+    let rest = Array(sides.dropFirst())
+    return rest.isEmpty ? first.control : CombinedControl(primary: first.control, sides: rest)
   }
 
   /// The TUI's, because `ConnectionModel.bridgeClient` runs this binary, and a core pane
   /// opens through `paneAttacher(for:)` instead.
   public var binaryPath: String { tui.binaryPath }
 
-  /// Binds the TUI side. `Host.herdrSocketPath` names a herdr session, which a core is not.
+  /// Binds the TUI side. `Host.herdrSocketPath` names a herdr session, which a core or a tmux
+  /// server is not.
   public func bound(toSocketPath path: String?) -> any HerdrControl {
-    CombinedControl(tui: tui.bound(toSocketPath: path), core: core)
+    CombinedControl(primary: tui.bound(toSocketPath: path), primaryIsTUI: primaryIsTUI, sides: sides)
   }
 
-  public var changes: AsyncStream<Void>? { core.changes }
+  /// The first stream any side has. Only a core has one today.
+  public var changes: AsyncStream<Void>? {
+    ([tui] + sides.map(\.control)).lazy.compactMap(\.changes).first
+  }
 
-  public var needsPolling: Bool { tui.needsPolling || core.needsPolling }
+  public var needsPolling: Bool { tui.needsPolling || sides.contains { $0.control.needsPolling } }
 
-  /// The core's news on the TUI's last tree, with no command on the host. The TUI's own poll
-  /// goes on regardless, so that tree is at most a tick old. A remembered no session can be as
-  /// old as `longestTUIBackoff`.
+  /// The news of each side with a `changes` stream, on the last whole read of every other side,
+  /// with no command on the host for those. The TUI's own poll goes on regardless, so those
+  /// trees are at most a tick old. A remembered no session can be as old as
+  /// `longestTUIBackoff`.
   ///
-  /// **A core that failed goes back to a whole poll.** It usually means the link went, and the
-  /// TUI's last tree came over that link. Answered with it, the core's panes look gone, and
-  /// `ConnectionModel.apply` forgets each one's chat, screen and draft.
+  /// **A streaming side that failed goes back to a whole poll.** It usually means the link
+  /// went, and the other trees came over that link. Answered with them, the side's panes look
+  /// gone, and `ConnectionModel.apply` forgets each one's chat, screen and draft.
   public func changedSnapshot() async throws -> SessionTree {
-    guard let tuiSide = await memory.tui else { return try await snapshot() }
-    let coreRead = await Result { try await core.changedSnapshot() }
-    guard case .success = coreRead else { return try await snapshot() }
-    return try merged(tuiSide, coreRead)
+    guard let tuiSide = await memory.tui, let remembered = await memory.sideReads,
+      remembered.count == sides.count
+    else { return try await snapshot() }
+    var reads: [Result<SessionTree, any Error>] = []
+    for (side, last) in zip(sides, remembered) {
+      guard side.control.changes != nil else {
+        reads.append(last)
+        continue
+      }
+      let read = await Result { try await side.control.changedSnapshot() }
+      guard case .success = read else { return try await snapshot() }
+      reads.append(read)
+    }
+    return try merged(tuiSide, reads)
   }
 
-  /// The TUI's panes, then the core's.
+  /// The TUI's panes, then each side's, in order.
   ///
-  /// The core failing returns the TUI's tree, and both failing throws the TUI's error, which
-  /// is the one with a next step. That tree has no `coreID`, so a host whose core is down
-  /// covers no machine.
+  /// A side failing leaves its panes out, and every side failing returns the TUI's tree. Both
+  /// failing throws the TUI's error, which is the one with a next step. A tree with no core in
+  /// it has no `coreID`, so a host whose core is down covers no machine.
   ///
-  /// **The TUI failing returns the core's tree only when no session is running**, so a
-  /// stopped session does not hide a running core. Any other failure is rethrown. A failed
-  /// poll passed over as a tree clears `SessionModel.lastFailure`, and `ConnectionModel.apply`
-  /// then forgets every TUI pane's transcript, screen, draft and surface.
+  /// **The TUI failing returns the sides' trees only when no session is running**, so a
+  /// stopped session does not hide a running core or tmux. Any other failure is rethrown. A
+  /// failed poll passed over as a tree clears `SessionModel.lastFailure`, and
+  /// `ConnectionModel.apply` then forgets every TUI pane's transcript, screen, draft and
+  /// surface.
   ///
   /// **A TUI with no session is asked less and less often**, because each check is a failing
   /// snapshot and a status command on the user's machine. A poll in the gap reads only the
-  /// core and answers with it, as `changedSnapshot()` does, and a core that fails there gets
-  /// the whole read. `longestTUIBackoff` has the schedule, and `resetBackoff()` ends it.
+  /// sides and answers with them, as `changedSnapshot()` does, and sides that all fail there
+  /// get the whole read. `longestTUIBackoff` has the schedule, and `resetBackoff()` ends it.
   public func snapshot() async throws -> SessionTree {
     if let tuiSide = await memory.skipTUI() {
-      let coreRead = await Result { try await core.snapshot() }
-      if case .success = coreRead { return try merged(tuiSide, coreRead) }
+      let reads = await readSides()
+      await memory.read(reads)
+      if reads.contains(where: \.isSuccess) { return try merged(tuiSide, reads) }
     }
 
     async let tuiTree = Result { try await tui.snapshot() }
-    async let coreTree = Result { try await core.snapshot() }
-    let (tuiRead, coreRead) = await (tuiTree, coreTree)
+    async let sideTrees = readSides()
+    let (tuiRead, reads) = await (tuiTree, sideTrees)
 
     let tuiSide: TUISide
-    switch (tuiRead, coreRead) {
-    case (.success(let tree), _):
+    switch tuiRead {
+    case .success(let tree):
       tuiSide = .tree(tree)
-    case (.failure(let failure), .success):
+    case .failure(let failure) where reads.contains(where: \.isSuccess):
       tuiSide = await tuiHasNoSession() ? .noSession(failure) : .failed(failure)
-    case (.failure(let failure), .failure):
+    case .failure(let failure):
       tuiSide = .failed(failure)
     }
     await memory.checked(tuiSide)
-    return try merged(tuiSide, coreRead)
+    await memory.read(reads)
+    return try merged(tuiSide, reads)
+  }
+
+  /// Every side's whole read, at once, in `sides` order.
+  private func readSides() async -> [Result<SessionTree, any Error>] {
+    await withTaskGroup(of: (Int, Result<SessionTree, any Error>).self) { group in
+      for (index, side) in sides.enumerated() {
+        group.addTask { (index, await Result { try await side.control.snapshot() }) }
+      }
+      var reads = [Result<SessionTree, any Error>?](repeating: nil, count: sides.count)
+      for await (index, read) in group { reads[index] = read }
+      return reads.compactMap { $0 }
+    }
   }
 
   public func resetBackoff() async {
     await memory.resetBackoff()
   }
 
+  /// The TUI's focus and the first core id. With no TUI tree, the first side's focus.
   private func merged(
     _ tuiSide: TUISide,
-    _ coreRead: Result<SessionTree, any Error>
+    _ reads: [Result<SessionTree, any Error>]
   ) throws -> SessionTree {
-    switch (tuiSide, coreRead) {
-    case (.tree(let tui), .success(let core)):
+    let trees = reads.compactMap { try? $0.get() }
+    switch tuiSide {
+    case .tree(let tui):
       return SessionTree(
-        workspaces: tui.workspaces + core.workspaces,
+        workspaces: tui.workspaces + trees.flatMap(\.workspaces),
         focusedPaneID: tui.focusedPaneID,
-        coreID: core.coreID
+        coreID: tui.coreID ?? trees.lazy.compactMap(\.coreID).first
       )
-    case (.tree(let tree), .failure):
-      return tree
-    case (.noSession, .success(let tree)):
-      return tree
-    case (.noSession(let failure), .failure), (.failed(let failure), _):
+    case .noSession(let failure):
+      guard !trees.isEmpty else { throw failure }
+      return SessionTree(
+        workspaces: trees.flatMap(\.workspaces),
+        focusedPaneID: trees.lazy.compactMap(\.focusedPaneID).first,
+        coreID: trees.lazy.compactMap(\.coreID).first
+      )
+    case .failed(let failure):
       throw failure
     }
   }
@@ -211,19 +299,32 @@ public struct CombinedControl: HerdrControl {
     return false
   }
 
-  /// | TUI | core | answer |
-  /// |---|---|---|
-  /// | ready | ready | `.combined` |
-  /// | ready | refused | `.readyWithCoreRefused`, because a core is there and is not shown |
-  /// | ready | anything else | the TUI's |
-  /// | anything else | ready | `.coreReady`, because there are terminals to show |
-  /// | anything else | anything else | the TUI's |
+  /// The TUI's answer, joined with each side's in order by `joined(_:_:)`.
   public func availability() async -> HerdrAvailability {
     async let tuiCheck = tui.availability()
-    async let coreCheck = core.availability()
-    let (tuiAnswer, coreAnswer) = await (tuiCheck, coreCheck)
+    let sideAnswers = await withTaskGroup(of: (Int, HerdrAvailability).self) { group in
+      for (index, side) in sides.enumerated() {
+        group.addTask { (index, await side.control.availability()) }
+      }
+      var answers = [HerdrAvailability?](repeating: nil, count: sides.count)
+      for await (index, answer) in group { answers[index] = answer }
+      return answers.compactMap { $0 }
+    }
+    return sideAnswers.reduce(await tuiCheck, Self.joined)
+  }
 
-    switch (tuiAnswer, coreAnswer) {
+  /// Two answers as one, the first being what the host had so far.
+  ///
+  /// | so far | side | answer |
+  /// |---|---|---|
+  /// | TUI ready | core ready | `.combined` |
+  /// | TUI ready | core refused | `.readyWithCoreRefused`, because a core is there and is not shown |
+  /// | anything else | core ready | `.coreReady`, because there are terminals to show |
+  /// | ready | tmux ready | `.withTmux`, because both are shown |
+  /// | anything else | tmux ready | `.tmuxReady`, because there are panes to show |
+  /// | anything | anything else | so far |
+  static func joined(_ soFar: HerdrAvailability, _ side: HerdrAvailability) -> HerdrAvailability {
+    switch (soFar, side) {
     case (.ready(let herdrVersion, _), .coreReady(let coreVersion)):
       return .combined(herdrVersion: herdrVersion, coreVersion: coreVersion)
     case let (
@@ -237,13 +338,15 @@ public struct CombinedControl: HerdrControl {
         coreMissingMethods: missingMethods
       )
     case (_, .coreReady):
-      return coreAnswer
+      return side
+    case (_, .tmuxReady(let version)):
+      return soFar.isReady ? .withTmux(soFar, tmuxVersion: version) : side
     default:
-      return tuiAnswer
+      return soFar
     }
   }
 
-  public func attachCommand(for pane: Pane) -> String {
+  public func attachCommand(for pane: Pane) -> String? {
     side(for: pane.id).attachCommand(for: pane)
   }
 
@@ -275,12 +378,21 @@ public struct CombinedControl: HerdrControl {
 
   /// One read per side, and one failure to ask throws, as `readPanes` documents.
   public func readPanes(ids: [String], lines: Int) async throws -> [String: [String]] {
-    let coreIDs = ids.filter(CorePaneID.isCore)
-    let tuiIDs = ids.filter { !CorePaneID.isCore($0) }
-
-    async let tuiPanes = tui.readPanes(ids: tuiIDs, lines: lines)
-    async let corePanes = core.readPanes(ids: coreIDs, lines: lines)
-    return try await tuiPanes.merging(corePanes) { first, _ in first }
+    var groups = [[String]](repeating: [], count: sides.count)
+    var tuiIDs: [String] = []
+    for id in ids {
+      if let index = sideIndex(for: id) { groups[index].append(id) } else { tuiIDs.append(id) }
+    }
+    let controls = [tui] + sides.map(\.control)
+    let batches = [tuiIDs] + groups
+    return try await withThrowingTaskGroup(of: [String: [String]].self) { group in
+      for (control, batch) in zip(controls, batches) {
+        group.addTask { try await control.readPanes(ids: batch, lines: lines) }
+      }
+      var panes: [String: [String]] = [:]
+      for try await read in group { panes.merge(read) { first, _ in first } }
+      return panes
+    }
   }
 
   public func readScreen(of pane: Pane, lines: Int) async throws -> PaneScreen {
@@ -303,16 +415,25 @@ public struct CombinedControl: HerdrControl {
     try await side(for: target.id).rename(target, to: label)
   }
 
-  /// The core's, because a herdr pane is opened inside a tab, and only the core can start one
-  /// with nothing open.
-  public var canStartTerminal: Bool { core.canStartTerminal }
+  /// The first control that can, never the TUI: a herdr pane is opened inside a tab, and only
+  /// a core can start one with nothing open.
+  public var canStartTerminal: Bool { starter != nil }
 
   public func startTerminal() async throws -> String {
-    try await core.startTerminal()
+    guard let starter else { return try await tui.startTerminal() }
+    return try await starter.startTerminal()
+  }
+
+  private var starter: (any HerdrControl)? {
+    ((primaryIsTUI ? [] : [tui]) + sides.map(\.control)).first { $0.canStartTerminal }
+  }
+
+  private func sideIndex(for id: String) -> Int? {
+    sides.firstIndex { id.hasPrefix($0.prefix) }
   }
 
   private func side(for id: String) -> any HerdrControl {
-    CorePaneID.isCore(id) ? core : tui
+    sideIndex(for: id).map { sides[$0].control } ?? tui
   }
 }
 
@@ -324,5 +445,10 @@ extension Result where Failure == any Error {
     } catch {
       self = .failure(error)
     }
+  }
+
+  fileprivate var isSuccess: Bool {
+    if case .success = self { return true }
+    return false
   }
 }

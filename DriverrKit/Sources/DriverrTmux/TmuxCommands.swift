@@ -219,13 +219,6 @@ enum TmuxCommands {
   static func newSession(binary: String) -> String {
     "\(binary) new-session -d -P -F \(shellQuoted("#{pane_id}"))"
   }
-
-  /// What a PTY runs to show a pane's session: read-only and with `ignore-size`, so the phone's
-  /// size never reaches the desk's window. A stand-in until the live terminal slice, which
-  /// replaces it with a control client per pane.
-  static func attach(binary: String, session: String) -> String {
-    "\(binary) attach-session -t \(session) -f read-only,ignore-size"
-  }
 }
 
 extension Character {

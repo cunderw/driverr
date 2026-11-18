@@ -126,7 +126,11 @@ struct HostDetailView: View {
               // Opens the pane's own screen with its composer focused. The request goes to the
               // root, which shows the pane scene.
               onReply: { pane in presenter.reply(host: host, model: model, pane: pane) },
-              onStartTerminal: terminalStart(model, session)
+              onStartTerminal: terminalStart(model, session),
+              servesOnlyTmux: {
+                if case .tmuxReady = model.herdrAvailability { return true }
+                return false
+              }()
             )
             .task {
               session.startLiveUpdates()
@@ -463,7 +467,8 @@ struct HostDetailView: View {
     // `.statusUnreadable` belongs here: a session is already running, so offering to start
     // one would be the wrong next step.
     case .notInstalled, .tooOld, .ready, .statusUnreadable, .coreReady, .combined,
-      .coreIncompatible, .readyWithCoreRefused, nil:
+      .coreIncompatible, .readyWithCoreRefused, .tmuxReady, .tmuxNotInstalled, .tmuxTooOld,
+      .tmuxUnreadable, .withTmux, nil:
       "Open Shell"
     }
   }

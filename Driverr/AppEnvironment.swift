@@ -2,6 +2,7 @@ import DriverrCore
 import DriverrHC
 import DriverrHerdr
 import DriverrSSH
+import DriverrTmux
 import DriverrTranscript
 import SwiftUI
 import UIKit
@@ -90,14 +91,21 @@ struct AppEnvironment {
     hostStore: UserDefaultsHostStore(),
     settingsStore: UserDefaultsSettingsStore(),
     makeTransport: { NIOSSHTransport() },
-    // Discover the binary: an exec channel runs a non-login shell, whose PATH may lack
-    // Homebrew's prefix or `~/.local/bin`. A host with neither herdr nor a core gets a control
-    // bound to the bare name, whose first command reports `herdrNotInstalled`.
+    // Discover the binaries: an exec channel runs a non-login shell, whose PATH may lack
+    // Homebrew's prefix or `~/.local/bin`. **Detection is the only choice of backend**: every
+    // one found is served, with no per-host switch. A host with none of herdr, a core and tmux
+    // gets a control bound to the bare name, whose first command reports `herdrNotInstalled`.
     makeHerdrControl: { transport in
       let run: CommandRunner = { try await transport.execChannel(command: $0) }
       async let tui = CLIControl.discovering(run: run)
       async let core = CoreControl.discovering(transport: transport)
-      return await CombinedControl.joining(tui: tui, core: core) ?? CLIControl(run: run)
+      async let tmux = TmuxControl.discovering(run: run)
+      let (foundTUI, foundCore, foundTmux) = await (tui, core, tmux)
+      let sides = [
+        foundCore.map { CombinedControl.Side(prefix: CorePaneID.prefix, control: $0) },
+        foundTmux.map { CombinedControl.Side(prefix: TmuxID.prefix, control: $0) },
+      ].compactMap { $0 }
+      return CombinedControl.joining(tui: foundTUI, sides: sides) ?? CLIControl(run: run)
     },
     makeTranscriptReader: { TranscriptReader(transport: $0) },
     notifications: LiveNotificationCenter(),

@@ -68,7 +68,7 @@ struct ConnectionHerdrSocketPathTests {
     let pane = DriverrCore.Pane(
       id: "w1:p1", tabID: "t", workspaceID: "w", title: "x", terminalID: "term")
     #expect(
-      control.attachCommand(for: pane).hasPrefix("export HERDR_SOCKET_PATH=/run/herdr.sock;"))
+      control.attachCommand(for: pane)?.hasPrefix("export HERDR_SOCKET_PATH=/run/herdr.sock;") == true)
     #expect(model.herdrAvailability == .coreReady(version: "0.1.14"))
     #expect(model.herdrVersion == "core 0.1.14")
   }

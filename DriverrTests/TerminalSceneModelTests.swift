@@ -1910,6 +1910,59 @@ struct TerminalSceneModelTests {
     #expect(scene.session(for: .pane(id: "w9:p9")) == nil)
   }
 
+  /// A tmux pane has no terminal id and, until the live tmux terminal lands, no attach command.
+  /// Its Terminal side must say so and open nothing: the old stand-in attached to whichever pane
+  /// was current in the session, which was often another one.
+  @Test("a pane with no attach command says its terminal is unavailable and opens no pty")
+  func aPaneWithNoAttachCommandOpensNothing() async throws {
+    let inner = FakeControl()
+    await inner.update(to: Self.treeWithATmuxPane)
+    let (scene, transport) = await makeScene(
+      initialTarget: .pane(id: "tmux:%1"),
+      ptyGreeting: "carson@workbox:~$ ",
+      herdr: NoAttachControl(inner: inner),
+      responder: Self.everythingPaints
+    )
+
+    scene.start()
+    await scene.settle()
+
+    #expect(scene.notice == .failed(.paneTerminalUnavailable))
+    #expect(AppError.paneTerminalUnavailable.isRetryable == false, "Retry would only fail again")
+    #expect(scene.role(for: .pane(id: "tmux:%1")) == nil)
+    #expect(await transport.lastPTYSize == nil, "a shell was opened for nothing")
+  }
+
+  /// One shell pane on tmux.
+  private static let treeWithATmuxPane = SessionTree(
+    workspaces: [
+      Workspace(
+        id: "tmux:$0",
+        number: 1,
+        label: "work",
+        tabs: [
+          Tab(
+            id: "tmux:@0",
+            workspaceID: "tmux:$0",
+            number: 0,
+            label: "zsh",
+            panes: [
+              Pane(
+                id: "tmux:%1",
+                tabID: "tmux:@0",
+                workspaceID: "tmux:$0",
+                title: "zsh",
+                terminalID: nil,
+                directory: "~"
+              )
+            ]
+          )
+        ]
+      )
+    ],
+    focusedPaneID: "tmux:%1"
+  )
+
   /// One agent pane on a herdr too old to name a terminal for it.
   private static let treeWithNoTerminalID = SessionTree(
     workspaces: [
@@ -3980,7 +4033,7 @@ private actor SilentSplitControl: HerdrControl {
 
   func snapshot() async throws -> SessionTree { tree }
 
-  nonisolated func attachCommand(for pane: Pane) -> String {
+  nonisolated func attachCommand(for pane: Pane) -> String? {
     "herdr terminal attach \(pane.terminalID ?? pane.id)"
   }
 
@@ -4052,7 +4105,7 @@ private actor StopsAnsweringAfterTheFirstConnect: HerdrControl {
 
   /// Reimplemented rather than forwarded: the protocol wants this synchronously and `inner` is
   /// an actor.
-  nonisolated func attachCommand(for pane: Pane) -> String {
+  nonisolated func attachCommand(for pane: Pane) -> String? {
     "herdr terminal attach \(pane.terminalID ?? pane.id)"
   }
 
@@ -4127,5 +4180,36 @@ final class Flag {
   private func cancelWaiter(_ id: Int) {
     guard let index = waiters.firstIndex(where: { $0.id == id }) else { return }
     waiters.remove(at: index).continuation.resume()
+  }
+}
+
+/// `FakeControl` with no attach command, as a tmux pane has none.
+private struct NoAttachControl: HerdrControl {
+  let inner: FakeControl
+
+  var binaryPath: String { inner.binaryPath }
+  func snapshot() async throws -> SessionTree { try await inner.snapshot() }
+  func attachCommand(for pane: Pane) -> String? { nil }
+  func availability() async -> HerdrAvailability { await inner.availability() }
+  func sendText(paneID: String, text: String) async throws {
+    try await inner.sendText(paneID: paneID, text: text)
+  }
+  func submitText(paneID: String, text: String) async throws {
+    try await inner.submitText(paneID: paneID, text: text)
+  }
+  func sendKeys(paneID: String, keys: [PaneKey]) async throws {
+    try await inner.sendKeys(paneID: paneID, keys: keys)
+  }
+  func readPanes(ids: [String], lines: Int) async throws -> [String: [String]] {
+    try await inner.readPanes(ids: ids, lines: lines)
+  }
+  func readScreen(of pane: Pane, lines: Int) async throws -> PaneScreen {
+    try await inner.readScreen(of: pane, lines: lines)
+  }
+  func perform(_ action: PaneAction, on paneID: String) async throws {
+    try await inner.perform(action, on: paneID)
+  }
+  func rename(_ target: RenameTarget, to label: String) async throws {
+    try await inner.rename(target, to: label)
   }
 }

@@ -529,7 +529,7 @@ private actor GatedScreenControl: HerdrControl {
 
   nonisolated var binaryPath: String { "herdr" }
   func snapshot() async throws -> SessionTree { .empty }
-  nonisolated func attachCommand(for pane: Pane) -> String { "herdr terminal attach t" }
+  nonisolated func attachCommand(for pane: Pane) -> String? { "herdr terminal attach t" }
   func availability() async -> HerdrAvailability {
     .ready(version: "0.8.2", protocolVersion: HerdrProtocol.lastVerified)
   }

@@ -985,6 +985,11 @@ final class TerminalSceneModel {
         // A herdr older than the control bridge has no terminal id, so the pane is attached
         // through a pty with a command typed into it.
         guard entry(for: target) == nil, let herdr = model.herdr else { return }
+        // A tmux pane has no command that shows it, and no shell is opened for nothing.
+        guard let command = herdr.attachCommand(for: pane) else {
+          notices[target] = .failed(.paneTerminalUnavailable)
+          return
+        }
         guard let session = await model.openTerminal(size: viewportSize) else {
           notices[target] = .failed(
             model.failure ?? .channelFailed(reason: "The pane could not be opened.")
@@ -992,7 +997,7 @@ final class TerminalSceneModel {
           return
         }
         session.start()
-        session.send(text: herdr.attachCommand(for: pane) + "\n")
+        session.send(text: command + "\n")
         await install(
           Entry(
             id: nextID(),

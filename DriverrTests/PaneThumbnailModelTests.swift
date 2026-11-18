@@ -20,7 +20,7 @@ private final class Box<Value> {
 private struct SilentControl: HerdrControl {
   let binaryPath = "herdr"
   func snapshot() async throws -> SessionTree { .empty }
-  func attachCommand(for pane: Pane) -> String { "herdr terminal attach \(pane.id)" }
+  func attachCommand(for pane: Pane) -> String? { "herdr terminal attach \(pane.id)" }
   func availability() async -> HerdrAvailability { .ready(version: "0.8.2", protocolVersion: 20) }
   func sendText(paneID: String, text: String) async throws {}
   func submitText(paneID: String, text: String) async throws {}

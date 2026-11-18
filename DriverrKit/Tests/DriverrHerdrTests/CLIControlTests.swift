@@ -417,7 +417,7 @@ struct CLIControlTests {
     #expect(control.attachCommand(for: shell) == "herdr terminal attach term_w7p6")
     #expect(control.attachCommand(for: agentPane) == "herdr terminal attach term_w1p2")
     // No `--takeover`: attaching must not evict whoever is on the pane at a desk.
-    #expect(!control.attachCommand(for: shell).contains("--takeover"))
+    #expect(control.attachCommand(for: shell)?.contains("--takeover") == false)
   }
 
   @Test("a pane with no terminal id falls back to the old command")

@@ -229,13 +229,6 @@ struct TmuxCommandsTests {
     #expect(TmuxCommands.newWindow(binary: tmux) == "tmux new-window -d -P -F '#{pane_id}'")
     #expect(TmuxCommands.newSession(binary: tmux) == "tmux new-session -d -P -F '#{pane_id}'")
   }
-
-  @Test("the stand-in attach is read-only and leaves the desk's size alone")
-  func attach() {
-    #expect(
-      TmuxCommands.attach(binary: tmux, session: "'$1'")
-        == "tmux attach-session -t '$1' -f read-only,ignore-size")
-  }
 }
 
 #if os(macOS)

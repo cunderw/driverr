@@ -139,7 +139,7 @@ public actor FakeControl: HerdrControl {
 
   public nonisolated let canStartTerminal: Bool
 
-  public nonisolated func attachCommand(for pane: Pane) -> String {
+  public nonisolated func attachCommand(for pane: Pane) -> String? {
     // The same command and branch `CLIControl` produces. Every seeded pane has a terminal
     // id, so only a test-built pane reaches the fallback.
     if let terminalID = pane.terminalID {

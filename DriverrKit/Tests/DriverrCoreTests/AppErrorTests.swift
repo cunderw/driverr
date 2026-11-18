@@ -58,6 +58,8 @@ struct AppErrorTests {
       .disconnected(reason: "eof"),
       .keyImportFailed(reason: "bad key"),
       .herdrNotInstalled,
+      .tmuxNotInstalled,
+      .paneTerminalUnavailable,
       .herdrCommandFailed(reason: "no such pane"),
       .herdrDidNotAnswer(host: "h"),
       .herdrResponseUnreadable,

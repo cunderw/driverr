@@ -39,7 +39,7 @@ public struct TmuxControl: HerdrControl {
 
   // MARK: Availability
 
-  /// What this host has, in `HerdrControl`'s terms. See `tmuxAvailability()` for the real one.
+  /// What this host has, in `HerdrControl`'s terms: one of `HerdrAvailability`'s tmux cases.
   public func availability() async -> HerdrAvailability {
     await tmuxAvailability().asHerdrAvailability
   }
@@ -108,15 +108,13 @@ public struct TmuxControl: HerdrControl {
 
   // MARK: Terminal
 
-  /// A PTY command that shows this pane's session, read-only and at the desk's size.
+  /// `nil`: no command shows one tmux pane and leaves the desk alone.
   ///
-  /// **A stand-in.** It shows the session's current pane, not necessarily this one. The live
-  /// terminal slice opens a pane through `paneAttacher(for:)` and this goes.
-  public func attachCommand(for pane: Pane) -> String {
-    let session = TmuxID.raw(of: pane.workspaceID).map(shellQuoted)
-    guard let session else { return "\(binary) attach-session -f read-only,ignore-size" }
-    return TmuxCommands.attach(binary: binary, session: session)
-  }
+  /// `attach-session -t %N` makes that pane's window current in its session, so the desk's
+  /// view moves with the phone, and attaching to the session alone shows whichever pane is
+  /// current there. The live terminal opens a pane through `paneAttacher(for:)` instead, and
+  /// until it does, `TerminalSceneModel` says the terminal is unavailable.
+  public func attachCommand(for pane: Pane) -> String? { nil }
 
   // MARK: Input
 
@@ -202,7 +200,9 @@ public struct TmuxControl: HerdrControl {
     )
   }
 
-  public var canStartTerminal: Bool { true }
+  /// `false` until a tmux pane's terminal can be shown. A window started now would open on the
+  /// desk and then show nothing on the phone. `startTerminal()` still works, for that day.
+  public var canStartTerminal: Bool { false }
 
   /// Opens a window in the most recently used session, or a session when no server runs, and
   /// returns the id of its pane.
@@ -262,12 +262,9 @@ public struct TmuxControl: HerdrControl {
   }
 
   /// Maps a non-zero exit to an `AppError`. 127 is the shell's "command not found".
-  ///
-  /// `herdrNotInstalled` is the nearest case today, and says herdr. The wiring slice gives a
-  /// tmux host its own wording.
   static func failure(exitStatus: Int, standardError: String) -> AppError {
     let detail = standardError.trimmingCharacters(in: .whitespacesAndNewlines)
-    if exitStatus == 127 || detail.contains("command not found") { return .herdrNotInstalled }
+    if exitStatus == 127 || detail.contains("command not found") { return .tmuxNotInstalled }
     return .herdrCommandFailed(reason: detail.isEmpty ? "tmux exited with \(exitStatus)." : detail)
   }
 }
