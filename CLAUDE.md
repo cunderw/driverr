@@ -30,10 +30,13 @@ This file holds the rules and traps on top of that.
   mapped to `AppError`. Verify with
   `grep -rn --include='*.swift' '^import NIOSSH' Driverr DriverrKit/Sources`: exactly one
   hit, `DriverrKit/Sources/DriverrSSH/NIOSSHTransport.swift`, is the passing result.
-- **`DriverrHC` imports `DriverrHerdr`, never the reverse.** It needs `HerdrControl` and
-  `HerdrStream`. A host with both the TUI and a core is one `CombinedControl`, which holds
-  two `any HerdrControl` and routes each call by the `CorePaneID` prefix, because two
-  sessions applying snapshots would wipe each other's caches.
+- **`DriverrHC` and `DriverrTmux` import `DriverrHerdr`, never the reverse.** Both need
+  `HerdrControl`, and `DriverrHC` needs `HerdrStream`. tmux's formats never leave
+  `DriverrTmux`. A host with more than one of the TUI, a core and tmux is one
+  `CombinedControl`, because two sessions applying snapshots would wipe each other's caches.
+  It holds the TUI, or the first side found when there is no TUI, and a `Side` per other
+  control, and routes each call by the id's prefix (`CorePaneID.prefix`, `TmuxID.prefix`).
+  Discovery alone picks what a host serves; there is no per-host switch.
 - **`SessionModel.tree` leaves out a machine another connected host shows;
   `reportedTree` is what the host said.** A core lists the machines it added, and one that is
   also a Driverr host would show twice. They match on identity, `hello.core.id` against
