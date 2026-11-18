@@ -1919,7 +1919,6 @@ struct TerminalSceneModelTests {
     await inner.update(to: Self.treeWithATmuxPane)
     let (scene, transport) = await makeScene(
       initialTarget: .pane(id: "tmux:%1"),
-      ptyGreeting: "carson@workbox:~$ ",
       herdr: NoAttachControl(inner: inner),
       responder: Self.everythingPaints
     )

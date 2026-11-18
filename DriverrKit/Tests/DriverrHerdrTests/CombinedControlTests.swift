@@ -864,6 +864,27 @@ struct CombinedControlSidesTests {
     #expect(try await combined.startTerminal() == "core:t9")
   }
 
+  @Test("with no TUI, a core that fails is left out and tmux's panes still show")
+  func failingCoreBesideTmux() async throws {
+    let core = Side(
+      binaryPath: "hc", snapshotFailure: coreFailure,
+      answer: .coreIncompatible(version: "0.0.1", generation: 0, missingMethods: []))
+    let tmux = Side(binaryPath: "tmux", tree: tmuxTree, answer: .tmuxReady(version: "3.7c"))
+    let combined = try #require(
+      CombinedControl.joining(tui: nil, sides: [coreSide(core), tmuxSide(tmux)]))
+    #expect(await combined.availability() == .tmuxReady(version: "3.7c"))
+    #expect(try await combined.snapshot().allPanes.map(\.id) == ["tmux:%0", "tmux:%1"])
+    #expect(try await combined.snapshot().allPanes.map(\.id) == ["tmux:%0", "tmux:%1"])
+
+    let nothing = try #require(
+      CombinedControl.joining(
+        tui: nil,
+        sides: [
+          coreSide(core), tmuxSide(Side(binaryPath: "tmux", snapshotFailure: tmuxFailure)),
+        ]))
+    await #expect(throws: coreFailure) { try await nothing.snapshot() }
+  }
+
   @Test("each call goes to the side whose prefix the id carries")
   func routing() async throws {
     let tui = Side(binaryPath: "herdr")

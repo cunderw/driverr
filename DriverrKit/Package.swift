@@ -85,7 +85,7 @@ let package = Package(
     .testTarget(name: "DriverrHerdrTests", dependencies: ["DriverrHerdr"]),
     // herdr-core's framed protocol, as a second `HerdrControl`. It imports DriverrHerdr for
     // that protocol and for `HerdrStream`, and DriverrHerdr knows nothing of it:
-    // `CombinedControl` holds two `any HerdrControl`.
+    // `CombinedControl` holds each control as an `any HerdrControl`.
     .target(name: "DriverrHC", dependencies: ["DriverrCore", "DriverrHerdr"]),
     // tmux's command-line client and Claude Code's session record, as a third `HerdrControl`.
     // It imports DriverrHerdr for that protocol and nothing else of ours, and DriverrHerdr knows

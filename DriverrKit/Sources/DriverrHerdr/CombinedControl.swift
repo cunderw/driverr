@@ -99,6 +99,13 @@ public struct CombinedControl: HerdrControl {
       ticksToSkip = gap
     }
 
+    /// What a poll found of a primary that is not a TUI. No backoff: it is asked every time.
+    func found(_ primary: TUISide) {
+      tui = primary
+      ticksToSkip = 0
+      gap = 0
+    }
+
     func read(_ sides: [Result<SessionTree, any Error>]) {
       sideReads = sides
     }
@@ -179,8 +186,15 @@ public struct CombinedControl: HerdrControl {
 
   /// The first stream a side has, never the TUI's. Only a core has one today. The TUI is
   /// polled, and `changedSnapshot()` reads a side's news on the TUI's last tree.
+  ///
+  /// **Each control's `changes` is asked at most once.** A request can open a new stream and
+  /// replace the one a listener holds, so a lazy `compactMap(...).first`, which evaluates the
+  /// winner twice, would hand out a stream nobody signals.
   public var changes: AsyncStream<Void>? {
-    nonTUI.lazy.compactMap(\.changes).first
+    for control in nonTUI {
+      if let changes = control.changes { return changes }
+    }
+    return nil
   }
 
   public var needsPolling: Bool { tui.needsPolling || sides.contains { $0.control.needsPolling } }
@@ -229,7 +243,8 @@ public struct CombinedControl: HerdrControl {
   /// stopped session does not hide a running core or tmux. Any other failure is rethrown. A
   /// failed poll passed over as a tree clears `SessionModel.lastFailure`, and
   /// `ConnectionModel.apply` then forgets every TUI pane's transcript, screen, draft and
-  /// surface.
+  /// surface. A core standing in for an absent TUI is not held to that: failing, it is left out
+  /// like any side, and a host whose every control failed throws the core's error.
   ///
   /// **A TUI with no session is asked less and less often**, because each check is a failing
   /// snapshot and a status command on the user's machine. A poll in the gap reads only the
@@ -250,12 +265,20 @@ public struct CombinedControl: HerdrControl {
     switch tuiRead {
     case .success(let tree):
       tuiSide = .tree(tree)
+    case .failure(let failure) where !primaryIsTUI:
+      // A core standing in for an absent TUI is a side like any other: failing, it leaves its
+      // panes out, as an incompatible core does beside a ready tmux.
+      tuiSide = .noSession(failure)
     case .failure(let failure) where reads.contains(where: \.isSuccess):
       tuiSide = await tuiHasNoSession() ? .noSession(failure) : .failed(failure)
     case .failure(let failure):
       tuiSide = .failed(failure)
     }
-    await memory.checked(tuiSide)
+    if primaryIsTUI {
+      await memory.checked(tuiSide)
+    } else {
+      await memory.found(tuiSide)
+    }
     await memory.read(reads)
     return try merged(tuiSide, reads)
   }
