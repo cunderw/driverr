@@ -8,8 +8,8 @@ import UIKit
 /// answers, including under a captured screen with no transcript. `PanePromptBar` has the
 /// same shape.
 ///
-/// At rest, with nothing typed, it is a one-row pill: Attach, the field, Stop as a glyph while
-/// the agent works, and Send. Focused or holding a draft it is the card, the field over its
+/// At rest, with nothing typed, it is a one-row pill: Attach, the field, Shift-Tab for a
+/// Claude Code pane, Stop as a glyph while the agent works, and Send. Focused or holding a draft it is the card, the field over its
 /// controls. See `shape`. There are no terminal keys: a pending question is answered
 /// by chips under its turn (`ReplyChipRow`), an interrupt is Stop, which shows only while the
 /// agent is working, and Escape and the arrows are on the Terminal side. With no accessory
@@ -154,6 +154,10 @@ struct PaneComposerBar: View {
   /// A closure, not a picker here; see `ComposerPhotosPicker` and `ComposerFileImporter`.
   /// `nil` hides the button.
   var onAttach: ((AttachmentSource) -> Void)?
+
+  /// The Shift-Tab button, which cycles Claude Code's mode. `.hidden` draws nothing. The rule
+  /// is `PaneModeControl`, in `DriverrCore`.
+  var modeControl: PaneModeControl = .hidden
 
   var body: some View {
     withSlashKeyHandling(barContent)
@@ -679,6 +683,7 @@ struct PaneComposerBar: View {
       // No spacer while collapsed, or it would strand Attach in the middle of the card. The
       // controls hug the trailing edge in every shape.
       if shape == .card { Spacer(minLength: 0) }
+      if modeControl != .hidden { modeButton(in: shape) }
       // Stop exists only while something is running.
       if header.isWorking && !isConfirmingInterrupt {
         if shape == .pill { stopGlyphButton } else { stopButton }
@@ -752,6 +757,34 @@ struct PaneComposerBar: View {
     .accessibilityIdentifier("composer.stop")
   }
 
+
+  /// Shift-Tab, beside Stop and Send: Claude Code moves to its next mode. It says no mode,
+  /// because nothing Driverr reads says the mode the moment it changes.
+  ///
+  /// Drawn like Attach, an accent glyph on a neutral circle, so it does not read as a second
+  /// Send. Off while the pane is blocked, where Shift-Tab approves the request, and while a
+  /// reply is on its way.
+  private func modeButton(in shape: CardShape) -> some View {
+    let isEnabled = modeControl == .ready && !model.isSending
+    return Button {
+      Task { await model.send(.backTab) }
+    } label: {
+      Image(systemName: "arrow.trianglehead.2.clockwise")
+        .font(.system(size: shape == .card ? 17 : 15, weight: .semibold))
+        .foregroundStyle(isEnabled ? themeAccent : Color.secondary)
+        .frame(width: Self.circle(in: shape), height: Self.circle(in: shape))
+        .background(Color(.tertiarySystemFill), in: Circle())
+        .frame(width: 44, height: 44)
+        .contentShape(Rectangle())
+    }
+    .buttonStyle(.plain)
+    .disabled(!isEnabled)
+    // The glyph has no words, so the label is all VoiceOver has.
+    .accessibilityLabel(PaneModeControl.label)
+    .accessibilityHint(
+      modeControl == .blocked ? PaneModeControl.blockedHint : PaneModeControl.hint)
+    .accessibilityIdentifier("composer.mode")
+  }
 
   // MARK: - Upload readout for UI tests
 
