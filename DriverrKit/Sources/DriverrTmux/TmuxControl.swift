@@ -22,10 +22,45 @@ public struct TmuxControl: HerdrControl {
   /// channel's non-login shell may lack Homebrew on `PATH`. See `discovering(run:)`.
   public let binaryPath: String
   private let run: CommandRunner
+  private let backoff = NoServerBackoff()
 
   public init(binaryPath: String = "tmux", run: @escaping CommandRunner) {
     self.binaryPath = binaryPath
     self.run = run
+  }
+
+  /// The most polls in a row that skip a tmux with no server, counted in ticks, as
+  /// `CombinedControl.longestTUIBackoff` does for a TUI with no session. The gap doubles from
+  /// one poll, so the checks fall on polls 1, 3, 6, 11, 20 and then every eleventh.
+  ///
+  /// A judgement, not a measurement. A session started at the desk shows within it, and a host
+  /// whose tmux is only installed is asked once in eleven polls instead of every one.
+  static let longestNoServerBackoff = 10
+
+  /// A struct cannot remember, and this control is copied into every model that reads it, so
+  /// every copy shares one schedule.
+  private actor NoServerBackoff {
+    private var ticksToSkip = 0
+    private var gap = 0
+
+    /// Whether this poll is one to skip, counted off.
+    func skip() -> Bool {
+      guard ticksToSkip > 0 else { return false }
+      ticksToSkip -= 1
+      return true
+    }
+
+    /// What a listing found. An empty one means no server, because a tmux server exits with its
+    /// last session.
+    func listed(empty: Bool) {
+      gap = empty ? min(max(gap * 2, 1), TmuxControl.longestNoServerBackoff) : 0
+      ticksToSkip = gap
+    }
+
+    func reset() {
+      ticksToSkip = 0
+      gap = 0
+    }
   }
 
   /// The command every call starts with: the binary, and `-u`.
@@ -55,17 +90,25 @@ public struct TmuxControl: HerdrControl {
 
   // MARK: Snapshot
 
-  public func snapshot() async throws -> SessionTree {
-    async let listing = execute(TmuxCommands.listPanes(binary: binary), allowingNoServer: true)
-    // The process table only adds agents, so a host that will not answer it still has a tree.
-    async let processTable = try? run(TmuxProcessTable.command)
+  public func resetBackoff() async {
+    await backoff.reset()
+  }
 
-    let output = try await listing
-    // Awaited whether or not it is used, so a host's commands do not depend on a race.
-    let processes = await processTable
+  /// The panes, and then the agents in them.
+  ///
+  /// **The process table is read only when there are panes**, so a host with tmux installed and
+  /// no server costs one command a check, and `longestNoServerBackoff` spaces the checks out.
+  /// `resetBackoff()` ends the gap.
+  public func snapshot() async throws -> SessionTree {
+    if await backoff.skip() { return .empty }
+    let output = try await execute(
+      TmuxCommands.listPanes(binary: binary), allowingNoServer: true)
     let rows = TmuxPaneFormat.rows(from: output)
+    await backoff.listed(empty: rows.isEmpty)
     guard !rows.isEmpty else { return .empty }
 
+    // The process table only adds agents, so a host that will not answer it still has a tree.
+    let processes = try? await run(TmuxProcessTable.command)
     let agents = await agents(forRows: rows, processTable: processes)
     try Task.checkCancellation()
     return TmuxSnapshotMapper.tree(from: rows, agents: agents)

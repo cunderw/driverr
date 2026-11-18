@@ -78,8 +78,8 @@ struct TmuxControlSnapshotTests {
   func noServer() async throws {
     let host = FakeTmuxHost(sessions: [])
     #expect(try await TmuxControl(run: host.runner).snapshot() == .empty)
-    // Nothing to join, so nothing else is asked.
-    #expect(await host.commands.count == 2)
+    // Nothing to join, so not even the process table is asked.
+    #expect(await host.commands.count == 1)
     #expect(await !host.commands.contains { $0.contains(".claude/sessions/") })
   }
 

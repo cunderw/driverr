@@ -58,4 +58,38 @@ struct TmuxWiringTests {
     // A started window could not be shown either.
     #expect(!control.canStartTerminal)
   }
+
+  @Test("a tmux with no server costs one command, and is asked less and less often")
+  func noServerBacksOff() async throws {
+    let host = FakeTmuxHost()
+    let control = TmuxControl(run: host.runner)
+    var asked: [Int] = []
+    for poll in 1...12 {
+      let before = await host.commands.count
+      #expect(try await control.snapshot() == .empty)
+      if await host.commands.count > before { asked.append(poll) }
+    }
+    #expect(asked == [1, 3, 6, 11], "each check doubles the gap")
+    #expect(await host.commands.allSatisfy { $0.contains("list-panes") }, "no process table")
+
+    // A refresh the user asked for ends the gap.
+    await control.resetBackoff()
+    let before = await host.commands.count
+    _ = try await control.snapshot()
+    #expect(await host.commands.count == before + 1)
+  }
+
+  @Test("panes reset the schedule, and the process table is read only then")
+  func panesResetTheBackoff() async throws {
+    let host = FakeTmuxHost()
+    let control = TmuxControl(run: host.runner)
+    _ = try await control.snapshot()
+    await host.setSessions(FakeTmuxHost.seeded().sessions)
+    #expect(try await control.snapshot() == .empty, "the second poll is in the gap")
+    #expect(try await control.snapshot().allPanes.isEmpty == false)
+    #expect(await host.commands.contains { $0.contains(TmuxProcessTable.command) })
+    let count = await host.commands.count
+    _ = try await control.snapshot()
+    #expect(await host.commands.count > count, "a host with panes is polled every time")
+  }
 }

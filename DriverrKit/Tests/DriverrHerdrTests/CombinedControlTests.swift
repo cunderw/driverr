@@ -872,7 +872,10 @@ struct CombinedControlSidesTests {
     let tmux = Side(binaryPath: "tmux", tree: tmuxTree, answer: .tmuxReady(version: "3.7c"))
     let combined = try #require(
       CombinedControl.joining(tui: nil, sides: [coreSide(core), tmuxSide(tmux)]))
-    #expect(await combined.availability() == .tmuxReady(version: "3.7c"))
+    let refused = HerdrAvailability.coreIncompatible(
+      version: "0.0.1", generation: 0, missingMethods: [])
+    #expect(await combined.availability() == .withTmux(refused, tmuxVersion: "3.7c"))
+    #expect(await combined.availability().herdrProblemBesideTmux == refused)
     #expect(try await combined.snapshot().allPanes.map(\.id) == ["tmux:%0", "tmux:%1"])
     #expect(try await combined.snapshot().allPanes.map(\.id) == ["tmux:%0", "tmux:%1"])
 
@@ -883,6 +886,20 @@ struct CombinedControlSidesTests {
           coreSide(core), tmuxSide(Side(binaryPath: "tmux", snapshotFailure: tmuxFailure)),
         ]))
     await #expect(throws: coreFailure) { try await nothing.snapshot() }
+  }
+
+  @Test("with no TUI, a core that has read and then fails is thrown, not left out")
+  func readCoreFailureThrows() async throws {
+    let core = PushingCore(read: .success(coreTree))
+    let combined = try #require(
+      CombinedControl.joining(
+        tui: nil, sides: [coreSide(core), tmuxSide(Side(binaryPath: "tmux", tree: tmuxTree))]))
+    #expect(try await combined.snapshot().allPanes.map(\.id) == ["core:t1", "tmux:%0", "tmux:%1"])
+
+    // The core link drops with SSH up. tmux's tree alone would read as every core pane gone.
+    await core.moved(to: .failure(coreFailure))
+    await #expect(throws: coreFailure) { try await combined.snapshot() }
+    await #expect(throws: coreFailure) { try await combined.changedSnapshot() }
   }
 
   @Test("each call goes to the side whose prefix the id carries")
@@ -989,12 +1006,26 @@ struct CombinedTmuxAvailabilityTests {
     #expect(try await answer(tui: herdr, tmux: .tmuxUnreadable) == herdr)
   }
 
-  @Test("herdr found and not ready, tmux ready: ready, as tmux")
+  @Test("herdr found and not ready, tmux ready: ready, and herdr keeps its own words")
   func herdrNotReady() async throws {
-    let answer = try await answer(tui: .serverNotRunning(version: "0.9.1"), tmux: tmuxReady)
-    #expect(answer == tmuxReady)
+    let stopped = HerdrAvailability.serverNotRunning(version: "0.9.1")
+    let answer = try await answer(tui: stopped, tmux: tmuxReady)
+    #expect(answer == .withTmux(stopped, tmuxVersion: "3.7c"))
     #expect(answer.isReady)
+    #expect(answer.message == "tmux 3.7c")
+    #expect(answer.herdrProblemBesideTmux == stopped, "the stopped server still says so")
+    #expect(answer.servesOnlyTmux)
+    #expect(answer.coreRefusal == nil)
     #expect(answer.readyVersion == nil, "the host list prints this after the word herdr")
+  }
+
+  @Test("a ready herdr beside tmux has no problem to report, and is not tmux alone")
+  func readyHerdrHasNoProblem() async throws {
+    let both = try await answer(tui: herdr, tmux: tmuxReady)
+    #expect(both.herdrProblemBesideTmux == nil)
+    #expect(!both.servesOnlyTmux)
+    #expect(tmuxReady.servesOnlyTmux)
+    #expect(tmuxReady.herdrProblemBesideTmux == nil)
   }
 
   @Test("only tmux found: tmux's own answer and words")
@@ -1058,4 +1089,49 @@ private struct StreamingTUI: HerdrControl {
   }
   func perform(_ action: PaneAction, on paneID: String) async throws {}
   func rename(_ target: RenameTarget, to label: String) async throws {}
+}
+
+/// A pushed core that counts how often it is asked for a stream. Each ask of a real one can
+/// replace the stream a listener holds.
+private final class CountingStreamCore: HerdrControl, @unchecked Sendable {
+  private let lock = NSLock()
+  private var asks = 0
+  var streamAsks: Int { lock.withLock { asks } }
+
+  var changes: AsyncStream<Void>? {
+    lock.withLock { asks += 1 }
+    return AsyncStream { _ in }
+  }
+  var needsPolling: Bool { false }
+  var binaryPath: String { "hc" }
+  func snapshot() async throws -> SessionTree { coreTree }
+  func availability() async -> HerdrAvailability { .coreReady(version: "0.1.15") }
+  func attachCommand(for pane: Pane) -> String? { nil }
+  func sendText(paneID: String, text: String) async throws {}
+  func submitText(paneID: String, text: String) async throws {}
+  func sendKeys(paneID: String, keys: [PaneKey]) async throws {}
+  func readPanes(ids: [String], lines: Int) async throws -> [String: [String]] { [:] }
+  func readScreen(of pane: Pane, lines: Int) async throws -> PaneScreen {
+    PaneScreen.sanitised("", lines: lines)
+  }
+  func perform(_ action: PaneAction, on paneID: String) async throws {}
+  func rename(_ target: RenameTarget, to label: String) async throws {}
+}
+
+@Suite("Combined control asks for each stream once")
+struct CombinedControlStreamAskTests {
+  @Test("the host's stream asks the core once, and reading a change asks it never")
+  func asksOnce() async throws {
+    let core = CountingStreamCore()
+    let combined = CombinedControl(
+      tui: Side(binaryPath: "herdr", tree: tuiTree),
+      sides: [coreSide(core), tmuxSide(Side(binaryPath: "tmux", tree: tmuxTree))])
+
+    #expect(combined.changes != nil)
+    #expect(core.streamAsks == 1, "a second ask hands out a stream nobody signals")
+
+    _ = try await combined.snapshot()
+    _ = try await combined.changedSnapshot()
+    #expect(core.streamAsks == 1, "reading a change must not ask for a new stream")
+  }
 }

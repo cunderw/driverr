@@ -60,11 +60,14 @@ public enum HerdrAvailability: Equatable, Sendable {
   case tmuxTooOld(version: String, minimumVersion: String)
   /// `tmux -V` ran and printed something this build cannot compare.
   case tmuxUnreadable
-  /// A ready herdr answer, and a ready tmux beside it, so the host shows both. See
-  /// `CombinedControl.availability()`.
+  /// herdr's answer, and a ready tmux beside it. See `CombinedControl.availability()`.
   ///
-  /// Indirect rather than one case per herdr answer, because four herdr answers are ready and
-  /// each would need a tmux twin. The inner answer is always ready and never `.withTmux`.
+  /// Ready, because tmux's panes are there. **The herdr answer may not be.** A stopped herdr
+  /// server or a refused core beside tmux keeps its own words and next step, which
+  /// `herdrProblemBesideTmux` hands out. A herdr found and not ready is not tmux alone.
+  ///
+  /// Indirect rather than one case per herdr answer, because every herdr answer would need a
+  /// tmux twin. The inner answer is never `.withTmux`.
   indirect case withTmux(HerdrAvailability, tmuxVersion: String)
 
   public var isReady: Bool {
@@ -97,13 +100,26 @@ public enum HerdrAvailability: Equatable, Sendable {
 
   /// Why the core beside a working TUI is not in use, or `nil` when none is being passed over.
   public var coreRefusal: String? {
-    if case .withTmux(let herdr, _) = self { return herdr.coreRefusal }
+    if case .withTmux(let herdr, _) = self { return herdr.isReady ? herdr.coreRefusal : nil }
     guard case let .readyWithCoreRefused(_, _, version, generation, missingMethods) = self else {
       return nil
     }
     return Self.coreIncompatible(
       version: version, generation: generation, missingMethods: missingMethods
     ).message
+  }
+
+  /// herdr's own answer when it is not ready and tmux beside it is, or `nil`. Its message and
+  /// next step still apply: a stopped server still wants starting.
+  public var herdrProblemBesideTmux: HerdrAvailability? {
+    guard case .withTmux(let herdr, _) = self, !herdr.isReady else { return nil }
+    return herdr
+  }
+
+  /// Whether tmux's panes are the only ones this host shows.
+  public var servesOnlyTmux: Bool {
+    if case .tmuxReady = self { return true }
+    return herdrProblemBesideTmux != nil
   }
 
   /// What to tell the user, and what they can do about it.
@@ -155,7 +171,8 @@ public enum HerdrAvailability: Equatable, Sendable {
     case .tmuxUnreadable:
       "tmux is installed here, but this version of Driverr can't read its version."
     case let .withTmux(herdr, tmuxVersion):
-      "\(herdr.message) · tmux \(tmuxVersion)"
+      // A herdr that is not ready says so on its own line. See `herdrProblemBesideTmux`.
+      herdr.isReady ? "\(herdr.message) · tmux \(tmuxVersion)" : "tmux \(tmuxVersion)"
     }
   }
 

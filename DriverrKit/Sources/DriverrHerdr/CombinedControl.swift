@@ -99,9 +99,13 @@ public struct CombinedControl: HerdrControl {
       ticksToSkip = gap
     }
 
+    /// Whether a primary that is not a TUI has ever answered with a tree.
+    private(set) var primaryHasRead = false
+
     /// What a poll found of a primary that is not a TUI. No backoff: it is asked every time.
     func found(_ primary: TUISide) {
       tui = primary
+      if case .tree = primary { primaryHasRead = true }
       ticksToSkip = 0
       gap = 0
     }
@@ -243,8 +247,8 @@ public struct CombinedControl: HerdrControl {
   /// stopped session does not hide a running core or tmux. Any other failure is rethrown. A
   /// failed poll passed over as a tree clears `SessionModel.lastFailure`, and
   /// `ConnectionModel.apply` then forgets every TUI pane's transcript, screen, draft and
-  /// surface. A core standing in for an absent TUI is not held to that: failing, it is left out
-  /// like any side, and a host whose every control failed throws the core's error.
+  /// surface. A core standing in for an absent TUI is left out only while it has never read,
+  /// as an incompatible core is. After that its failure is rethrown, for the same reason.
   ///
   /// **A TUI with no session is asked less and less often**, because each check is a failing
   /// snapshot and a status command on the user's machine. A poll in the gap reads only the
@@ -266,9 +270,11 @@ public struct CombinedControl: HerdrControl {
     case .success(let tree):
       tuiSide = .tree(tree)
     case .failure(let failure) where !primaryIsTUI:
-      // A core standing in for an absent TUI is a side like any other: failing, it leaves its
-      // panes out, as an incompatible core does beside a ready tmux.
-      tuiSide = .noSession(failure)
+      // A core standing in for an absent TUI that has never read is left out, as an
+      // incompatible core beside a ready tmux is. **One that has read is rethrown.** A dropped
+      // core link with SSH still up would otherwise answer with tmux's panes alone, and
+      // `ConnectionModel.apply` would forget every core pane's chat, screen and draft.
+      tuiSide = await memory.primaryHasRead ? .failed(failure) : .noSession(failure)
     case .failure(let failure) where reads.contains(where: \.isSuccess):
       tuiSide = await tuiHasNoSession() ? .noSession(failure) : .failed(failure)
     case .failure(let failure):
@@ -295,8 +301,11 @@ public struct CombinedControl: HerdrControl {
     }
   }
 
+  /// This control's backoff, and every control's own, such as a tmux with no server.
   public func resetBackoff() async {
     await memory.resetBackoff()
+    await tui.resetBackoff()
+    for side in sides { await side.control.resetBackoff() }
   }
 
   /// The TUI's focus and the first core id. With no TUI tree, the first side's focus.
@@ -353,8 +362,7 @@ public struct CombinedControl: HerdrControl {
   /// | TUI ready | core ready | `.combined` |
   /// | TUI ready | core refused | `.readyWithCoreRefused`, because a core is there and is not shown |
   /// | anything else | core ready | `.coreReady`, because there are terminals to show |
-  /// | ready | tmux ready | `.withTmux`, because both are shown |
-  /// | anything else | tmux ready | `.tmuxReady`, because there are panes to show |
+  /// | anything | tmux ready | `.withTmux`, which keeps a herdr that is not ready to say so |
   /// | anything | anything else | so far |
   static func joined(_ soFar: HerdrAvailability, _ side: HerdrAvailability) -> HerdrAvailability {
     switch (soFar, side) {
@@ -373,7 +381,7 @@ public struct CombinedControl: HerdrControl {
     case (_, .coreReady):
       return side
     case (_, .tmuxReady(let version)):
-      return soFar.isReady ? .withTmux(soFar, tmuxVersion: version) : side
+      return .withTmux(soFar, tmuxVersion: version)
     default:
       return soFar
     }
