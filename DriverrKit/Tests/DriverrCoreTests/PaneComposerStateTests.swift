@@ -997,6 +997,7 @@ struct PaneComposerCopySentVerdictTests {
     #expect(PaneComposerCopy.sentVerdict(for: .up) == "Sent Up")
     #expect(PaneComposerCopy.sentVerdict(for: .down) == "Sent Down")
     #expect(PaneComposerCopy.sentVerdict(for: .tab) == "Sent Tab")
+    #expect(PaneComposerCopy.sentVerdict(for: .backTab) == "Sent Shift-Tab")
     #expect(PaneComposerCopy.sentVerdict(for: .yes) == "Sent y")
     #expect(PaneComposerCopy.sentVerdict(for: .no) == "Sent n")
   }

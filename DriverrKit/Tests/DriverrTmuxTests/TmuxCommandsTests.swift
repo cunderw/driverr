@@ -119,6 +119,8 @@ struct TmuxCommandsTests {
     #expect(TmuxCommands.key(.esc) == (name: "Escape", isLiteral: false))
     #expect(TmuxCommands.key(.interrupt) == (name: "C-c", isLiteral: false))
     #expect(TmuxCommands.key(.tab) == (name: "Tab", isLiteral: false))
+    // tmux 3.7c writes ESC [ Z for it, the bytes that cycle Claude Code's mode.
+    #expect(TmuxCommands.key(.backTab) == (name: "BTab", isLiteral: false))
     #expect(TmuxCommands.key(.yes) == (name: "y", isLiteral: true))
     #expect(TmuxCommands.key(.digit7) == (name: "7", isLiteral: true))
     for key in PaneKey.allCases {

@@ -362,13 +362,15 @@ struct CoreControlTests {
 
     try await control.sendKeys(
       paneID: "core:t7",
-      keys: [.up, .down, .left, .right, .enter, .esc, .tab, .interrupt, .yes, .no, .digit3]
+      keys: [
+        .up, .down, .left, .right, .enter, .esc, .tab, .backTab, .interrupt, .yes, .no, .digit3,
+      ]
     )
 
     #expect(
       try await typed(on: stream) == [
-        "\u{1B}[A", "\u{1B}[B", "\u{1B}[D", "\u{1B}[C", "\r", "\u{1B}", "\t", "\u{03}", "y", "n",
-        "3",
+        "\u{1B}[A", "\u{1B}[B", "\u{1B}[D", "\u{1B}[C", "\r", "\u{1B}", "\t", "\u{1B}[Z",
+        "\u{03}", "y", "n", "3",
       ])
   }
 

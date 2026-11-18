@@ -254,6 +254,18 @@ struct CLIControlTests {
     #expect(host.lastCommand == "herdr pane send-keys 'w1:p2' esc")
   }
 
+  /// herdr 0.8.2 (protocol 20) keeps Shift on `shift+tab`; older herdr sends a plain Tab.
+  /// Checked on herdr 0.9.5 against Claude Code 2.1.327: this exact call cycles the mode.
+  @Test("Shift-Tab goes over as herdr's shift+tab")
+  func sendsShiftTab() async throws {
+    let host = FakeHost(standardOutput: "")
+    let control = CLIControl(run: host.runner)
+
+    try await control.sendKeys(paneID: "w1:p2", keys: [.backTab])
+
+    #expect(host.lastCommand == "herdr pane send-keys 'w1:p2' 'shift+tab'")
+  }
+
   /// Two printable keys in one `pane send-keys` reach Claude Code's picker as one burst and
   /// both are dropped. Separate calls all land, so each key is its own call in one exec.
   @Test("several keys go over one herdr call per key, in one exec")

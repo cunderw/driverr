@@ -12,6 +12,9 @@ public enum PaneKey: String, Hashable, Sendable, CaseIterable {
   case left
   case right
   case tab
+  /// Shift-Tab, which cycles Claude Code's mode. herdr keeps the Shift only from 0.8.2
+  /// (protocol 20); older herdr sends a plain Tab. See `HerdrAvailability.deliversShiftTab`.
+  case backTab = "shift+tab"
   case yes = "y"
   case no = "n"
   case interrupt = "ctrl+c"
@@ -54,6 +57,7 @@ public enum PaneKey: String, Hashable, Sendable, CaseIterable {
     case .left: "Left"
     case .right: "Right"
     case .tab: "Tab"
+    case .backTab: "Shift-Tab"
     case .yes: "y"
     case .no: "n"
     case .interrupt: "Ctrl-C"
@@ -83,6 +87,7 @@ public enum PaneKey: String, Hashable, Sendable, CaseIterable {
     case .left: "Left arrow"
     case .right: "Right arrow"
     case .tab: "Tab"
+    case .backTab: "Shift Tab, change mode"
     case .yes: "Yes"
     case .no: "No"
     case .interrupt: "Interrupt, control C"

@@ -293,7 +293,7 @@ public enum PaneComposerCopy {
       return sent
     case .interrupt:
       return "Sent Ctrl-C · Claude was interrupted"
-    case .esc, .up, .down, .left, .right, .tab, .yes, .no:
+    case .esc, .up, .down, .left, .right, .tab, .backTab, .yes, .no:
       return "Sent \(key.label)"
     }
   }
