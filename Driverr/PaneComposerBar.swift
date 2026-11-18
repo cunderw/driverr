@@ -686,7 +686,16 @@ struct PaneComposerBar: View {
       if modeControl != .hidden { modeButton(in: shape) }
       // Stop exists only while something is running.
       if header.isWorking && !isConfirmingInterrupt {
-        if shape == .pill { stopGlyphButton } else { stopButton }
+        // The capsule only where its word fits on one line. At the largest text sizes, beside
+        // Attach, Shift-Tab and Send, it wrapped to "Sto" over "p"; there the glyph stands in.
+        if shape == .pill {
+          stopGlyphButton
+        } else {
+          ViewThatFits(in: .horizontal) {
+            stopButton
+            stopGlyphButton
+          }
+        }
       }
       sendButton(in: shape)
     }

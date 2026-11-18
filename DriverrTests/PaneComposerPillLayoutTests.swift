@@ -81,12 +81,13 @@ struct PaneComposerPillLayoutTests {
     let rest = barHeight(text: "", pane: Self.workingPane, modeControl: .ready)
     let draft = barHeight(text: "x", pane: Self.workingPane, modeControl: .ready)
     #expect(draft > rest + 30)
-    // The card's control row holds the button at the largest size without growing past the
-    // card it is without it: the row is 44 pt targets whatever the text size.
+    // At the largest size the button must not make the card taller. Beside it, Stop's
+    // capsule wrapped its word onto a second line and the card grew 58 pt; Stop is the glyph
+    // there now.
     let large = barHeight(
       text: "", size: .accessibility5, pane: Self.workingPane, modeControl: .ready)
     let largeWithout = barHeight(text: "", size: .accessibility5, pane: Self.workingPane)
     #expect(large > 0)
-    #expect(large == largeWithout)
+    #expect(large <= largeWithout, "with \(large), without \(largeWithout)")
   }
 }
