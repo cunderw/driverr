@@ -415,8 +415,10 @@ final class PaneComposerUITests: XCTestCase {
     XCTAssertGreaterThanOrEqual(mode.frame.width, 44, "Under the 44 pt target: \(mode.frame)")
     mode.tap()
 
+    // The pane is still working, so the notice joins that line rather than replacing it.
     requireStatus(
-      app, saying: "Sent Shift-Tab", "Expected the key's own verdict, not the reply sentence")
+      app, saying: "Claude is working. · Sent Shift-Tab",
+      "Expected the key's notice beside the working line, not in its place")
   }
 
   /// At a permission prompt Claude Code binds Shift-Tab to approving, so the button is off.

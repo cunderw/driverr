@@ -216,7 +216,9 @@ public struct PaneComposerState: Equatable, Sendable {
         message: verdict,
         detail: nil,
         tone: .success,
-        offersRetry: false
+        offersRetry: false,
+        // A named key, not a reply. Ctrl-C has its own sentence: the agent stopped.
+        isKeyNotice: verdict != PaneComposerCopy.sent && sentKey != .interrupt
       )
     }
     // Quotes herdr only when it reported the pane blocked when the reply went over.
@@ -256,12 +258,18 @@ public struct PaneComposerStatus: Equatable, Sendable {
   public let tone: Tone
   /// Only a failure offers Retry. Retrying a send that worked would send it twice.
   public let offersRetry: Bool
+  /// Whether this is a named key's own notice, such as "Sent Shift-Tab". The key leaves the
+  /// agent doing what it was doing, so `ChatActivity` keeps the working line beside it.
+  public let isKeyNotice: Bool
 
-  public init(message: String, detail: String?, tone: Tone, offersRetry: Bool) {
+  public init(
+    message: String, detail: String?, tone: Tone, offersRetry: Bool, isKeyNotice: Bool = false
+  ) {
     self.message = message
     self.detail = detail
     self.tone = tone
     self.offersRetry = offersRetry
+    self.isKeyNotice = isKeyNotice
   }
 }
 
