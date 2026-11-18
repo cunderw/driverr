@@ -52,6 +52,19 @@ struct ShiftTabReachTests {
         .deliversShiftTab(toPane: pane))
   }
 
+  /// tmux writes ESC [ Z for `BTab` itself, so no herdr protocol decides it. The prefix is
+  /// `TmuxID.prefix`, which `TmuxCommandsTests.shiftTabReachesATmuxPane` pins against this one.
+  @Test("a tmux pane always gets it, whatever the herdr beside it")
+  func tmuxPanes() {
+    #expect(ShiftTabFloor.tmuxPanePrefix == "tmux:")
+    #expect(
+      HerdrAvailability.ready(version: "0.8.0", protocolVersion: 19)
+        .deliversShiftTab(toPane: "tmux:%3"))
+    #expect(
+      HerdrAvailability.combined(herdrVersion: "0.8.0", coreVersion: "0.1.21")
+        .deliversShiftTab(toPane: "tmux:%3"))
+  }
+
   @Test("no answer, or an unusable one, reaches nothing")
   func notReady() {
     let unusable: [HerdrAvailability] = [

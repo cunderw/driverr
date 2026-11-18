@@ -8,6 +8,10 @@ enum ShiftTabFloor {
 
   /// Whether `version` is 0.8.2 or newer. The leading digits of each dot-separated part are
   /// compared, so `0.9.5-dev` reads as 0.9.5. Anything with no number first is `false`.
+  /// `TmuxID.prefix`, spelled here because this module cannot import DriverrTmux. tmux names
+  /// the key `BTab` and writes `CSI Z`, whatever herdr runs beside it.
+  static let tmuxPanePrefix = "tmux:"
+
   static func isReached(byVersion version: String) -> Bool {
     var parts: [Int] = []
     for part in version.split(separator: ".") {
@@ -24,10 +28,12 @@ extension HerdrAvailability {
   /// Whether Shift-Tab reaches pane `paneID` as Shift-Tab, not as a plain Tab.
   ///
   /// A core pane always gets it: a viewer writes `CSI Z` itself, whatever the TUI beside it.
-  /// A TUI pane needs protocol 20. `.combined` carries the TUI's version and no protocol
+  /// So does a tmux pane. A TUI pane needs protocol 20. `.combined` carries the TUI's version and no protocol
   /// number, so there the version decides.
   public func deliversShiftTab(toPane paneID: String) -> Bool {
-    if CorePaneID.isCore(paneID) { return true }
+    if CorePaneID.isCore(paneID) || paneID.hasPrefix(ShiftTabFloor.tmuxPanePrefix) {
+      return true
+    }
     switch self {
     case .ready(_, let protocolVersion), .readyWithCoreRefused(_, let protocolVersion, _, _, _):
       return protocolVersion >= ShiftTabFloor.protocolVersion

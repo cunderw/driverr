@@ -1,4 +1,5 @@
 import DriverrCore
+import DriverrHerdr
 import Foundation
 import Testing
 
@@ -129,6 +130,15 @@ struct TmuxCommandsTests {
     #expect(
       TmuxCommands.keys(binary: tmux, pane: pane, keys: [.yes])
         == "tmux send-keys -t '%3' -l -- y")
+  }
+
+  /// DriverrHerdr spells the tmux prefix itself, because it cannot import this module. A real
+  /// tmux pane id must still pass, even beside a herdr too old to keep Shift.
+  @Test("Shift-Tab reaches a tmux pane id, whatever herdr runs beside it")
+  func shiftTabReachesATmuxPane() {
+    #expect(
+      HerdrAvailability.ready(version: "0.8.0", protocolVersion: 19)
+        .deliversShiftTab(toPane: TmuxID.pane("%3")))
   }
 
   @Test("a batched read prints a boundary with the pane's id before each capture")
