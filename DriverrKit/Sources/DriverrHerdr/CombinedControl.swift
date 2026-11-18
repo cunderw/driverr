@@ -73,7 +73,7 @@ public struct CombinedControl: HerdrControl {
   private actor Memory {
     var tui: TUISide?
     /// What each side's last whole read gave, in `sides` order. `changedSnapshot()` answers a
-    /// side with no `changes` stream from here, so a change on the core runs no tmux command.
+    /// polled side from here, so a change on the core runs no tmux command.
     var sideReads: [Result<SessionTree, any Error>]?
     /// Polls left that answer from a remembered `.noSession` without asking the TUI.
     private var ticksToSkip = 0
@@ -185,12 +185,12 @@ public struct CombinedControl: HerdrControl {
 
   public var needsPolling: Bool { tui.needsPolling || sides.contains { $0.control.needsPolling } }
 
-  /// The news of each side with a `changes` stream, on the last whole read of every other side,
-  /// with no command on the host for those. The TUI's own poll goes on regardless, so those
+  /// The news of each side that is pushed, not polled, on the last whole read of every other
+  /// side, with no command on the host for those. The TUI's own poll goes on regardless, so those
   /// trees are at most a tick old. A remembered no session can be as old as
   /// `longestTUIBackoff`.
   ///
-  /// **A streaming side that failed goes back to a whole poll.** It usually means the link
+  /// **A pushed side that failed goes back to a whole poll.** It usually means the link
   /// went, and the other trees came over that link. Answered with them, the side's panes look
   /// gone, and `ConnectionModel.apply` forgets each one's chat, screen and draft.
   public func changedSnapshot() async throws -> SessionTree {
@@ -198,7 +198,9 @@ public struct CombinedControl: HerdrControl {
       remembered.count == sides.count
     else { return try await snapshot() }
     // A core standing in for an absent TUI is where the news is, so it is read, not remembered.
-    if !primaryIsTUI, tui.changes != nil {
+    // **Never asks for `changes` to decide.** Each request for a stream can replace the one the
+    // listener holds, so that question here would leave the session deaf.
+    if !primaryIsTUI, !tui.needsPolling {
       guard case .success(let tree) = await Result({ try await tui.changedSnapshot() }) else {
         return try await snapshot()
       }
@@ -206,7 +208,7 @@ public struct CombinedControl: HerdrControl {
     }
     var reads: [Result<SessionTree, any Error>] = []
     for (side, last) in zip(sides, remembered) {
-      guard side.control.changes != nil else {
+      guard !side.control.needsPolling else {
         reads.append(last)
         continue
       }
