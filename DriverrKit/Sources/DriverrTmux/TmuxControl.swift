@@ -256,6 +256,8 @@ public struct TmuxControl: HerdrControl {
     } catch AppError.herdrCommandFailed(let reason) where Self.isNoServer(reason) {
       output = try await execute(TmuxCommands.newSession(binary: binary))
     }
+    // The server may be new, so the next snapshot asks rather than answering from the gap.
+    await backoff.reset()
     let raw = output.trimmingCharacters(in: .whitespacesAndNewlines)
     guard let id = TmuxID.validRaw(raw, kind: .pane) else { throw AppError.herdrResponseUnreadable }
     return TmuxID.pane(id)

@@ -92,4 +92,13 @@ struct TmuxWiringTests {
     _ = try await control.snapshot()
     #expect(await host.commands.count > count, "a host with panes is polled every time")
   }
+
+  @Test("a terminal started from Driverr shows on the next snapshot, gap or not")
+  func startEndsTheGap() async throws {
+    let host = FakeTmuxHost()
+    let control = TmuxControl(run: host.runner)
+    #expect(try await control.snapshot() == .empty)
+    let id = try await control.startTerminal()
+    #expect(try await control.snapshot().pane(id: id) != nil)
+  }
 }
