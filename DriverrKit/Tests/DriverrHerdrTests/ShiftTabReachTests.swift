@@ -68,8 +68,9 @@ struct ShiftTabReachTests {
   @Test("no answer, or an unusable one, reaches nothing")
   func notReady() {
     let unusable: [HerdrAvailability] = [
-      .notInstalled, .serverNotRunning(version: "0.9.5"), .tooOld(version: "0.6", protocolVersion: 16),
-      .statusUnreadable(version: nil), .coreIncompatible(version: nil, generation: nil, missingMethods: []),
+      .notInstalled, .serverNotRunning(version: "0.9.5"),
+      .tooOld(version: "0.6", protocolVersion: 16), .statusUnreadable(version: nil),
+      .coreIncompatible(version: nil, generation: nil, missingMethods: []),
     ]
     for availability in unusable {
       #expect(!availability.deliversShiftTab(toPane: "w1:p1"), "\(availability)")

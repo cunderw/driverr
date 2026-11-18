@@ -9,10 +9,11 @@ import UIKit
 /// same shape.
 ///
 /// At rest, with nothing typed, it is a one-row pill: Attach, the field, Shift-Tab for a
-/// Claude Code pane, Stop as a glyph while the agent works, and Send. Focused or holding a draft it is the card, the field over its
-/// controls. See `shape`. There are no terminal keys: a pending question is answered
-/// by chips under its turn (`ReplyChipRow`), an interrupt is Stop, which shows only while the
-/// agent is working, and Escape and the arrows are on the Terminal side. With no accessory
+/// Claude Code pane, Stop as a glyph while the agent works, and Send. Focused or holding a
+/// draft it is the card, the field over its controls. See `shape`. There are no terminal
+/// keys: a pending question is answered by chips under its turn (`ReplyChipRow`), an
+/// interrupt is Stop, which shows only while the agent is working, Shift-Tab is its own
+/// button, and Escape and the arrows are on the Terminal side. With no accessory
 /// row, the keyboard's end frame is the safe area and iOS's own avoidance is correct.
 ///
 /// The words come from `DriverrCore` (`PaneComposerHeader`, `PaneComposerStatus`,
@@ -689,11 +690,11 @@ struct PaneComposerBar: View {
         // The capsule only where its word fits on one line. At the largest text sizes, beside
         // Attach, Shift-Tab and Send, it wrapped to "Sto" over "p"; there the glyph stands in.
         if shape == .pill {
-          stopGlyphButton
+          stopGlyphButton(in: shape)
         } else {
           ViewThatFits(in: .horizontal) {
             stopButton
-            stopGlyphButton
+            stopGlyphButton(in: shape)
           }
         }
       }
@@ -701,11 +702,13 @@ struct PaneComposerBar: View {
     }
   }
 
-  /// Stop in the pill: the glyph alone, red on a neutral circle, beside Send.
+  /// Stop as the glyph alone, red on a neutral circle, beside Send: always in the pill, and in
+  /// the card or collapsed bar where the capsule's word does not fit on one line. The circle
+  /// is the shape's, so it matches the controls beside it.
   ///
   /// The word is the label, so VoiceOver and the tests read "Stop" as they do on the card's
   /// capsule. The same two-step confirm.
-  private var stopGlyphButton: some View {
+  private func stopGlyphButton(in shape: CardShape) -> some View {
     Button(role: .destructive) {
       isConfirmingInterrupt = true
     } label: {
@@ -715,7 +718,7 @@ struct PaneComposerBar: View {
         Image(systemName: "stop.fill")
           .font(.system(size: 14, weight: .semibold))
           .foregroundStyle(Color(.systemRed))
-          .frame(width: Self.pillCircle, height: Self.pillCircle)
+          .frame(width: Self.circle(in: shape), height: Self.circle(in: shape))
           .background(Color(.tertiarySystemFill), in: Circle())
           .frame(width: 44, height: 44)
           .contentShape(Circle())
@@ -778,7 +781,9 @@ struct PaneComposerBar: View {
     return Button {
       Task { await model.send(.backTab) }
     } label: {
-      Image(systemName: "arrow.trianglehead.2.clockwise")
+      // `chevron.forward.2`, after Claude Code's own "⏵⏵" mode marker. Not a circular arrow,
+      // which is the system's refresh glyph and would read as reloading the conversation.
+      Image(systemName: "chevron.forward.2")
         .font(.system(size: shape == .card ? 17 : 15, weight: .semibold))
         .foregroundStyle(isEnabled ? themeAccent : Color.secondary)
         .frame(width: Self.circle(in: shape), height: Self.circle(in: shape))

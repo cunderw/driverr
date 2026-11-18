@@ -44,7 +44,8 @@ struct PaneModeControlTests {
     let claude = pane(Agent(name: "Claude", kind: nil, status: .idle, session: session))
     #expect(PaneModeControl(pane: claude, deliversShiftTab: true) == .ready)
     let codexSession = AgentSession(agent: "codex", kind: "id", value: "abc")
-    let notClaude = pane(Agent(name: "Claude", kind: "claude", status: .idle, session: codexSession))
+    let notClaude = pane(
+      Agent(name: "Claude", kind: "claude", status: .idle, session: codexSession))
     #expect(PaneModeControl(pane: notClaude, deliversShiftTab: true) == .hidden)
   }
 
