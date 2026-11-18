@@ -116,6 +116,11 @@ public enum HerdrAvailability: Equatable, Sendable {
     return herdr
   }
 
+  /// Whether the host screen's body offers the shell: nothing is ready, or herdr is not ready
+  /// beside tmux and its next step is a shell. The toolbar's Open Shell shows only when this is
+  /// `false`, so the screen never offers the shell twice.
+  public var offersShellInBody: Bool { !isReady || herdrProblemBesideTmux != nil }
+
   /// Whether tmux's panes are the only ones this host shows.
   public var servesOnlyTmux: Bool {
     if case .tmuxReady = self { return true }

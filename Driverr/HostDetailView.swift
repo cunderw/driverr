@@ -110,9 +110,7 @@ struct HostDetailView: View {
         connectionSection(model)
         // Also beside tmux's panes when herdr is there and not ready, so a stopped server
         // still offers its way to start.
-        if case .connected = model.phase, let availability = model.herdrAvailability,
-          !availability.isReady || availability.herdrProblemBesideTmux != nil
-        {
+        if case .connected = model.phase, model.herdrAvailability?.offersShellInBody == true {
           shellSection(model)
         }
         if case .connected = model.phase {
@@ -199,9 +197,12 @@ struct HostDetailView: View {
         }
       }
       // Open Shell in the toolbar, because a shell is a main task here, not plumbing behind
-      // the pill. Only when herdr is ready: otherwise `shellSection` already shows the same
-      // button in the body.
-      if let model, model.phase == .connected, model.herdrAvailability?.isReady == true {
+      // the pill. Only when `shellSection` does not already show the same button in the body:
+      // see `HerdrAvailability.offersShellInBody`, which includes a herdr that is not ready
+      // beside tmux's panes.
+      if let model, model.phase == .connected,
+        model.herdrAvailability?.offersShellInBody == false
+      {
         ToolbarItem(placement: .topBarTrailing) {
           // Not a push. See CLAUDE.md: on iPad, do not push from `HostDetailView`, because a
           // second push from the split view's detail column pops back to the host list.

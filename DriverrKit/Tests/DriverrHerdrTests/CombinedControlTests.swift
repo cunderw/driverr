@@ -1019,6 +1019,19 @@ struct CombinedTmuxAvailabilityTests {
     #expect(answer.readyVersion == nil, "the host list prints this after the word herdr")
   }
 
+  @Test("the body offers the shell exactly when the toolbar does not")
+  func shellOfferedOnce() async throws {
+    let stopped = HerdrAvailability.serverNotRunning(version: "0.9.1")
+    #expect(stopped.offersShellInBody, "nothing is ready")
+    #expect(HerdrAvailability.tmuxTooOld(version: "2.7", minimumVersion: "3.2").offersShellInBody)
+    #expect(
+      HerdrAvailability.withTmux(stopped, tmuxVersion: "3.7c").offersShellInBody,
+      "a stopped herdr beside tmux still offers its way to start")
+    #expect(!herdr.offersShellInBody)
+    #expect(!tmuxReady.offersShellInBody)
+    #expect(!HerdrAvailability.withTmux(herdr, tmuxVersion: "3.7c").offersShellInBody)
+  }
+
   @Test("a ready herdr beside tmux has no problem to report, and is not tmux alone")
   func readyHerdrHasNoProblem() async throws {
     let both = try await answer(tui: herdr, tmux: tmuxReady)
