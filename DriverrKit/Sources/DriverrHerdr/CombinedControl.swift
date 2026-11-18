@@ -177,9 +177,10 @@ public struct CombinedControl: HerdrControl {
     CombinedControl(primary: tui.bound(toSocketPath: path), primaryIsTUI: primaryIsTUI, sides: sides)
   }
 
-  /// The first stream any side has. Only a core has one today.
+  /// The first stream a side has, never the TUI's. Only a core has one today. The TUI is
+  /// polled, and `changedSnapshot()` reads a side's news on the TUI's last tree.
   public var changes: AsyncStream<Void>? {
-    ([tui] + sides.map(\.control)).lazy.compactMap(\.changes).first
+    nonTUI.lazy.compactMap(\.changes).first
   }
 
   public var needsPolling: Bool { tui.needsPolling || sides.contains { $0.control.needsPolling } }
@@ -193,9 +194,16 @@ public struct CombinedControl: HerdrControl {
   /// went, and the other trees came over that link. Answered with them, the side's panes look
   /// gone, and `ConnectionModel.apply` forgets each one's chat, screen and draft.
   public func changedSnapshot() async throws -> SessionTree {
-    guard let tuiSide = await memory.tui, let remembered = await memory.sideReads,
+    guard var tuiSide = await memory.tui, let remembered = await memory.sideReads,
       remembered.count == sides.count
     else { return try await snapshot() }
+    // A core standing in for an absent TUI is where the news is, so it is read, not remembered.
+    if !primaryIsTUI, tui.changes != nil {
+      guard case .success(let tree) = await Result({ try await tui.changedSnapshot() }) else {
+        return try await snapshot()
+      }
+      tuiSide = .tree(tree)
+    }
     var reads: [Result<SessionTree, any Error>] = []
     for (side, last) in zip(sides, remembered) {
       guard side.control.changes != nil else {
@@ -425,7 +433,12 @@ public struct CombinedControl: HerdrControl {
   }
 
   private var starter: (any HerdrControl)? {
-    ((primaryIsTUI ? [] : [tui]) + sides.map(\.control)).first { $0.canStartTerminal }
+    nonTUI.first { $0.canStartTerminal }
+  }
+
+  /// Every control but the TUI, the primary first when it is not the TUI.
+  private var nonTUI: [any HerdrControl] {
+    (primaryIsTUI ? [] : [tui]) + sides.map(\.control)
   }
 
   private func sideIndex(for id: String) -> Int? {

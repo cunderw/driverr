@@ -992,3 +992,49 @@ struct CombinedTmuxAvailabilityTests {
     #expect(both == .serverNotRunning(version: "0.9.1"))
   }
 }
+
+@Suite("Combined control, change streams")
+struct CombinedControlChangeTests {
+  @Test("the core's stream is the one listened to, even when the TUI has one")
+  func coreStreamWins() {
+    let tuiStream = AsyncStream<Void> { _ in }
+    let core = PushingCore(read: .success(coreTree))
+    let combined = CombinedControl(tui: StreamingTUI(changes: tuiStream), core: core)
+    #expect(combined.changes != nil)
+    let alone = CombinedControl(
+      tui: StreamingTUI(changes: tuiStream), sides: [tmuxSide(Side(binaryPath: "tmux"))])
+    #expect(alone.changes == nil, "a TUI's own stream is never the host's")
+  }
+
+  @Test("with no TUI, a change on the core reads the core again and keeps tmux's last tree")
+  func coreAsPrimaryReadsItsNews() async throws {
+    let core = PushingCore(read: .success(coreTree))
+    let tmux = CountingTUI(read: .success(tmuxTree))
+    let combined = try #require(
+      CombinedControl.joining(tui: nil, sides: [coreSide(core), tmuxSide(tmux)]))
+    _ = try await combined.snapshot()
+
+    await core.moved(to: .success(tree("core:workspace", panes: ["core:t2"])))
+    let tree = try await combined.changedSnapshot()
+    #expect(tree.allPanes.map(\.id) == ["core:t2", "tmux:%0", "tmux:%1"])
+    #expect(await tmux.snapshots == 1, "a core event must not poll tmux")
+  }
+}
+
+/// A TUI that, oddly, has a change stream of its own.
+private struct StreamingTUI: HerdrControl {
+  let changes: AsyncStream<Void>?
+  var binaryPath: String { "herdr" }
+  func snapshot() async throws -> SessionTree { tuiTree }
+  func availability() async -> HerdrAvailability { .notInstalled }
+  func attachCommand(for pane: Pane) -> String? { nil }
+  func sendText(paneID: String, text: String) async throws {}
+  func submitText(paneID: String, text: String) async throws {}
+  func sendKeys(paneID: String, keys: [PaneKey]) async throws {}
+  func readPanes(ids: [String], lines: Int) async throws -> [String: [String]] { [:] }
+  func readScreen(of pane: Pane, lines: Int) async throws -> PaneScreen {
+    PaneScreen.sanitised("", lines: lines)
+  }
+  func perform(_ action: PaneAction, on paneID: String) async throws {}
+  func rename(_ target: RenameTarget, to label: String) async throws {}
+}
