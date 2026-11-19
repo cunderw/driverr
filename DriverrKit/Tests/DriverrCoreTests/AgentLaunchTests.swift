@@ -37,6 +37,14 @@ struct AgentLaunchTests {
     #expect(launch.typedLine == "claude -- 'a b c d'")
   }
 
+  /// herdr refuses any argument with a `char::is_control` character, C1 included, with
+  /// `invalid_agent_argument`, after the workspace exists.
+  @Test("a C1 control character or DEL in the message is a space too")
+  func c1Control() {
+    let launch = AgentLaunch(kind: .claude, directory: "/srv", prompt: "a\u{9B}b\u{7F}c\u{85}d")
+    #expect(launch.typedPrompt == "a b c d")
+  }
+
   @Test("a line over 1023 bytes is too long, and the check says so")
   func lengthCap() throws {
     let fixed = "claude -- ''".utf8.count

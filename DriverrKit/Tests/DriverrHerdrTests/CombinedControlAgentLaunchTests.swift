@@ -70,6 +70,21 @@ struct CombinedControlAgentLaunchTests {
     #expect(await launches(core) == [launch])
   }
 
+  @Test("a TUI with no session and nothing else that can is still asked, for herdr's own error")
+  func tuiWithNoSessionAlone() async throws {
+    let tui = FakeControl(
+      tree: .empty, failure: .herdrCommandFailed(reason: "no server"),
+      availability: .serverNotRunning(version: "0.9.5"), canStartAgent: true)
+    let core = FakeControl(tree: tree)
+    let combined = CombinedControl(tui: tui, core: core)
+    _ = try await combined.snapshot()
+
+    #expect(combined.canStartAgent)
+    _ = try await combined.startAgent(launch)
+
+    #expect(await launches(tui) == [launch])
+  }
+
   @Test("an agent and a terminal are started by different sides: the TUI starts no terminal")
   func separateFromStarter() {
     let combined = CombinedControl(

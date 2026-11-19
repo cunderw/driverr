@@ -475,13 +475,16 @@ public struct CombinedControl: HerdrControl {
   /// Started by the first control that can: the TUI, which puts a workspace on the desk, then a
   /// core, then tmux. Not `starter`, which never picks the TUI.
   ///
-  /// **A TUI whose last poll found no session is passed over**, because its `workspace create`
-  /// would fail with a core or tmux beside it that is up. **One side only**: a failure is the
+  /// **A TUI whose last poll found no session goes last**, because its `workspace create` would
+  /// fail with a core or tmux beside it that is up. With no other side that can, it is still
+  /// asked, so herdr's own error is the answer. **One side only**: a failure is the
   /// answer and no other side is tried, because a failure after a pane opened would open a
   /// second.
   public func startAgent(_ launch: AgentLaunch) async throws -> String {
     var candidates = launchers
-    if primaryIsTUI, case .noSession = await memory.tui { candidates.removeFirst() }
+    if primaryIsTUI, case .noSession = await memory.tui {
+      candidates.append(candidates.removeFirst())
+    }
     guard let launcher = candidates.first(where: { $0.canStartAgent }) else {
       throw AppError.herdrCommandFailed(reason: "This host cannot start an agent.")
     }

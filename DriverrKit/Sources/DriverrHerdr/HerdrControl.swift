@@ -163,15 +163,20 @@ public protocol HerdrControl: Sendable {
   /// the id of the pane it runs in.
   ///
   /// The folder is resolved on the host first, so a missing one is
-  /// `AppError.directoryUnavailable` and opens nothing. Once a pane is open, a failure is
-  /// `AppError.agentDidNotStart` naming that pane, which stays open. A message too long to type
-  /// is `AppError.agentPromptTooLong`, before anything runs. See `AgentLaunch`.
+  /// `AppError.directoryUnavailable` and opens nothing. A message too long to type is
+  /// `AppError.agentPromptTooLong`, before anything runs. Once a pane is open, a failure the
+  /// backend can see is `AppError.agentDidNotStart` naming that pane, which stays open. See
+  /// `AgentLaunch`.
+  ///
+  /// **Only herdr's TUI checks that the agent came up.** A core and tmux type the command and
+  /// return the pane, so a `claude` or `codex` that is not installed there still returns a pane
+  /// id, and the shell's own error is on its screen.
   ///
   /// An agent stopped at a startup question, such as Claude Code's folder trust check, has
   /// started: the question is for the person, in that pane.
   ///
-  /// It can take about 10 s on herdr's TUI, which waits for the agent. See
-  /// `CLIControl.agentStartTimeoutMilliseconds`.
+  /// It can take about 13 s on herdr's TUI, which waits for the agent. See
+  /// `CLIControl.startAgent(_:)`.
   func startAgent(_ launch: AgentLaunch) async throws -> String
 
   /// Makes the next `snapshot()` ask every side it would skip on a timer.
@@ -568,8 +573,10 @@ public struct CLIControl: HerdrControl {
   /// The message goes as `-- -- <message>`: the first `--` ends herdr's options, and herdr types
   /// the second, so a message that starts with `-` stays a message.
   ///
-  /// **The call can take about 10 s**: with a first message in a folder the agent trusts, and
-  /// for a program that is not installed. See `agentStartTimeoutMilliseconds`.
+  /// **The call can take about 13 s**: with a first message in a folder the agent trusts, and
+  /// for a program that is not installed. `agent start` waits up to
+  /// `agentStartTimeoutMilliseconds`, after herdr retries a busy pane for up to 2 s, and the
+  /// folder check, `workspace create` and `agent get` each add a round trip.
   public func startAgent(_ launch: AgentLaunch) async throws -> String {
     try launch.checkLength()
     let directory = try await resolvedDirectory(for: launch)
@@ -618,7 +625,7 @@ public struct CLIControl: HerdrControl {
   static let agentStartTimeoutMilliseconds = 10_000
 
   /// Whether herdr detects an agent of this kind in the pane: `agent get` by pane id. A shell
-  /// pane is `agent_not_found`. Measured on #97.
+  /// pane is `agent_not_found`. Measured on #97 against herdr 0.9.5.
   private func hasAgent(_ kind: AgentLaunch.Kind, inPane paneID: String) async -> Bool {
     guard let output = try? await execute("agent get \(shellQuoted(paneID))"),
       let answer = try? JSONDecoder().decode(
@@ -650,9 +657,7 @@ public struct CLIControl: HerdrControl {
     func allowed(_ character: Character) -> Bool {
       character.isASCII && (character.isLowercase || character.isNumber || character == "_")
     }
-    // At most 16, so the folder keeps 15 of the 32 whatever herdr's ids become.
-    let tag = String(
-      paneID.lowercased().filter { $0.isASCII && ($0.isLetter || $0.isNumber) }.prefix(16))
+    let tag = paneTag(paneID)
     var slug = ""
     for character in folder.lowercased() {
       if allowed(character) {
@@ -666,6 +671,25 @@ public struct CLIControl: HerdrControl {
     slug = String(slug.prefix(31 - tag.count))
     while slug.hasSuffix("-") { slug.removeLast() }
     return "\(slug)-\(tag)"
+  }
+
+  /// The pane id as the end of an agent name, one-to-one, in at most 16 characters.
+  ///
+  /// An id of lowercase letters, digits and `:` keeps them, with `:` as `-`. No such id holds a
+  /// `-`, so two ids never give one tag. Any other id, or one that would run past 16, is `_` and
+  /// its 32-bit FNV-1a in hex. `_` starts no tag of the first form. Lowercasing would have made
+  /// `w2:p1P3` and `w2P1:p3` one tag.
+  static func paneTag(_ paneID: String) -> String {
+    let plain = paneID.allSatisfy {
+      $0 == ":" || ($0.isASCII && ($0.isLowercase || $0.isNumber))
+    }
+    if plain, !paneID.isEmpty, paneID.count <= 16 {
+      return paneID.replacingOccurrences(of: ":", with: "-")
+    }
+    var hash: UInt32 = 2_166_136_261
+    for byte in paneID.utf8 { hash = (hash ^ UInt32(byte)) &* 16_777_619 }
+    let hex = String(hash, radix: 16)
+    return "_" + String(repeating: "0", count: 8 - hex.count) + hex
   }
 
   /// The `code` of herdr's refusal, from either stream. See `refusal(in:)`.

@@ -21,11 +21,12 @@ private final class LaunchHost: @unchecked Sendable {
   /// What `agent get <pane>` answers: by default no agent, as for a shell, measured on #97.
   var agentGet = LaunchHost.refusal("agent_not_found", "agent target w2:p1 not found")
 
-  /// `agent get`'s answer for a pane with this agent, trimmed from herdr 0.9.5's.
+  /// `agent get`'s answer for a pane with this agent, trimmed from herdr 0.9.5's as recorded on
+  /// #97.
   static func found(_ agent: String) -> CommandResult {
     CommandResult(
       standardOutput: #"{"id":"cli:agent:get","result":{"agent":{"agent":"\#(agent)","#
-        + #""agent_status":"working","name":"my-app-w2p1","pane_id":"w2:p1"}}}"#,
+        + #""agent_status":"working","name":"my-app-w2-p1","pane_id":"w2:p1"}}}"#,
       standardError: "", exitStatus: 0)
   }
 
@@ -89,7 +90,7 @@ struct CLIControlAgentLaunchTests {
       host.commands == [
         AgentLaunch.resolveCommand(for: "~/my app"),
         "herdr workspace create --cwd '/srv/my app' --label 'my app' --no-focus",
-        "herdr agent start my-app-w2p1 --kind claude --pane 'w2:p1' --timeout 10000 -- -- 'fix the build'",
+        "herdr agent start my-app-w2-p1 --kind claude --pane 'w2:p1' --timeout 10000 -- -- 'fix the build'",
       ])
   }
 
@@ -98,7 +99,7 @@ struct CLIControlAgentLaunchTests {
     let host = LaunchHost()
     _ = try await CLIControl(run: host.runner).startAgent(
       AgentLaunch(kind: .codex, directory: "/srv/my app"))
-    #expect(host.commands.last == "herdr agent start my-app-w2p1 --kind codex --pane 'w2:p1' --timeout 10000")
+    #expect(host.commands.last == "herdr agent start my-app-w2-p1 --kind codex --pane 'w2:p1' --timeout 10000")
   }
 
   @Test("the message herdr types is the one tmux and a core type: one line, no tabs")
@@ -140,12 +141,13 @@ struct CLIControlAgentLaunchTests {
   func notReadyIsStarted() async throws {
     let host = LaunchHost()
     host.agentStart = LaunchHost.refusal(
-      "agent_not_ready", "agent my-app-w2p1 is blocked during startup and is not ready for prompts")
+      "agent_not_ready", "agent my-app-w2-p1 is blocked during startup and is not ready for prompts")
     #expect(try await CLIControl(run: host.runner).startAgent(launch) == "w2:p1")
   }
 
   /// Measured on #97 with a kind whose program is not installed: the shell says 127, and
-  /// `agent start` waits out its 30 s and answers this.
+  /// `agent start` waits out its timeout and answers this. That run used herdr's default
+  /// 30 s; this command passes `--timeout 10000`.
   @Test("an agent that does not start leaves the pane open and names it")
   func halfFailure() async {
     let host = LaunchHost()
@@ -210,17 +212,26 @@ struct CLIControlAgentLaunchTests {
   @Test(
     "an agent's name is the folder as herdr allows it, then the pane",
     arguments: [
-      ("my app", "w2:p1", AgentLaunch.Kind.claude, "my-app-w2p1"),
-      ("Driverr_Kit!", "w10:p3", .claude, "driverr_kit-w10p3"),
-      ("2026 notes", "w2:p1", .codex, "codex-2026-notes-w2p1"),
-      ("/", "w2:p1", .claude, "claude-w2p1"),
-      ("über", "wJ:pK", .claude, "ber-wjpk"),
-      (String(repeating: "a", count: 40), "w2:p1", .claude, String(repeating: "a", count: 27) + "-w2p1"),
-      ("app", String(repeating: "p", count: 40), .claude, "app-" + String(repeating: "p", count: 16)),
+      ("my app", "w2:p1", AgentLaunch.Kind.claude, "my-app-w2-p1"),
+      ("Driverr_Kit!", "w10:p3", .claude, "driverr_kit-w10-p3"),
+      ("2026 notes", "w2:p1", .codex, "codex-2026-notes-w2-p1"),
+      ("/", "w2:p1", .claude, "claude-w2-p1"),
+      ("über", "wJ:pK", .claude, "ber-_4197029f"),
+      (String(repeating: "a", count: 40), "w2:p1", .claude, String(repeating: "a", count: 26) + "-w2-p1"),
+      ("app", String(repeating: "p", count: 40), .claude, "app-_037c0f65"),
     ])
   func agentName(folder: String, paneID: String, kind: AgentLaunch.Kind, expected: String) {
     let name = CLIControl.agentName(folder: folder, paneID: paneID, kind: kind)
     #expect(name == expected)
     #expect(name.count <= 32)
+  }
+
+  @Test("two pane ids that differ only in case and colon place give two names")
+  func tagsDoNotCollide() {
+    let first = CLIControl.agentName(folder: "app", paneID: "w2:p1P3", kind: .claude)
+    let second = CLIControl.agentName(folder: "app", paneID: "w2P1:p3", kind: .claude)
+    #expect(first == "app-_312398b4")
+    #expect(second == "app-_9ee105ca")
+    #expect(CLIControl.paneTag("w2:p13") != CLIControl.paneTag("w2p1:3"))
   }
 }

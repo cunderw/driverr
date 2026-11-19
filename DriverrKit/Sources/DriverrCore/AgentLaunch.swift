@@ -56,15 +56,24 @@ public struct AgentLaunch: Hashable, Sendable {
     return "\(kind.command) -- \(HookInstallCommands.loginShellQuoted(typedPrompt))"
   }
 
-  /// The message as every backend sends it: one line, with each control character and line
-  /// break a space.
+  /// The message as every backend sends it: one line, with each control character (Unicode
+  /// category Cc, C0, DEL and C1) and each line break a space.
   ///
   /// A typed tab starts completion in an interactive shell, and a typed line break ends a
-  /// canonical line and puts the shell at a continuation prompt. herdr's TUI types the message
-  /// too, so it gets the same text.
+  /// canonical line and puts the shell at a continuation prompt. herdr refuses any argument
+  /// that holds a control character with `invalid_agent_argument`, after the workspace exists.
+  ///
+  /// herdr's TUI gets this text but types it with its own POSIX quoting (`shell_quote` in
+  /// herdr's `src/app/agent_resume.rs`, v0.9.5), not `typedLine`'s. A fish shell reads `\\`,
+  /// `\'` and a trailing `\` in that quoting differently, so on a herdr pane whose shell is
+  /// fish, a message with backslashes can arrive changed.
   public var typedPrompt: String? {
     prompt.map { prompt in
-      String(prompt.map { $0.unicodeScalars.contains { $0.value < 0x20 || $0.value == 0x7F } ? " " : $0 })
+      String(
+        prompt.map { character in
+          character.unicodeScalars.contains { $0.properties.generalCategory == .control }
+            ? " " : character
+        })
     }
   }
 
