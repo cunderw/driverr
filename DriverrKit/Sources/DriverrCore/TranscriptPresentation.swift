@@ -299,7 +299,7 @@ public struct TranscriptNotice: Equatable, Sendable {
   /// the hold, so the two never disagree. No Retry: the watcher still polls for the file.
   /// Every other pane gets `init(absence:agentStatus:)`.
   public init(absence: TranscriptAbsence, agentStatus: AgentStatus?, hold: PaneComposerHold?) {
-    guard hold == .agentAsksOnScreen, absence.awaitsFirstFile, false /* STUB */ else {
+    guard hold == .agentAsksOnScreen /* NAIVE */ else {
       self.init(absence: absence, agentStatus: agentStatus)
       return
     }
