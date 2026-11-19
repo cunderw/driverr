@@ -713,6 +713,7 @@ final class FirstAnswer<Value: Sendable>: @unchecked Sendable {
   static func within(
     _ limit: Duration,
     otherwise fallback: Value,
+    sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) },
     _ start: @escaping @Sendable (FirstAnswer<Value>) -> Void
   ) async -> Value {
     let answer = FirstAnswer<Value>()
@@ -720,7 +721,7 @@ final class FirstAnswer<Value: Sendable>: @unchecked Sendable {
       answer.lock.withLock { answer.waiting = continuation }
       start(answer)
       Task {
-        try? await Task.sleep(for: limit)
+        try? await sleep(limit)
         answer.resume(fallback)
       }
     }

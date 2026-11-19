@@ -8,9 +8,14 @@ import Foundation
 /// and writes whatever notification a test hands it.
 ///
 /// Like tmux, it runs a line's commands in order and skips the rest after one fails.
+///
+/// **Window sizes are modelled as tmux 3.7c keeps them with a desk attached that views none of
+/// the windows**: `refresh-client -C @W:CxR` sizes `@W`, and `@W:` alone hands it back without
+/// changing its size. Every window starts at `150x43`.
 final class FakeTmuxControlStream: HerdrStream, @unchecked Sendable {
   struct Pane {
     var window: String
+    var session = "$0"
     var state: TmuxPaneState
     var history: [String] = []
     var screen: [String]
@@ -26,7 +31,12 @@ final class FakeTmuxControlStream: HerdrStream, @unchecked Sendable {
   private var received: [String] = []
   private var typed: [String: Data] = [:]
   private var closes = 0
-  private var refusesWindowSizes = false
+  /// What tmux answers a window size with, while it refuses them, and how many more it refuses.
+  private var windowSizeRefusal: (message: String, remaining: Int)?
+  private var windowSizes: [String: String] = [:]
+  /// Lines that wait for `resumeHeld()`: the first one holding `heldText`, and every line after.
+  private var heldText: String?
+  private var held: [String] = []
   private var isSilent = false
   /// Pane output tmux had queued before a paint line ran, written ahead of its replies.
   private var staleOutput: [String: String] = [:]
@@ -35,11 +45,11 @@ final class FakeTmuxControlStream: HerdrStream, @unchecked Sendable {
   /// Pane output written ahead of a window size's reply.
   private var sizingOutput: (pane: String, text: String)?
 
-  init(panes: [String: Pane]) {
+  init(panes: [String: Pane], session: String = "$0") {
     self.panes = panes
     (output, continuation) = AsyncThrowingStream.makeStream(of: Data.self, throwing: (any Error).self)
     // What tmux writes at attach: the attach line's own blocks, which nobody asked for.
-    continuation.yield(Data("%begin 1 1 0\n%end 1 1 0\n%session-changed $0 main\n".utf8))
+    continuation.yield(Data("%begin 1 1 0\n%end 1 1 0\n%session-changed \(session) main\n".utf8))
   }
 
   var end: ProcessEnd? { get async { nil } }
@@ -49,7 +59,33 @@ final class FakeTmuxControlStream: HerdrStream, @unchecked Sendable {
   var closeCount: Int { lock.withLock { closes } }
   func keys(for pane: String) -> Data { lock.withLock { typed[pane] ?? Data() } }
 
-  func refuseWindowSizes() { lock.withLock { refusesWindowSizes = true } }
+  /// Window sizes are refused with `message`, as tmux before 3.3 refuses every one, `times`
+  /// times.
+  func refuseWindowSizes(with message: String = "bad size argument", times: Int = .max) {
+    lock.withLock { windowSizeRefusal = (message, times) }
+  }
+
+  /// The size tmux would report for `window`.
+  func size(of window: String) -> String? {
+    lock.withLock { windowSizes[window] ?? (isWindow(window) ? Self.windowSize : nil) }
+  }
+
+  /// The size every window has until someone sizes it.
+  static let windowSize = "150x43"
+
+  /// From the first line holding `text`, lines are recorded and not run until `resumeHeld()`,
+  /// as on a link where the answers are on their way.
+  func hold(linesContaining text: String) { lock.withLock { heldText = text } }
+
+  /// Runs the held lines, in order, and stops holding.
+  func resumeHeld() {
+    let lines: [String] = lock.withLock {
+      heldText = nil
+      defer { held = [] }
+      return held
+    }
+    for line in lines { execute(line) }
+  }
   /// From here on, lines are recorded and nothing is answered, as on a link that went quiet.
   func goSilent() { lock.withLock { isSilent = true } }
   func setPane(_ id: String, _ pane: Pane?) { lock.withLock { panes[id] = pane } }
@@ -82,11 +118,23 @@ final class FakeTmuxControlStream: HerdrStream, @unchecked Sendable {
   }
 
   private func run(_ line: String) {
-    let silent = lock.withLock {
+    let runs: Bool = lock.withLock {
       received.append(line)
-      return isSilent
+      if isSilent { return false }
+      if let heldText, line.contains(heldText) || !held.isEmpty {
+        held.append(line)
+        return false
+      }
+      return true
     }
-    if silent { return }
+    if runs { execute(line) }
+  }
+
+  private func isWindow(_ window: String) -> Bool {
+    windowSizes[window] != nil || panes.values.contains { $0.window == window }
+  }
+
+  private func execute(_ line: String) {
     let commands = line.components(separatedBy: " ; ")
     let paintedPane = commands.count == 3 ? Self.target(of: commands[0]) : nil
     if let paintedPane, let stale = lock.withLock({ staleOutput[paintedPane] }) {
@@ -138,10 +186,19 @@ final class FakeTmuxControlStream: HerdrStream, @unchecked Sendable {
     switch name {
     case "refresh-client":
       let size = words.last ?? ""
-      if size.hasPrefix("@"), lock.withLock({ refusesWindowSizes }) {
-        return (["bad size argument"], true)
+      guard size.hasPrefix("@") else { return ([], false) }
+      return lock.withLock {
+        if let refusal = windowSizeRefusal, refusal.remaining > 0 {
+          windowSizeRefusal?.remaining -= 1
+          return ([refusal.message], true)
+        }
+        let parts = size.split(separator: ":", omittingEmptySubsequences: false)
+        // A missing window is not an error to tmux 3.7c, and `@W:` changes no size here.
+        if parts.count == 2, !parts[1].isEmpty, isWindow(String(parts[0])) {
+          windowSizes[String(parts[0])] = String(parts[1])
+        }
+        return ([], false)
       }
-      return ([], false)
     case "send-keys":
       guard let pane = Self.target(of: command), lock.withLock({ panes[pane] }) != nil else {
         return (["can't find pane"], true)
@@ -152,6 +209,10 @@ final class FakeTmuxControlStream: HerdrStream, @unchecked Sendable {
       return ([], false)
     case "display-message", "capture-pane":
       let id = Self.target(of: command) ?? ""
+      if name == "display-message", id.hasPrefix("@") {
+        // tmux 3.7c prints a missing window's size as `x`.
+        return ([size(of: id) ?? "x"], false)
+      }
       guard let pane = lock.withLock({ panes[id] }) else {
         // `display-message`'s target may fail: tmux 3.7c answers a missing pane with an empty
         // line, not an error.
@@ -159,6 +220,9 @@ final class FakeTmuxControlStream: HerdrStream, @unchecked Sendable {
         return (["can't find pane: \(id)"], true)
       }
       if name == "display-message" {
+        if command.hasSuffix("'#{pane_id} #{window_id} #{session_id}'") {
+          return (["\(id) \(pane.window) \(pane.session)"], false)
+        }
         if command.hasSuffix("'#{pane_id} #{window_id}'") { return (["\(id) \(pane.window)"], false) }
         return ([Self.stateLine(pane.state)], false)
       }

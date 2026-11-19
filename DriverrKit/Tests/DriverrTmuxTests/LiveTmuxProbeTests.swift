@@ -24,7 +24,11 @@
     .serialized
   )
   struct LiveTmuxProbeTests {
-    private static let realTmux = ["/opt/homebrew/bin/tmux", "/usr/local/bin/tmux", "/usr/bin/tmux"]
+    /// `DRIVERR_LIVE_TMUX_BINARY` runs the suite against another tmux, such as a 3.2a built from
+    /// its release tarball.
+    private static let realTmux =
+      ([ProcessInfo.processInfo.environment["DRIVERR_LIVE_TMUX_BINARY"]].compactMap { $0 }
+      + ["/opt/homebrew/bin/tmux", "/usr/local/bin/tmux", "/usr/bin/tmux"])
       .first { FileManager.default.isExecutableFile(atPath: $0) }
 
     /// Runs `body` against a control on a server of its own, and kills the server after, whether
