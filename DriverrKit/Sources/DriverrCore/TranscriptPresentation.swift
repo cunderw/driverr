@@ -328,7 +328,7 @@ public struct TranscriptNotice: Equatable, Sendable {
       self.init(
         title: "No directory for this pane",
         message:
-          "Driverr finds a session file from the pane's working directory. herdr has not "
+          "Driverr finds a session file from the pane's working directory. The host has not "
           + "reported one for this pane.",
         symbolName: "questionmark.folder"
       )

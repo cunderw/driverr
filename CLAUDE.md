@@ -1,11 +1,12 @@
 # Driverr — repo conventions
 
-Native iOS/iPadOS SSH client built around [herdr](https://github.com/herdrdev/herdr).
-Monorepo: SwiftUI app in `Driverr/`, shared kit in `DriverrKit/` (SwiftPM package, six
-modules). `DriverrCore` holds dependency-free domain types. `DriverrSSH` confines
+Native iOS/iPadOS SSH client built around [herdr](https://github.com/herdrdev/herdr) and
+tmux. Monorepo: SwiftUI app in `Driverr/`, shared kit in `DriverrKit/` (SwiftPM package,
+seven modules). `DriverrCore` holds dependency-free domain types. `DriverrSSH` confines
 swift-nio-ssh, `DriverrTerm` confines SwiftTerm, `DriverrHerdr` confines herdr's wire
-format, `DriverrHC` confines herdr-core's, and `DriverrTranscript` reads agent session
-files. No backend of our own: Driverr talks directly to the user's own machines over SSH.
+format, `DriverrHC` confines herdr-core's, `DriverrTmux` confines tmux's, and
+`DriverrTranscript` reads agent session files. No backend of our own: Driverr talks
+directly to the user's own machines over SSH.
 
 **Not a config surface.** Global settings are theme, font, font size, whether a captured
 pane screen wraps its long lines, whether Driverr draws Live Activities, and whether an
@@ -14,8 +15,8 @@ card drawn outside the app has to be refusable from inside it. The tmux resize i
 list because without it a desk-width tmux pane is unusable on the phone, and the resize
 changes the desk's window, so it has to be refusable. A seventh setting still has to argue
 its case. Driverr is **not a paid product**. It is described as an SSH client everywhere:
-herdr's own persistence covers reattachment, so there is no mosh support and none is
-planned.
+herdr's and tmux's own persistence covers reattachment, so there is no mosh support and
+none is planned.
 
 [`CONTRIBUTING.md`](CONTRIBUTING.md) owns the workflow: issues, labels, branches, pull
 requests, the test commands, which tests to run, and the warnings check. **Read its
@@ -25,20 +26,21 @@ This file holds the rules and traps on top of that.
 ## Ground rules
 
 - **Layering: SwiftNIO SSH types never leave `DriverrSSH`; herdr wire types never leave
-  `DriverrHerdr`; herdr-core wire types never leave `DriverrHC`.** All three map to plain
-  `DriverrCore` structs at the module boundary. This keeps stores testable without a live
-  SSH connection or herdr socket, and it confines upstream churn to one file each. In
+  `DriverrHerdr`; herdr-core wire types never leave `DriverrHC`; tmux wire types never
+  leave `DriverrTmux`.** All four map to plain `DriverrCore` structs at the module
+  boundary. This keeps stores testable without a live SSH connection, herdr socket or tmux
+  server, and it confines upstream churn to one file each. In
   `DriverrSSH` the only production file that may
   `import NIOSSH` is `NIOSSHTransport.swift`, which is also where every NIOSSH error is
   mapped to `AppError`. Verify with
   `grep -rn --include='*.swift' '^import NIOSSH' Driverr DriverrKit/Sources`: exactly one
   hit, `DriverrKit/Sources/DriverrSSH/NIOSSHTransport.swift`, is the passing result.
 - **`DriverrHC` and `DriverrTmux` import `DriverrHerdr`, never the reverse.** Both need
-  `HerdrControl`, and `DriverrHC` needs `HerdrStream`. tmux's formats never leave
-  `DriverrTmux`. A host with more than one of the TUI, a core and tmux is one
-  `CombinedControl`, because two sessions applying snapshots would wipe each other's caches.
-  It holds the TUI, or the first side found when there is no TUI, and a `Side` per other
-  control, and routes each call by the id's prefix (`CorePaneID.prefix`, `TmuxID.prefix`).
+  `HerdrControl`, and `DriverrHC` needs `HerdrStream`. A host with more than one of the
+  TUI, a core and tmux is one `CombinedControl`, because two sessions applying snapshots
+  would wipe each other's caches. It holds the TUI, or the first side found when there is
+  no TUI, and a `Side` per other control, and routes each call by the id's prefix
+  (`CorePaneID.prefix`, `TmuxID.prefix`).
   Discovery alone picks what a host serves; there is no per-host switch.
 - **`SessionModel.tree` leaves out a machine another connected host shows;
   `reportedTree` is what the host said.** A core lists the machines it added, and one that is

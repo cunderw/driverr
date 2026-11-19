@@ -325,7 +325,7 @@ struct PaneComposerStateTests {
     let status = state.status(asOf: now.addingTimeInterval(40))
 
     #expect(status?.message == "Sent 40s ago")
-    #expect(status?.detail == "herdr still reports Claude as waiting.")
+    #expect(status?.detail == "The pane still reports Claude as waiting.")
     #expect(status?.tone == .progress)
     #expect(status?.offersRetry == false)
     #expect(state.phase == .sent, "ageing is a sentence, not a state change")

@@ -131,6 +131,17 @@ by tests: the unit tier's tests are a small part of a much longer invocation. A
 targeted unit run buys nothing and risks the empty-run trap below. For the same reason,
 `test-without-building` saves nothing and adds a stale-bundle risk.
 
+**The live tmux probe is an extra run, not a filter of the kit tier.** It is off in every
+tier, because it needs tmux installed on your Mac. Run it after a change to the commands
+`DriverrTmux` sends:
+
+```sh
+DRIVERR_LIVE_TMUX=1 swift test --package-path DriverrKit --filter LiveTmuxProbe
+```
+
+It starts a tmux server of its own and stops it at the end, so it does not touch your
+sessions.
+
 **The unfiltered UI suite is the most expensive thing in this repo.** It is for a release
 cut or a deliberate request, not for routine verification, and not for "make sure nothing
 else broke". Run the classes your diff reaches, then **say which ones you ran and which you

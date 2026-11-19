@@ -38,15 +38,17 @@ public enum AppError: Error, Hashable, Sendable, LocalizedError {
   ///
   /// A tmux pane, until the live tmux terminal lands. Its chat and its composer still work.
   case paneTerminalUnavailable
-  /// herdr ran and refused, or failed. Carries what herdr itself said.
+  /// herdr, herdr-core or tmux ran and refused, or failed. Carries what that program said.
   case herdrCommandFailed(reason: String)
-  /// The host was reached and the SSH handshake completed, but herdr never answered.
+  /// The host was reached and the SSH handshake completed, but the search for herdr and tmux
+  /// never finished. The sentence names both, because the search has not yet said which.
   ///
   /// Not `connectionFailed`, whose "Could not reach <host>" would contradict itself and send
   /// the reader to check the network. Not `herdrCommandFailed`, which would drop the host
   /// name and the retryable shape.
   case herdrDidNotAnswer(host: String)
-  /// herdr answered with something Driverr could not parse, most likely a newer protocol.
+  /// herdr, herdr-core or tmux answered with something Driverr could not parse, most likely a
+  /// newer protocol. The sentence says "the host", because all three throw it.
   case herdrResponseUnreadable
   /// A transcript Driverr had located could not be read off the host: deleted since, or not
   /// readable by the login account. A file that ends mid-record or holds no conversation is
@@ -105,9 +107,9 @@ public enum AppError: Error, Hashable, Sendable, LocalizedError {
     case let .herdrCommandFailed(reason):
       reason
     case let .herdrDidNotAnswer(host):
-      "Reached \(host), but herdr did not answer."
+      "Reached \(host), but it stopped answering while Driverr looked for herdr and tmux."
     case .herdrResponseUnreadable:
-      "herdr answered with something this version of Driverr does not understand."
+      "The host answered with something this version of Driverr does not understand."
     case let .transcriptUnreadable(reason):
       // The reason alone. `TranscriptNotice(failure:)`'s title already says the file could
       // not be read.

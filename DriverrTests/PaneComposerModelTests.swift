@@ -424,7 +424,7 @@ struct PaneComposerModelTests {
     clock.advance(by: 40)
 
     #expect(model.status?.message == "Sent 40s ago")
-    #expect(model.status?.detail == "herdr still reports Claude as waiting.")
+    #expect(model.status?.detail == "The pane still reports Claude as waiting.")
     #expect(model.state.phase == .sent)
   }
 
