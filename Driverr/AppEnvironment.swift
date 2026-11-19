@@ -76,9 +76,13 @@ struct AppEnvironment {
   /// `makeImageUpload`. A UI run gets `FakeHookHost`, because the fake transport has no `sh`.
   var makeHookRunners: @Sendable (ConnectionCoordinator) -> HookInstallRunners
 
-  /// The runner the key install sends its command through. Per link. A UI run gets
-  /// `FakeAuthorizedKeysHost`.
-  var makeKeyInstallRunner: @Sendable (ConnectionCoordinator) -> CommandRunner
+  /// The runner for a command whose builder already wraps it in `sh -c`: the key install
+  /// (`AuthorizedKeyInstallCommands`) and the folder browser (`DirectoryListing`). Per link.
+  ///
+  /// It hands the command to the login shell as it is. Wrapping it again, as
+  /// `SSHTransport.posixRunner` does, would send two `sh -c` layers. A UI run gets
+  /// `FakeAuthorizedKeysHost` and `FakeDirectoryHost`.
+  var makeHostCommandRunner: @Sendable (ConnectionCoordinator) -> CommandRunner
 
   /// Where the composer's saved prompts are kept. See `UserDefaultsSavedPromptStore`.
   var savedPrompts: any SavedPromptStore
@@ -142,8 +146,8 @@ struct AppEnvironment {
       )
     },
     // With no input, for the same deadline: the key install sheet cannot be left while it
-    // is busy either. The install command reads nothing from its standard input.
-    makeKeyInstallRunner: { coordinator in
+    // is busy either. Neither the install nor a listing reads its standard input.
+    makeHostCommandRunner: { coordinator in
       { try await coordinator.run($0, standardInput: Data()) }
     },
     savedPrompts: UserDefaultsSavedPromptStore()
@@ -265,7 +269,8 @@ struct AppEnvironment {
         // The store tour's larger session, so its pane switcher shot is a full grid. The
         // seed's panes and its blocked pair are unchanged inside it.
         if isDemoTranscript { return FakeControl(script: FakeControl.storeTourScript) }
-        return FakeControl(script: FakeControl.blockingScript)
+        // Starts agents, so the host screen offers New Agent. See `FakeControl.startAgent`.
+        return FakeControl(script: FakeControl.blockingScript, canStartAgent: true)
       },
       makeTranscriptReader: { _ in
         TranscriptReader(run: AppEnvironment.launchRunner)
@@ -307,7 +312,13 @@ struct AppEnvironment {
       // In memory, so a decline cannot reach the next launch.
       hookOffers: InMemoryHookOfferStore(),
       makeHookRunners: { _ in hookFixture.runners },
-      makeKeyInstallRunner: { _ in keyFixture.run },
+      // A listing goes to the folder fixture and anything else to the key fixture.
+      makeHostCommandRunner: { _ in
+        { command in
+          if let listing = directoryFixture.answer(command) { return listing }
+          return try await keyFixture.run(command)
+        }
+      },
       // In memory, so one test's save cannot reach the next launch. See `seededSavedPrompts`.
       savedPrompts: InMemorySavedPromptStore(seededSavedPrompts)
     )
@@ -356,6 +367,27 @@ struct AppEnvironment {
     lines: ["ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFakeLaptopKeyForUITestsOnly laptop"],
     failure: isKeyInstallFailing ? (74, "sh: line 9: /home/uitest/.ssh/authorized_keys: Read-only file system") : nil,
     delay: isKeyInstallSlow ? .milliseconds(1500) : .zero
+  )
+
+  // MARK: - New Agent
+
+  /// The folders the New Agent sheet's browser lists, under the key fixture's home. The seeded
+  /// session's pane folders are here, so a recent folder can be browsed too. `packages` holds
+  /// more than a listing keeps, and `Documents` cannot be entered.
+  static let directoryFixture = FakeDirectoryHost(
+    home: "/home/uitest",
+    folders: [
+      "/home/uitest": ["dev", "wiki", "Documents"],
+      "/home/uitest/dev": ["driverr", "tower", "monorepo"],
+      "/home/uitest/dev/driverr": ["Driverr", "DriverrKit", "docs", "scripts"],
+      "/home/uitest/dev/tower": ["src", "tests"],
+      "/home/uitest/dev/monorepo": ["packages"],
+      "/home/uitest/dev/monorepo/packages": (1...(DirectoryListing.entryLimit + 20)).map {
+        String(format: "pkg-%03d", $0)
+      },
+      "/home/uitest/wiki": ["site"],
+    ],
+    unavailable: ["/home/uitest/Documents"]
   )
 
   // MARK: - Driverr's agent hooks

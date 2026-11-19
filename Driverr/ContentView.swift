@@ -1,4 +1,5 @@
 import DriverrCore
+import DriverrHerdr
 import DriverrTerm
 import PhotosUI
 import SwiftUI
@@ -97,6 +98,13 @@ private struct KeySheetRequest: Identifiable {
   var id: DriverrCore.Host.ID { host.id }
 }
 
+/// Which host the New Agent sheet is for, and the folders its panes were in when it opened.
+private struct NewAgentRequest: Identifiable {
+  let host: DriverrCore.Host
+  let recentFolders: [String]
+  var id: DriverrCore.Host.ID { host.id }
+}
+
 /// The host list, and the way into everything else.
 struct ContentView: View {
   @Environment(\.appEnvironment) private var environment
@@ -134,6 +142,8 @@ struct ContentView: View {
   @State private var hookSheet: HookSheetRequest?
   /// The key install sheet, opened from the host screen.
   @State private var keySheet: KeySheetRequest?
+  /// The New Agent sheet, opened from the host screen.
+  @State private var newAgentSheet: NewAgentRequest?
   /// The hook sheet on screen now, however it was opened. The dismiss setter reads it,
   /// because a waiting trust prompt makes `pendingHookOffer` return `nil`.
   @State private var shownHookSheet: HookSheetRequest?
@@ -260,7 +270,7 @@ struct ContentView: View {
             identityStore: environment.identityStore,
             hosts: model,
             credentials: environment.passwordCredentials,
-            runner: { [connections] in connections.existingModel(for: request.host.id)?.keyInstallRunner() },
+            runner: { [connections] in connections.existingModel(for: request.host.id)?.hostCommandRunner() },
             checkLogin: { [environment] identity in
               await KeyLoginCheck.run(host: request.host, identity: identity, environment: environment)
             }
@@ -268,6 +278,25 @@ struct ContentView: View {
           isRegularWidth: sizeClass == .regular
         )
       }
+    }
+    // New Agent, at the root for Install a Key's reason. It counts in `hasRootPresentation` and
+    // holds back the hook offer. The model carries everything, so no environment value has to
+    // reach across the presentation.
+    .sheet(item: $newAgentSheet) { request in
+      NewAgentSheet(
+        model: NewAgentModel(
+          hostName: request.host.displayName,
+          recentFolders: request.recentFolders,
+          start: { [connections] launch in
+            guard let session = connections.existingModel(for: request.host.id)?.session else {
+              throw AppError.notConnected(host: request.host.displayName)
+            }
+            return try await session.startAgent(launch)
+          },
+          open: { openStartedAgent($0, on: request.host) },
+          runner: { [connections] in connections.existingModel(for: request.host.id)?.hostCommandRunner() }
+        )
+      )
     }
     // Deleting a host asks first and says what else goes. At the root, because the row is
     // gone by the time it is confirmed.
@@ -441,7 +470,28 @@ struct ContentView: View {
   private var hasRootPresentation: Bool {
     isShowingSettings || isShowingKeys || hostForm != nil || hostPendingDeletion != nil
       || connections.pendingHostKeyPrompt() != nil || hookSheet != nil
-      || pendingHookOffer != nil || keySheet != nil
+      || pendingHookOffer != nil || keySheet != nil || newAgentSheet != nil
+  }
+
+  // MARK: - New Agent
+
+  /// Puts the New Agent sheet up, with the folders the host's panes are in now.
+  private func requestNewAgent(on host: DriverrCore.Host) {
+    let folders = connections.existingModel(for: host.id)?.session?.tree.agentFolders() ?? []
+    newAgentSheet = NewAgentRequest(host: host, recentFolders: folders)
+  }
+
+  /// Takes the New Agent sheet down and opens the pane it started.
+  ///
+  /// The sheet goes first. Neither route to a pane scene is a presentation, so the two can
+  /// overlap. A pane the session does not list opens nothing, as `TerminalSceneModel` would
+  /// refuse it anyway.
+  private func openStartedAgent(_ paneID: String, on host: DriverrCore.Host) {
+    newAgentSheet = nil
+    guard let model = connections.existingModel(for: host.id),
+      model.session?.reportedTree.pane(id: paneID) != nil
+    else { return }
+    terminalPresenter.present(host: host, model: model, target: .pane(id: paneID))
   }
 
   // MARK: - Driverr's hooks
@@ -451,7 +501,7 @@ struct ContentView: View {
     let scene = terminalPresenter.request?.scene
     let isRootPresenting =
       isShowingSettings || isShowingKeys || hostForm != nil || hostPendingDeletion != nil
-      || keySheet != nil || scene?.isShowingPaneSheet == true
+      || keySheet != nil || newAgentSheet != nil || scene?.isShowingPaneSheet == true
       || scene?.isShowingSubagentSheet == true || scene?.isShowingSettings == true
       || scene?.isShowingPhotoPicker == true || scene?.isShowingFileImporter == true
     guard let offer = connections.pendingHookOffer(isRootPresenting: isRootPresenting) else { return nil }
@@ -512,6 +562,7 @@ struct ContentView: View {
           },
           onInstallHooks: { requestHookInstall(for: $0) },
           onInstallKey: { keySheet = KeySheetRequest(host: $0) },
+          onNewAgent: { requestNewAgent(on: $0) },
           offersHooksOnConnect: hostPick.offersHooksOnConnect(for: host.id)
         )
         .id(host.id)
@@ -583,6 +634,7 @@ struct ContentView: View {
         },
         onInstallHooks: { requestHookInstall(for: $0) },
         onInstallKey: { keySheet = KeySheetRequest(host: $0) },
+        onNewAgent: { requestNewAgent(on: $0) },
         offersHooksOnConnect: hostPick.offersHooksOnConnect(for: host.id)
       )
       .id(host.id)

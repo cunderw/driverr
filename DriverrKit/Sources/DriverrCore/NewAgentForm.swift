@@ -38,3 +38,13 @@ public struct NewAgentForm: Hashable, Sendable {
   /// Whether Start can be tapped: a folder, and a line short enough to type.
   public var canStart: Bool { launch != nil && !isPromptTooLong }
 }
+
+extension AgentLaunch.Kind {
+  /// The agent's product name, as the picker and the Start button show it.
+  public var displayName: String {
+    switch self {
+    case .claude: "Claude Code"
+    case .codex: "Codex"
+    }
+  }
+}

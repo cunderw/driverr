@@ -329,6 +329,29 @@ final class SessionModel {
     return nil
   }
 
+  // MARK: - Starting an agent
+
+  /// Whether this host can start a coding agent. See `HerdrControl.canStartAgent`.
+  var canStartAgent: Bool { control.canStartAgent }
+
+  /// Whether an agent start is out, from the call to the end of its wait.
+  @ObservationIgnored private var isStartingAgent = false
+
+  /// Starts an agent and answers with its pane id once a scene can open it.
+  ///
+  /// The same wait as `startTerminal()`, for the same reason, and the same bound. Unlike it, the
+  /// answer is thrown rather than kept here: the New Agent sheet shows it, and the host screen
+  /// behind the sheet must not.
+  ///
+  /// - Throws: whatever the control threw. `AppError.agentDidNotStart` is thrown after a wait
+  ///   for the pane it names, so the caller can open that pane. A start whose pane is not
+  ///   listed in time throws a failure that says the agent started, so nobody starts a second.
+  ///   A start while another start is out throws without asking the host, because the wait
+  ///   holds one pane at a time.
+  func startAgent(_ launch: AgentLaunch) async throws -> String {
+    ""
+  }
+
   /// Returns when `id` is in `reportedTree` or the limit has passed. `load` does the waking.
   ///
   /// One read first, for a control whose news is already in hand. Not `refresh()`: `.loading`

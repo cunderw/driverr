@@ -55,4 +55,10 @@ struct NewAgentFormTests {
     let quotes = String(repeating: "'", count: (AgentLaunch.typedLineLimit - 12) / 4 + 1)
     #expect(NewAgentForm(directory: "/srv", prompt: quotes).isPromptTooLong)
   }
+
+  @Test("each agent is named as its maker names it")
+  func names() {
+    #expect(AgentLaunch.Kind.claude.displayName == "Claude Code")
+    #expect(AgentLaunch.Kind.codex.displayName == "Codex")
+  }
 }

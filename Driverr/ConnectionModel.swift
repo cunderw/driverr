@@ -111,10 +111,12 @@ final class ConnectionModel {
     return environment.makeHookRunners(coordinator)
   }
 
-  /// The runner the key install sends its command through, or `nil` with no link up.
-  func keyInstallRunner() -> CommandRunner? {
+  /// The runner the key install and the folder browser send their commands through, or `nil`
+  /// with no link up. Only for a command that wraps itself in `sh -c`. See
+  /// `AppEnvironment.makeHostCommandRunner`.
+  func hostCommandRunner() -> CommandRunner? {
     guard phase == .connected, let coordinator else { return nil }
-    return environment.makeKeyInstallRunner(coordinator)
+    return environment.makeHostCommandRunner(coordinator)
   }
 
   /// Checks each integration on the host and offers the first one the policy says to.
