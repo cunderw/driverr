@@ -51,6 +51,8 @@ struct ChatUnderBarLayoutTests {
     /// The stop notice's Continue opt-in, `nil` for none, as `TerminalScreen` hands it in.
     var continueAtReset: Binding<Bool>? = nil
     var typeSize: DynamicTypeSize = .large
+    /// The composer's height. A tall one stands in for the keyboard under it.
+    var composerHeight: CGFloat = ChatUnderBarLayoutTests.composer
 
     var body: some View {
       NavigationStack {
@@ -60,7 +62,7 @@ struct ChatUnderBarLayoutTests {
           // As `TerminalScreen.paneSurfaces` attaches the composer.
           .safeAreaBar(edge: .bottom, spacing: 0) {
             Color.green
-              .frame(height: ChatUnderBarLayoutTests.composer)
+              .frame(height: composerHeight)
               // Not `measuredFrame`, whose `onAppear` reads the first frame only, which in a
               // `NavigationStack` is laid out before the stack has its size.
               .onGeometryChange(for: CGRect.self, of: { $0.frame(in: .global) }) { onComposer($0) }
@@ -132,6 +134,55 @@ struct ChatUnderBarLayoutTests {
     for size in [HostedProbe.phone, HostedProbe.pad] {
       expectASmallStopStack(model: model, size: size)
     }
+  }
+
+  /// When the stack is taller than the room between the bar and the composer, as the open
+  /// stack is at AX5 with the keyboard up, it scrolls inside that room rather than riding up
+  /// under the status bar and the bar's buttons. A composer tall enough to leave less room than
+  /// the folded notice stands in for the keyboard.
+  @Test("a stop stack taller than the room scrolls inside it, below the bar")
+  func aStopStackTallerThanTheRoomScrolls() async {
+    let model = PreviewSupport.transcript(
+      for: PreviewSupport.agentPane, run: AppEnvironment.usageLimitedTranscript.run)
+    await model.currentLoad?.value
+    await model.subagentListLoad?.value
+    expectAnOverflowingStackBelowTheBar(model: model)
+  }
+
+  private func expectAnOverflowingStackBelowTheBar(model: PaneTranscriptModel) {
+    var composer = CGRect.zero
+    var capsules: CGRect?
+    let window = HostedProbe.window(
+      Fixture(
+        model: model,
+        screen: PreviewSupport.paneScreen(for: PreviewSupport.agentPane),
+        onComposer: { composer = $0 },
+        onCapsules: { capsules = $0 },
+        continueAtReset: .constant(false),
+        typeSize: .accessibility5,
+        composerHeight: 700),
+      size: HostedProbe.phone)
+    pump(until: {
+      first(UICollectionView.self, in: window) != nil && composer.width > 100
+        && capsules != nil
+    })
+    for _ in 0..<10 { RunLoop.current.run(until: Date().addingTimeInterval(0.01)) }
+    guard let bar = first(UINavigationBar.self, in: window), let capsules else {
+      Issue.record("No navigation bar, or no capsules (\(String(describing: capsules))).")
+      withExtendedLifetime(window) {}
+      return
+    }
+    let barBottom = bar.convert(bar.bounds, to: window).maxY
+    let report = """
+      With \(composer.minY - barBottom) pt between the bar's bottom at \(barBottom) and the \
+      composer at \(composer.minY), the stop stack is at \(capsules.minY)..\(capsules.maxY). It \
+      must stay inside that room and scroll; scroll views: \(scrollViews(in: window)).
+      """
+    print(report)
+    #expect(composer.minY - barBottom < 100, "\(report)")
+    #expect(capsules.minY >= barBottom - 0.5, "\(report)")
+    #expect(capsules.maxY <= composer.minY + 0.5, "\(report)")
+    withExtendedLifetime(window) {}
   }
 
   private func expectASmallStopStack(model: PaneTranscriptModel, size: CGSize) {
