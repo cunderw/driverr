@@ -241,6 +241,51 @@ struct CoreSessionFilesTests {
     #expect(try execs(stream).count == 2)
   }
 
+  /// A place that never answers holds up its own terminals only: they wait out the call's
+  /// deadline, and nobody else's read waits behind that.
+  @Test("a place that never answers does not delay a healthy place's read")
+  func configDirectoryNeverAnswers() async throws {
+    let stream = stream(claude("t1", pid: 101), claude("box/t1", pid: 106))
+    stream.exec = { _, on in
+      on == "box" ? .silent : .result(FakeCoreStream.executed(stdout: "/cfg\n"))
+    }
+    stream.files = ["/cfg/sessions/101.json": record(pid: 101, id: "moved")]
+    // The deadline is far past the wait below, so the healthy read cannot have been waiting for it.
+    let control = control(stream, deadline: .seconds(20))
+    let snapshot = Task { try await control.snapshot() }
+    defer { snapshot.cancel() }
+
+    let read = (try? await waitUntil("the healthy read", within: .seconds(5)) {
+      stream.readPaths.contains("/cfg/sessions/101.json")
+    }) != nil
+    #expect(read, "the read waited for a place that has not answered")
+  }
+
+  /// With no home here, a core that names a directory is still read.
+  @Test("a terminal on the core is read from a named directory even with no home")
+  func configDirectoryWithNoHome() async throws {
+    let stream = stream(claude("t1", pid: 101))
+    stream.exec = answers([nil: "/cfg"])
+    stream.files = ["/cfg/sessions/101.json": record(pid: 101, id: "moved")]
+    let tree = try await control(stream, home: nil).snapshot()
+    #expect(sessions(tree) == ["core:t1": "moved"])
+    #expect(stream.readPaths == ["/cfg/sessions/101.json"])
+  }
+
+  /// Every read cycle would ask a place that is down otherwise, and each ask costs the call's
+  /// deadline.
+  @Test("a place that failed is not asked again within the retry window")
+  func configDirectoryFailureWaits() async throws {
+    let stream = stream(claude("t1", pid: 101))
+    stream.exec = answers([:])
+    stream.files = [path(101): record(pid: 101, id: "home")]
+    let control = control(stream)
+    _ = try await control.snapshot()
+    try await raiseStatus(on: stream)
+    #expect(sessions(try await control.snapshot()) == ["core:t1": "home"])
+    #expect(try execs(stream).count == 1)
+  }
+
   @Test("an answer that failed is asked again on the next read")
   func configDirectoryRetries() async throws {
     let stream = stream(claude("t1", pid: 101))
