@@ -1156,6 +1156,9 @@ struct PaneChatView: View {
               .accessibilityIdentifier("pane.chat.candidates")
             }
           }
+          // `.primary`, not the view's own secondary description: that grey measured 3.29:1 on
+          // the light background (#85858B on #F2F2F7), under 4.5:1. The glyph stays secondary.
+          .foregroundStyle(.primary)
         } actions: {
           // Side by side while they fit, stacked when not, so no exit slides off the edge at
           // large text sizes. Prominence goes to the primary action; Show the Screen leads
@@ -1202,9 +1205,10 @@ struct PaneChatView: View {
         Image(systemName: notice.symbolName)
           .font(.footnote)
           .foregroundStyle(.secondary)
+        // `.primary`: secondary text measured 3.29:1 in light. Only the glyph is secondary.
         Text(notice.message)
           .font(.footnote)
-          .foregroundStyle(.secondary)
+          .foregroundStyle(.primary)
           .accessibilityIdentifier("pane.chat.notice")
       }
       if !notice.evidence.isEmpty {
@@ -1212,7 +1216,7 @@ struct PaneChatView: View {
           ForEach(notice.evidence, id: \.self) { line in
             Text(line)
               .font(.caption2.monospaced())
-              .foregroundStyle(.secondary)
+              .foregroundStyle(.primary)
               .lineLimit(1)
               .truncationMode(.middle)
           }
