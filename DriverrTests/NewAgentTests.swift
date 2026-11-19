@@ -76,6 +76,7 @@ private func oneWorkspace(paneID: String) -> SessionTree {
 }
 
 /// A wait on the control's own state, which `Task.sleep` lets `.timeLimit` stop.
+@MainActor
 private func until(_ condition: () async -> Bool) async throws {
   while !(await condition()) { try await Task.sleep(for: .milliseconds(1)) }
 }
