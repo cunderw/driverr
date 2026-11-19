@@ -79,9 +79,9 @@ final class NewAgentUITests: XCTestCase {
 
     // Codex renames the Start button, so the picker reaches the form.
     app.buttons["Codex"].firstMatch.tap()
-    XCTAssertTrue(
-      element(app, "newAgent.start").label.contains("Codex"),
-      "Start did not follow the picker: \(element(app, "newAgent.start").label)")
+    // Below the fold on a phone, where a lazy form has not built it yet.
+    let start = scrollIntoReach(app, "newAgent.start")
+    XCTAssertTrue(start.label.contains("Codex"), "Start did not follow the picker: \(start.label)")
 
     waitFor(app, "newAgent.cancel", "Expected Cancel").tap()
     requireGone(app, "newAgent.folder", "Cancel did not close the sheet")
