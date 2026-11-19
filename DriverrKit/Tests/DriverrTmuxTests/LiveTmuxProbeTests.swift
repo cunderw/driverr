@@ -447,10 +447,15 @@
 
     /// A herdr client in a tmux pane, and a tmux client in a herdr pane, both stood in for.
     ///
-    /// The herdr client is `cat` behind a link named `herdr`, with no arguments, so its session
-    /// comes from `HERDR_SOCKET_PATH`. The tmux client is a real `tmux attach` under `script`,
-    /// which gives it a terminal, with a made-up `HERDR_PANE_ID`. Its stdin is the stream's
-    /// pipe, held open: `script` reads end-of-file as ^D, which ends the session's shell.
+    /// The herdr client is a copy of `cat` named `herdr`, with no arguments, so its session comes
+    /// from `HERDR_SOCKET_PATH`. **A copy, signed again, and not a link.** macOS `ps -E` shows no
+    /// environment for a platform binary such as `/bin/cat`, measured on this probe's first run;
+    /// an ad-hoc signed copy is not one, as Homebrew's `herdr` and `tmux` are not.
+    ///
+    /// The tmux client is a real `tmux attach` under `script`, which gives it a terminal, with a
+    /// made-up `HERDR_PANE_ID`. Its stdin is the stream's pipe, held open: `script` reads
+    /// end-of-file as ^D, which ends the session's shell. It needs `TERM`, which the stream's
+    /// environment leaves out.
     ///
     /// Both carry `DRIVERR_PROBE_SECRET`, which must not come back from the host.
     @Test("a herdr client in a pane and a client in a herdr pane both claim, and no secret leaves")
@@ -459,7 +464,9 @@
         let scratch = try LocalShell.temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: scratch) }
         let herdr = scratch.appendingPathComponent("herdr")
-        try FileManager.default.createSymbolicLink(atPath: herdr.path, withDestinationPath: "/bin/cat")
+        try FileManager.default.copyItem(atPath: "/bin/cat", toPath: herdr.path)
+        let signed = try await LocalShell.runner("codesign -f -s - \(shellQuoted(herdr.path))")
+        #expect(signed.exitStatus == 0, "\(signed.standardError)")
         let socket = "/tmp/driverr-probe/sessions/probe/herdr.sock"
 
         let respawned = try await LocalShell.runner(
@@ -469,7 +476,8 @@
         #expect(respawned.exitStatus == 0, "\(respawned.standardError)")
 
         let client = try LocalShellStream(
-          command: "env HERDR_PANE_ID=w9:p9 HERDR_SOCKET_PATH=\(socket) DRIVERR_PROBE_SECRET=nope "
+          command: "env TERM=xterm-256color HERDR_PANE_ID=w9:p9 HERDR_SOCKET_PATH=\(socket) "
+            + "DRIVERR_PROBE_SECRET=nope "
             + "script -q /dev/null \(shellQuoted(control.binaryPath)) attach -t probe")
         defer { Task { await client.close() } }
 
