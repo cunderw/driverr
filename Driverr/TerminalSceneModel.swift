@@ -1594,7 +1594,7 @@ final class TerminalSceneModel {
   /// Whether the far side answers the pane's terminal queries itself: tmux does, measured on
   /// 3.7c and 3.2a (#128). Read from the id, so a wrapper such as `DeferredPaneBridge` cannot
   /// hide it. See `TerminalFeed.answersQueries`.
-  private static func answersQueries(_ target: TerminalTarget) -> Bool {
+  static func answersQueries(_ target: TerminalTarget) -> Bool {
     if case .pane(let id) = target { return TmuxID.isTmux(id) }
     return false
   }

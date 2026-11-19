@@ -2974,15 +2974,14 @@ struct TerminalSceneModelTests {
     #expect(stream.keys(for: "%3") == Data("k".utf8))
   }
 
-  /// The observer's feed is built apart from the controller's, so it is checked apart.
-  @Test("a tmux pane's observer feed answers queries itself too")
-  func aTmuxObserverDropsTheEmulatorsReply() async throws {
-    let (scene, transport, _) = await tmuxScene()
-    _ = try await paintedTmuxPane(scene, transport)
-    scene.show(.chat)
-    await scene.settle()
-    try #require(scene.currentRole == .observer)
-    #expect(scene.currentSession?.answersQueries == true)
+  /// The observer's feed is built apart from the controller's, from the same rule. A tmux pane
+  /// with no agent opens no observer here, so the rule is checked directly.
+  @Test("only a tmux pane answers its own queries, for the controller and the observer feeds")
+  func onlyATmuxPaneAnswersQueries() {
+    #expect(TerminalSceneModel.answersQueries(.pane(id: "tmux:%3")))
+    #expect(!TerminalSceneModel.answersQueries(.pane(id: "core:t7")))
+    #expect(!TerminalSceneModel.answersQueries(.pane(id: "w1:p1")))
+    #expect(!TerminalSceneModel.answersQueries(.shell))
   }
 
   @Test("the size the view measured sizes the tmux window before the paint")
