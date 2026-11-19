@@ -101,6 +101,21 @@ struct TmuxAttachmentTests {
     await bridge.release()
   }
 
+  /// Found by `LiveTmuxProbeTests.ordering`: a counting pane's numbers came twice, because the
+  /// output written while the window was being sized reached the viewer ahead of the paint.
+  @Test("output while the window is sized, before the first paint, is in the paint and is dropped")
+  func outputWhileSizing() async throws {
+    let host = Host()
+    host.stream.after(sizing: "%3", writes: "REFLOWED")
+    host.stream.around(paintOf: "%3", stale: "", fresh: "FRESH")
+    let bridge = try await host.attacher.open(terminalID: "tmux:%3", size: Self.phone)
+    var output = bridge.output.makeAsyncIterator()
+    let seen = try await read(&output, until: "FRESH")
+    #expect(!seen.contains("REFLOWED"))
+    #expect(seen.hasPrefix("old one"))
+    await bridge.release()
+  }
+
   @Test("on the alternate screen the normal one is painted first, then ?1049h, then the program")
   func alternateScreen() async throws {
     var pane = Host.shell()
@@ -239,7 +254,7 @@ struct TmuxAttachmentTests {
     host.stream.setPane("%3", Host.shell(window: "@7"))
     host.stream.emit("%window-close @1\n")
     // The check is written; the next command's reply comes after its answer.
-    while !host.stream.lines.contains(where: { $0.hasSuffix("'#{window_id}'") }) {
+    while !host.stream.lines.contains(where: { $0.hasSuffix("'#{pane_id} #{window_id}'") }) {
       try await Task.sleep(for: .milliseconds(5))
     }
     try await bridge.resize(to: TerminalSize(columns: 40, rows: 30, pixelWidth: 0, pixelHeight: 0))

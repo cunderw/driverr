@@ -31,6 +31,8 @@ final class FakeTmuxControlStream: HerdrStream, @unchecked Sendable {
   private var staleOutput: [String: String] = [:]
   /// Pane output written right after a paint line's replies.
   private var freshOutput: [String: String] = [:]
+  /// Pane output written ahead of a window size's reply.
+  private var sizingOutput: (pane: String, text: String)?
 
   init(panes: [String: Pane]) {
     self.panes = panes
@@ -53,6 +55,10 @@ final class FakeTmuxControlStream: HerdrStream, @unchecked Sendable {
       staleOutput[pane] = stale
       freshOutput[pane] = fresh
     }
+  }
+
+  func after(sizing pane: String, writes text: String) {
+    lock.withLock { sizingOutput = (pane, text) }
   }
 
   /// Writes raw control-mode text, a notification or several.
@@ -88,6 +94,11 @@ final class FakeTmuxControlStream: HerdrStream, @unchecked Sendable {
       var text = "%begin 9 \(number) 1\n"
       for row in body { text += row + "\n" }
       text += "%\(failed ? "error" : "end") 9 \(number) 1\n"
+      // Output the pane wrote while the size was on its way, ahead of the reply, as tmux
+      // writes it when a pane is busy.
+      if command.hasPrefix("refresh-client -C @"), let sizing = lock.withLock({ sizingOutput }) {
+        emit(Self.output(sizing.pane, sizing.text))
+      }
       emit(text)
       if failed { return }
     }
@@ -133,11 +144,15 @@ final class FakeTmuxControlStream: HerdrStream, @unchecked Sendable {
       lock.withLock { typed[pane, default: Data()].append(bytes) }
       return ([], false)
     case "display-message", "capture-pane":
-      guard let id = Self.target(of: command), let pane = lock.withLock({ panes[id] }) else {
-        return (["can't find pane: \(Self.target(of: command) ?? "")"], true)
+      let id = Self.target(of: command) ?? ""
+      guard let pane = lock.withLock({ panes[id] }) else {
+        // `display-message`'s target may fail: tmux 3.7c answers a missing pane with an empty
+        // line, not an error.
+        if name == "display-message" { return ([""], false) }
+        return (["can't find pane: \(id)"], true)
       }
       if name == "display-message" {
-        if command.hasSuffix("'#{window_id}'") { return ([pane.window], false) }
+        if command.hasSuffix("'#{pane_id} #{window_id}'") { return (["\(id) \(pane.window)"], false) }
         return ([Self.stateLine(pane.state)], false)
       }
       if words.contains("-a") { return (pane.normal ?? [], false) }

@@ -16,8 +16,8 @@ import Foundation
 ///   client a size of its own, 80x24 unless told, and that takes the session's current window.
 ///   So the attach line also sets the client's size to the current window's own.
 /// - `refresh-client -C @W:WxH` sizes one window, current or not, and `@W:` hands it back. A
-///   current window then returns to the desk at once. One the desk is not viewing keeps the
-///   phone's size until a desk views it.
+///   window the desk views returns to the desk at once. With a desk attached, one it is not
+///   viewing keeps the phone's size until it does; with none, it returns to the client's size.
 /// - A client that never sets a window size leaves the desk in charge, through desk resizes and
 ///   window changes. That is the setting-off path.
 /// - tmux before 3.3 has no `@W:` (read from tmux's source at 3.2 and 3.2a, not measured). The
@@ -398,14 +398,20 @@ final class TmuxSessionClient: @unchecked Sendable {
 
   /// Whether a pane that left its window's layout has closed or only moved. Asked of tmux,
   /// because a pane broken out to a window of its own leaves a layout too.
+  ///
+  /// **The answer names the pane, because a missing one is not an error.** `display-message`'s
+  /// target may fail, so for a pane that is gone tmux 3.7c answers an empty `%end`.
   private func check(_ pane: String) {
-    send("display-message -p -t \(pane) '#{window_id}'") { [weak self] result in
+    send("display-message -p -t \(pane) '#{pane_id} #{window_id}'") { [weak self] result in
       guard let self else { return }
       switch result {
       case .success(let replies):
-        let window = replies.first?.first.map { String(decoding: $0, as: UTF8.self) }
-        if let window, TmuxID.validRaw(window, kind: .window) != nil {
-          for attachment in self.viewers(of: pane) { attachment.moved(to: window) }
+        let words = replies.first?.first.map { String(decoding: $0, as: UTF8.self) }?
+          .split(separator: " ").map(String.init) ?? []
+        if words.count == 2, words[0] == pane, TmuxID.validRaw(words[1], kind: .window) != nil {
+          for attachment in self.viewers(of: pane) { attachment.moved(to: words[1]) }
+        } else {
+          for attachment in self.viewers(of: pane) { attachment.end(paneClosed: true) }
         }
       case .failure(.refused):
         for attachment in self.viewers(of: pane) { attachment.end(paneClosed: true) }
@@ -471,7 +477,9 @@ final class TmuxAttachment: PaneBridge, PromotableObserver, RawTerminalStream, @
   private var size: TerminalSize
   /// Promoted, and nobody has touched it. See `touched()`.
   private var awaitsTouch = false
-  private var isPainting = false
+  /// Drops output until a paint lands. True from the start, because a controller sizes its window
+  /// before the first paint, and output meanwhile is in that paint.
+  private var isPainting = true
   /// The window this viewer last sized, which it hands back on release.
   private var sizedWindow: String?
   private var isReleased = false
@@ -616,6 +624,8 @@ final class TmuxAttachment: PaneBridge, PromotableObserver, RawTerminalStream, @
     let isFirst: Bool = lock.withLock {
       guard awaitsTouch else { return false }
       awaitsTouch = false
+      // The window's new size reflows the pane, and the repaint covers it.
+      isPainting = true
       return true
     }
     guard isFirst else { return }
