@@ -32,7 +32,8 @@ final class SessionModel {
   /// nothing in it. Nothing draws this.
   @ObservationIgnored private(set) var hasReadATree = false
 
-  /// What this host shows: `reportedTree` without the machines another host shows as its own.
+  /// What this host shows: `reportedTree` without the machines another host shows as its own,
+  /// and without the panes that only mirror another source of panes on this host.
   ///
   /// Derived, not stored, because a machine stops being covered when something happens on
   /// another host, with nothing to read here. Observation follows `coveringCoreIDs` through
@@ -42,6 +43,7 @@ final class SessionModel {
   /// `tree` with `paneID`'s group left in, for a scene already open on that pane.
   func tree(keeping paneID: String?) -> SessionTree {
     reportedTree.hidingMachines(coveredBy: coveringCoreIDs(), keeping: paneID)
+      .hidingMirrors(keeping: paneID)
   }
 
   /// Why `tree` is empty, or `nil` when it has rows. Chooses the session tree's empty copy.

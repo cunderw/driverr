@@ -55,8 +55,11 @@ enum TmuxArgument {
 /// A pane, window or session id arrives already shell-quoted, as `shellQuoted(TmuxID.raw(of:))`:
 /// `$1` unquoted is the shell's first parameter, and `%3` is a job in some shells.
 enum TmuxCommands {
+  /// Every pane, then every client, in one call. The clients are for `TmuxMirrors`: a tmux
+  /// client running in a herdr pane makes that pane a mirror.
   static func listPanes(binary: String) -> String {
     "\(binary) list-panes -a -F \(shellQuoted(TmuxPaneFormat.format))"
+      + TmuxArgument.separator + "list-clients -F \(shellQuoted(TmuxClientFormat.format))"
   }
 
   /// Types `text` into a pane, and then Enter when `submit`. `nil` when there is nothing to

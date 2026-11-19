@@ -105,6 +105,11 @@ public struct Pane: Identifiable, Hashable, Sendable {
   /// same bytes and costs about 420 ms instead of 30 ms, because herdr scrolls to capture.
   /// With no bound, a reader passes no `--lines` rather than guessing.
   public let viewportRows: Int?
+  /// Whether this pane only shows another source of panes on the same host: a tmux pane whose
+  /// program is a herdr client, or a herdr pane whose program is a tmux client. The panes it
+  /// shows are listed on their own, so `SessionTree.hidingMirrors(keeping:)` leaves it out.
+  /// `CombinedControl` sets it from the tree's `MirrorClaim`s.
+  public let isMirror: Bool
 
   public init(
     id: String,
@@ -115,7 +120,8 @@ public struct Pane: Identifiable, Hashable, Sendable {
     terminalID: String? = nil,
     directory: String? = nil,
     isFocused: Bool = false,
-    viewportRows: Int? = nil
+    viewportRows: Int? = nil,
+    isMirror: Bool = false
   ) {
     self.id = id
     self.tabID = tabID
@@ -126,6 +132,7 @@ public struct Pane: Identifiable, Hashable, Sendable {
     self.directory = directory
     self.isFocused = isFocused
     self.viewportRows = viewportRows
+    self.isMirror = isMirror
   }
 
   /// Where this pane sorts against its siblings: its agent's urgency, or behind every
@@ -376,11 +383,21 @@ public struct SessionTree: Hashable, Sendable {
   /// `hello.core.id`, which is what another core's `machine.list` calls this one. Names and SSH
   /// targets cannot match them, because a machine's name is local to the core that added it.
   public let coreID: String?
+  /// The panes of this host that show another source of panes on it, and the herdr session each
+  /// needs the host to list before it is a duplicate. Only a tmux tree has any. See
+  /// `MirrorClaim`.
+  public let mirrorClaims: Set<MirrorClaim>
 
-  public init(workspaces: [Workspace] = [], focusedPaneID: String? = nil, coreID: String? = nil) {
+  public init(
+    workspaces: [Workspace] = [],
+    focusedPaneID: String? = nil,
+    coreID: String? = nil,
+    mirrorClaims: Set<MirrorClaim> = []
+  ) {
     self.workspaces = workspaces
     self.focusedPaneID = focusedPaneID
     self.coreID = coreID
+    self.mirrorClaims = mirrorClaims
   }
 
   public static let empty = SessionTree()
@@ -485,7 +502,8 @@ public struct SessionTree: Hashable, Sendable {
         return workspace.tabs.contains { $0.panes.contains { $0.id == paneID } }
       },
       focusedPaneID: focusedPaneID,
-      coreID: coreID
+      coreID: coreID,
+      mirrorClaims: mirrorClaims
     )
   }
 

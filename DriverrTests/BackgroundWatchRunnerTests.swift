@@ -311,6 +311,26 @@ struct BackgroundWatchRunnerTests {
     #expect(seen.machineCoreIDs.isEmpty)
   }
 
+  /// A mirror shows panes the card already counts, so it is not counted again. #102 S5.
+  @Test("a poll leaves out a pane that only shows another source of panes")
+  func aPollHidesAMirror() async throws {
+    let (runner, _, driver) = makeRunner()
+    let session = FakeWatchSession()
+    let mirror = Pane(
+      id: "tmux:%1", tabID: "t1", workspaceID: "w1", title: "herdr",
+      agent: Agent(name: "Claude", status: .blocked), isMirror: true)
+    session.snapshot = tree([pane("w1:p1", status: .blocked), mirror])
+    let task = FakeWatchTask()
+    session.afterSnapshot = { _ in runner.stop() }
+
+    runner.start(host: host, subject: "claude", session: session)
+    await runner.run(task)
+
+    let seen = try #require(driver.passes.first?.observations.first)
+    #expect(seen.blockedPanes.map(\.id) == ["w1:p1"])
+    #expect(seen.counts == AgentStatusCounts(blocked: 1))
+  }
+
   /// The card carries what this host shows, so another host's pass can leave it out.
   @Test("a poll tells the card which machines it counted")
   func aPollReportsTheMachinesItShows() async throws {

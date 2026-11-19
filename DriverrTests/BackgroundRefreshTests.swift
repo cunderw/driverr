@@ -197,6 +197,28 @@ struct BackgroundRefreshTests {
     #expect(await center.posts.isEmpty)
   }
 
+  /// A mirror's agent is the one its own pane shows, so it is announced once, from there.
+  /// #102 S5.
+  @Test("a pane that only shows another source of panes is not announced")
+  func aMirrorIsNotAnnounced() async throws {
+    let center = FakeNotificationCenter(status: .authorized)
+    let scheduler = CountingScheduler()
+    let mirror = Pane(
+      id: "tmux:%1", tabID: "t1", workspaceID: "w1", title: "herdr",
+      agent: Agent(name: "Claude", status: .blocked), isMirror: true)
+    let session = FakeSession(snapshot: tree([pane("w1:p1", status: .blocked), mirror]))
+    let runner = BackgroundRefreshRunner(
+      environment: environment(hosts: [workbox], center: center, scheduler: scheduler),
+      storedSelection: { self.workbox.id.uuidString },
+      makeSession: { _, _ in session }
+    )
+
+    #expect(await runner.run() == .refreshed(blockedPanes: 1))
+    #expect(
+      await center.posts.map(\.id)
+        == [BlockedPaneAlerts.notificationID(hostID: workbox.id, paneID: "w1:p1")])
+  }
+
   /// A cold background launch starts with an empty announced set unless it reads the one the
   /// last run wrote.
   @Test("a pane announced by an earlier run is not announced again")
