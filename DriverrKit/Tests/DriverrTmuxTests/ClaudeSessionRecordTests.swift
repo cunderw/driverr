@@ -59,6 +59,32 @@ struct ClaudeSessionRecordTests {
     #expect(busy.agentStatus == .working)
   }
 
+  @Test(
+    "a waiting record says what it waits for, in the two words Claude Code writes",
+    arguments: [
+      ("permission prompt", AgentBlockedKind?.some(.permission)), ("input needed", .question),
+      ("dialog open", nil), ("something new", nil),
+    ])
+  func blockedKind(waitingFor: String, expected: AgentBlockedKind?) throws {
+    let record = try #require(
+      parse(#"{"sessionId":"s","status":"waiting","waitingFor":"\#(waitingFor)"}"#))
+    #expect(record.agent.blockedKind == expected)
+    // Blocked or not is the status alone, whatever the text says.
+    #expect(record.agent.status == .blocked)
+  }
+
+  @Test("only a waiting record has a blocked kind, and a waiting one with no text has none")
+  func blockedKindNeedsWaiting() throws {
+    for word in ["busy", "idle", "starting"] {
+      let record = try #require(
+        parse(#"{"sessionId":"s","status":"\#(word)","waitingFor":"permission prompt"}"#))
+      #expect(record.agent.blockedKind == nil, "\(word)")
+    }
+    let silent = try #require(parse(#"{"sessionId":"s","status":"waiting"}"#))
+    #expect(silent.agent.blockedKind == nil)
+    #expect(silent.agent.status == .blocked)
+  }
+
   @Test("the agent is Claude, with the session the record names")
   func agent() throws {
     let record = try #require(parse(#"{"sessionId":"abc","status":"idle"}"#))

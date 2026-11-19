@@ -54,8 +54,8 @@ public struct Agent: Hashable, Sendable {
   public let status: AgentStatus
   /// The agent's own session, when a herdr integration reported one. See `AgentSession`.
   public let session: AgentSession?
-  /// What it is blocked on, from a herdr-core report. Always `nil` unless `status` is
-  /// `blocked`, and for a word this build does not know.
+  /// What it is blocked on, from a herdr-core report or a Claude Code session record. Always
+  /// `nil` unless `status` is `blocked`, and for a word this build does not know.
   public let blockedKind: AgentBlockedKind?
   /// The machine a herdr-core added that this runs on, or `nil` for the connected computer.
   /// Its session files are read on that machine, through the core, and never on the
