@@ -272,7 +272,7 @@ public enum HookInstallCommands {
   /// One single-quoted word that bash, zsh, dash and fish all read back as `script`: each
   /// `'` and `\` goes outside the quotes, escaped, because fish treats both as escapes
   /// inside single quotes. See the type's comment.
-  static func loginShellQuoted(_ script: String) -> String {
+  public static func loginShellQuoted(_ script: String) -> String {
     var out = "'"
     for scalar in script.unicodeScalars {
       switch scalar {

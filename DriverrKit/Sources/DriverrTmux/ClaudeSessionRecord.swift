@@ -1,7 +1,8 @@
 import DriverrCore
 import Foundation
 
-/// Claude Code's own record of one running process, `~/.claude/sessions/<pid>.json`.
+/// Claude Code's own record of one running process, `sessions/<pid>.json` in its configuration
+/// directory, `${CLAUDE_CONFIG_DIR:-~/.claude}`.
 ///
 /// tmux keeps no agent metadata, so this file is the only signal for which agent is in a pane
 /// and whether it waits on the user. It exists while the process runs and goes when `/exit`
@@ -16,16 +17,22 @@ public struct ClaudeSessionRecord: Equatable, Sendable {
   public let status: String?
   /// What Claude says it waits for, such as `permission prompt` or `input needed`.
   ///
-  /// **Display text only.** It was `dialog open` in the binary and never seen on the wire, so
-  /// nothing may branch on it. `status == "waiting"` is the signal.
+  /// **It never decides whether the agent is blocked.** `status == "waiting"` is the signal.
+  /// While it waits, the two words measured on Claude Code 2.1.325 name what for, which is
+  /// `blockedKind`. Any other word, `dialog open` included, which is in the binary and was
+  /// never seen on the wire, names nothing.
   public let waitingFor: String?
   public let directory: String?
 
-  /// The words `status` takes that this build maps.
+  /// The words `status` and `waitingFor` take that this build maps.
   public enum Word {
     public static let idle = "idle"
     public static let busy = "busy"
     public static let waiting = "waiting"
+    /// `waitingFor` on a permission prompt.
+    public static let permissionPrompt = "permission prompt"
+    /// `waitingFor` on an `AskUserQuestion`.
+    public static let inputNeeded = "input needed"
   }
 
   public init(
@@ -81,6 +88,17 @@ public struct ClaudeSessionRecord: Equatable, Sendable {
     }
   }
 
+  /// What a waiting agent waits for, from `waitingFor`. `nil` unless `status` is `waiting`, and
+  /// for a word this build does not know.
+  public var blockedKind: AgentBlockedKind? {
+    guard agentStatus == .blocked else { return nil }
+    switch waitingFor {
+    case Word.permissionPrompt: return .permission
+    case Word.inputNeeded: return .question
+    default: return nil
+    }
+  }
+
   /// The agent this record describes.
   public var agent: Agent {
     Agent(
@@ -92,7 +110,8 @@ public struct ClaudeSessionRecord: Equatable, Sendable {
         kind: "id",
         value: sessionID,
         source: AgentSession.claudeRecordSource
-      )
+      ),
+      blockedKind: blockedKind
     )
   }
 

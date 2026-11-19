@@ -1,3 +1,4 @@
+import DriverrCore
 import Foundation
 import Testing
 
@@ -105,17 +106,84 @@ struct TmuxProcessTableTests {
   }
 }
 
+@Suite("TmuxProcessTable Codex")
+struct TmuxProcessTableCodexTests {
+  private func process(_ command: String) -> TmuxProcess {
+    TmuxProcess(pid: 1, groupID: 1, foregroundGroupID: 1, tty: "ttys001", command: command)
+  }
+
+  @Test("macOS prints the path Codex was started by, and its last component is codex")
+  func macOSPath() {
+    #expect(TmuxProcessTable.isCodex(process("/home/dev/.local/bin/codex")))
+    #expect(TmuxProcessTable.isCodex(process("/opt/homebrew/bin/codex")))
+  }
+
+  @Test("Linux prints the bare name")
+  func linuxName() {
+    #expect(TmuxProcessTable.isCodex(process("codex")))
+  }
+
+  @Test("a name that only contains codex, or a wrapper, is not Codex")
+  func notCodex() {
+    for command in ["codex-helper", "/usr/bin/xcodex", "/opt/codex/bin/node", "node", "claude", ""] {
+      #expect(!TmuxProcessTable.isCodex(process(command)), "\(command)")
+    }
+  }
+
+  @Test("Codex as a member of the foreground group, not its leader, is still in it")
+  func nonLeader() {
+    let rows = TmuxProcessTable.parse(
+      """
+      100 100 200 ttys004 -zsh
+      200 200 200 ttys004 sh
+      201 200 200 ttys004 /home/dev/.local/bin/codex
+      """)
+    let group = TmuxProcessTable.foregroundGroup(forPaneTTY: "/dev/ttys004", in: rows)
+    #expect(group.map(\.pid) == [200, 201])
+    #expect(group.contains(where: TmuxProcessTable.isCodex))
+    #expect(!TmuxProcessTable.isCodex(group[0]), "the leader is not Codex")
+  }
+}
+
 @Suite("ClaudeRecordFiles")
 struct ClaudeRecordFilesTests {
-  @Test("the command prints a boundary and the file for each pid, with plain sequenced commands")
+  @Test("the command prints a boundary and each pid's file from Claude Code's directory, under sh -c")
   func command() {
     let command = ClaudeRecordFiles.command(forPIDs: [11, 22])
     let first = #"printf '\n%s\n' '__DRIVERR_RECORD__ 11'; "#
-      + #"cat "$HOME/.claude/sessions/11.json" 2>/dev/null; "#
+      + #"cat "${CLAUDE_CONFIG_DIR:-$HOME/.claude}"/sessions/11.json 2>/dev/null; "#
     let second = #"printf '\n%s\n' '__DRIVERR_RECORD__ 22'; "#
-      + #"cat "$HOME/.claude/sessions/22.json" 2>/dev/null"#
-    #expect(command == first + second)
-    #expect(!command.contains("for "), "a login shell that is not POSIX still runs it")
+      + #"cat "${CLAUDE_CONFIG_DIR:-$HOME/.claude}"/sessions/22.json 2>/dev/null"#
+    // The login shell may be fish, which cannot read `${…:-…}`, so the script goes to `sh`.
+    #expect(command == "sh -c " + HookInstallCommands.loginShellQuoted(first + second))
+  }
+
+  /// A real `/bin/sh`, so the `:-` default and the quoting are what a host's shell makes of
+  /// them, not what the fake does. Scratch directories only: nothing reads the real `~/.claude`.
+  @Test("a real shell reads CLAUDE_CONFIG_DIR's records, and ~/.claude's when it is unset")
+  func realShell() async throws {
+    let directory = try LocalShell.temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let home = directory.appendingPathComponent("home")
+    let config = directory.appendingPathComponent("config")
+    for (root, id) in [(home.appendingPathComponent(".claude"), "from-home"), (config, "from-config")] {
+      let sessions = root.appendingPathComponent("sessions")
+      try FileManager.default.createDirectory(at: sessions, withIntermediateDirectories: true)
+      try FakeTmuxHost.claudeRecord(pid: 11, sessionID: id, status: "waiting")
+        .write(to: sessions.appendingPathComponent("11.json"), atomically: true, encoding: .utf8)
+    }
+    let command = ClaudeRecordFiles.command(forPIDs: [11, 22])
+
+    func sessionID(_ environment: String) async throws -> String? {
+      let result = try await LocalShell.runner(environment + command)
+      let records = ClaudeRecordFiles.contents(of: result.standardOutput, forPIDs: [11, 22])
+      #expect(result.standardError.isEmpty, "\(result.standardError)")
+      return ClaudeSessionRecord.parse(records[11] ?? Data())?.sessionID
+    }
+    let homeOnly = "HOME=\(shellQuoted(home.path)); export HOME; "
+    #expect(try await sessionID(homeOnly) == "from-home")
+    let both = homeOnly + "CLAUDE_CONFIG_DIR=\(shellQuoted(config.path)); export CLAUDE_CONFIG_DIR; "
+    #expect(try await sessionID(both) == "from-config")
   }
 
   @Test("each pid's text comes back after its boundary, and a missing file is empty")

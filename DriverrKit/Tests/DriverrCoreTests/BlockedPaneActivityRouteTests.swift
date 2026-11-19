@@ -114,6 +114,14 @@ struct BlockedPaneActivityRouteTests {
     }
   }
 
+  /// A tmux pane id carries `%`, which a URL reads as the start of an escape.
+  @Test("a tmux pane survives the round trip")
+  func aTmuxPaneRoundTrips() {
+    let target = BlockedPaneActivityRoute.Target.pane(hostID: hostID, paneID: "tmux:%3")
+    let url = BlockedPaneActivityRoute.url(for: target)
+    #expect(BlockedPaneActivityRoute.target(of: url) == target, "\(url.absoluteString)")
+  }
+
   /// herdr pane ids are unconstrained. `&` or `=` would split a hand-built query and `%`
   /// would fail the parse, so both directions percent-encode. `+` is not a space in a query
   /// component and must survive.
