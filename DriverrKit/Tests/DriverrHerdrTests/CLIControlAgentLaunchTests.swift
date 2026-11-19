@@ -132,13 +132,15 @@ struct CLIControlAgentLaunchTests {
     #expect(try await CLIControl(run: host.runner).startAgent(launch) == "w2:p1")
   }
 
+  /// Measured on #97 with a kind whose program is not installed: the shell says 127, and
+  /// `agent start` waits out its 30 s and answers this.
   @Test("an agent that does not start leaves the pane open and names it")
   func halfFailure() async {
     let host = LaunchHost()
-    host.agentStart = LaunchHost.refusal("agent_start_timeout", "claude did not become ready")
+    host.agentStart = LaunchHost.refusal("timeout", "timed out waiting for agent startup")
     await #expect(
       throws: AppError.agentDidNotStart(
-        paneID: "w2:p1", place: "my app", reason: "claude did not become ready")
+        paneID: "w2:p1", place: "my app", reason: "timed out waiting for agent startup")
     ) {
       try await CLIControl(run: host.runner).startAgent(launch)
     }
