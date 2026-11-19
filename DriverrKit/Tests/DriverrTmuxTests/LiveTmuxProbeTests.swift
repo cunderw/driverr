@@ -442,9 +442,9 @@
     }
 
     /// Measured on 3.2a and 3.7c: moving a session's last pane away sends that session's client
-    /// `%layout-change` and then `%exit`. The check written between them may or may not be
-    /// answered, so the viewer either follows the pane or ends `.streamEnded`, which the scene
-    /// reattaches. It must never end as a closed pane.
+    /// `%layout-change` and then `%exit`, before the check written between them is answered. So
+    /// the viewer ends `.streamEnded`, which the scene reattaches, in six runs of six. One that
+    /// followed the pane would be right too. It must never end as a closed pane.
     @Test("a session's last pane moved to another session is followed or reattached, never closed")
     func lastPaneMoved() async throws {
       try await withLiveServer { control, tmux in
