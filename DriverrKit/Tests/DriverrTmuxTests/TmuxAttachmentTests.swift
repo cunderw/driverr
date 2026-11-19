@@ -197,15 +197,16 @@ struct TmuxAttachmentTests {
     await bridge.release()
   }
 
-  @Test("a resize sizes the window again, and the last release closes the client")
+  @Test("a resize sizes the window again, and release hands the window back and closes")
   func resizeAndRelease() async throws {
     let host = Host()
     let bridge = try await host.attacher.open(terminalID: "tmux:%3", size: Self.phone)
     try await bridge.resize(to: TerminalSize(columns: 40, rows: 30, pixelWidth: 0, pixelHeight: 0))
     #expect(host.stream.lines.contains("refresh-client -C @1:40x30"))
     await bridge.release()
-    // The client leaving hands its windows back, measured on 3.7c, so the last pane only closes.
-    #expect(!host.stream.lines.contains("refresh-client -C @1:"))
+    // The client leaving hands its windows back only after it has gone, so the window is asked
+    // for first, and is back when the release returns.
+    #expect(host.stream.lines.last == "refresh-client -C @1:")
     #expect(host.stream.closeCount == 1, "the last pane to leave closes the client")
   }
 
@@ -292,7 +293,7 @@ struct TmuxAttachmentTests {
     #expect(await finishes(within: .seconds(5)) { await bridge.release() })
     #expect(host.stream.lines.last == "refresh-client -C @1:", "the window was asked back")
     #expect(await finishes(within: .seconds(5)) { await other.release() })
-    #expect(host.stream.closeCount == 1)
+    #expect(host.stream.closeCount == 1, "the channel closes even though tmux never answered")
   }
 
   /// The listing after the stream ends goes over a fresh exec channel, which can hang as well.

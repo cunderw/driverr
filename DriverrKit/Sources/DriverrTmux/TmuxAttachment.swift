@@ -327,10 +327,12 @@ final class TmuxSessionClient: @unchecked Sendable {
   /// How long the listing after a stream ends may take, over its own exec channel.
   static let listingDeadline: Duration = .seconds(5)
 
-  /// Takes `attachment` off this client, and closes the client with the last one.
+  /// Takes `attachment` off this client, hands back the window it sized, and closes the client
+  /// with the last one.
   ///
-  /// **The last one only closes.** A client leaving hands every window it sized back, measured on
-  /// 3.7c, so asking for the window first would only add a wait.
+  /// **The last one asks for its window too.** A client leaving hands every window back, but
+  /// after the release has returned, measured on 3.7c. Asked first, the window is back when the
+  /// release returns, or `handBackDeadline` has passed.
   func detach(_ attachment: TmuxAttachment, sizedWindow: String?) async {
     let closes: Bool = lock.withLock {
       attachments[attachment.id] = nil
@@ -338,18 +340,15 @@ final class TmuxSessionClient: @unchecked Sendable {
       if closes { isClosing = true }
       return closes
     }
-    if closes {
-      await close()
-    } else if let sizedWindow {
-      await handBack(sizedWindow)
-    }
+    if let sizedWindow { await handBack(sizedWindow) }
+    if closes { await close() }
   }
 
   /// Gives `window` its own size back, unless another viewer still sizes it. Waits at most
   /// `handBackDeadline` for tmux's answer.
   func handBack(_ window: String) async {
     let clears: Bool = lock.withLock {
-      sizesWindows && !isEnded && !isClosing && !attachments.values.contains { $0.sizes(window) }
+      sizesWindows && !isEnded && !attachments.values.contains { $0.sizes(window) }
     }
     guard clears else { return }
     _ = await FirstAnswer.within(Self.handBackDeadline, otherwise: false) { answer in
