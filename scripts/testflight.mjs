@@ -278,7 +278,7 @@ export async function release(bundleId, number, notes) {
     summarize(`Build ${number}: still processing after ${minutes} minutes. Distribution was skipped. Do not upload it again; finish distribution in App Store Connect once processing ends.`);
     return;
   }
-  // Every call after a failed compliance answer ends in MISSING_EXPORT_COMPLIANCE, so none is made.
+  // A build with no compliance answer cannot reach external testers or Beta App Review, so distribution waits for the answer in App Store Connect.
   if (!(await nonFatal('export compliance', number, () => answerCompliance(build)))) {
     warn(`distribution was skipped for build ${number}, because its export compliance answer failed`);
     summarize(`Build ${number}: distribution was skipped, because its export compliance answer failed. Answer it in App Store Connect, then add the build to its groups.`);
