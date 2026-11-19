@@ -202,8 +202,10 @@ struct DirectoryListingShellTests {
     let home: URL
 
     init() throws {
-      // The real path, so the resolved path `pwd -P` prints compares equal.
-      let base = FileManager.default.temporaryDirectory.resolvingSymlinksInPath()
+      // The physical path, so the resolved path `pwd -P` prints compares equal. Not
+      // `resolvingSymlinksInPath()`, which turns `/private/var` back into `/var`.
+      let temporary = FileManager.default.temporaryDirectory.path
+      let base = URL(fileURLWithPath: realpath(temporary, nil).map { String(cString: $0) } ?? temporary)
       home = base.appendingPathComponent("driverr-dirlist-\(UUID().uuidString)")
       try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
     }
