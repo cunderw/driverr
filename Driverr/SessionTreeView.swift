@@ -246,7 +246,7 @@ struct SessionTreeView: View {
       case .failed(let error) where model.tree.isEmpty:
         // Only with nothing to show. A failure over a tree keeps the tree and says so in
         // the footer.
-        Text(error.errorDescription ?? "herdr could not be reached.")
+        Text(error.errorDescription ?? "The host could not be reached.")
           .accessibilityIdentifier("session.error")
 
       default:
@@ -546,7 +546,7 @@ struct SessionTreeView: View {
         }
 
       case .failed(_, let error):
-        Text(error.errorDescription ?? "herdr refused the request.")
+        Text(error.errorDescription ?? "The host refused the request.")
           .font(.footnote)
           .accessibilityIdentifier("session.rename.error")
         HStack {

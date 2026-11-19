@@ -271,7 +271,7 @@ final class PaneComposerModel: Identifiable {
   }
 
   private static func appError(from error: any Error) -> AppError {
-    (error as? AppError) ?? .herdrCommandFailed(reason: "herdr could not be reached.")
+    (error as? AppError) ?? .herdrCommandFailed(reason: "The host could not be reached.")
   }
 
   #if DEBUG

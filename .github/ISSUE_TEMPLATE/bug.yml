@@ -48,7 +48,7 @@ body:
     id: versions
     attributes:
       label: Versions
-      description: Driverr version, iOS version, device or simulator, and herdr version if the bug involves a session.
+      description: Driverr version, iOS version, device or simulator, and herdr or tmux version if the bug involves a session.
       placeholder: "Driverr 1.0, iOS 26.5, iPhone 17 simulator, herdr 0.9.1"
     validations:
       required: true

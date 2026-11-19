@@ -1,15 +1,15 @@
 # Driverr
 
 A free, native iOS and iPadOS SSH client built around
-[herdr](https://github.com/herdrdev/herdr) — the terminal workspace manager that keeps
-coding agents running in persistent background terminals. Driverr is an independent
-project. It is not affiliated with or endorsed by the herdr project, Anthropic, OpenAI,
-Google or Apple.
+[herdr](https://github.com/herdrdev/herdr) and [tmux](https://github.com/tmux/tmux), the
+tools that keep coding agents running in persistent background terminals. Driverr is an
+independent project. It is not affiliated with or endorsed by the herdr project, the tmux
+project, Anthropic, OpenAI, Google or Apple.
 
-Most terminal apps treat herdr as one more TUI to render. Driverr treats it as what it is:
-a remote object model. Workspaces, tabs, panes and agents are real SwiftUI screens driven
-by herdr's newline-delimited JSON, and the terminal is one view among several rather than
-the only one.
+Most terminal apps treat herdr and tmux as one more TUI to render. Driverr treats them as
+what they are: remote object models. herdr's workspaces and tabs, tmux's sessions and
+windows, and their panes and agents are real SwiftUI screens driven by what each one
+reports, and the terminal is one view among several rather than the only one.
 
 The specific thing Driverr does better than a general-purpose SSH client is tell you, on a
 phone, that an agent is **waiting on you** — and let you answer it without reading a
@@ -25,7 +25,7 @@ why they are identical on every run.*
 ## What it does
 
 - **Needs you** — every blocked agent, collected at the top of the session and named with
-  the workspace and tab it came from.
+  the workspace and tab, or the tmux session and window, it came from.
 - **Reply without a terminal** — a Claude Code or Codex conversation shows as a chat. Type a
   reply in the composer below it, or attach an image. When the agent asks a question that
   has options, tap a reply chip under the question. For a permission prompt, the chips are
@@ -38,6 +38,14 @@ why they are identical on every run.*
   [herdr-core](https://github.com/herdrdev/herdr-core), the
   [Herdr desktop app](https://github.com/herdrdev/herdr-app), or more than one of them.
   Driverr finds what the host has when it connects, over the same SSH connection.
+- **tmux** — a host with tmux 3.2 or later lists its sessions, windows and panes beside
+  herdr's, and a tmux pane opens as a live terminal. A Claude Code or Codex pane in tmux
+  shows its chat, and a blocked one shows in Needs you. A pane that only mirrors herdr or
+  tmux on the same host shows once. For a tmux pane, Driverr reads Claude Code's session
+  record from `$CLAUDE_CONFIG_DIR`, or from `~/.claude` when that is not set. Driverr runs
+  its commands in a non-interactive shell, so a variable exported only in `.zshrc` or
+  `.bashrc` does not reach them. Set it where a non-interactive shell reads it, such as
+  `~/.zshenv`.
 - **Keys and passwords** — generate or import an Ed25519 key, or use a password. Both live
   in the device Keychain.
 - **Host keys checked** — Driverr remembers a host's key on first contact and stops hard if
@@ -45,15 +53,16 @@ why they are identical on every run.*
 
 Two non-goals shape it as much as the goals do. Driverr is **not a configuration surface** —
 the entire settings screen is theme, font, font size, whether a captured pane screen wraps
-its long lines, and whether Driverr draws Live Activities. And it is **not a paid product**.
+its long lines, whether Driverr draws Live Activities, and whether an open tmux pane's
+window takes the phone's size. And it is **not a paid product**.
 
 Driverr has no backend. It talks directly to your own machines over SSH.
 
 ## Building it
 
 The tests and `scripts/look.sh` run on a seeded fake session, so none of them needs a host.
-Using the app by hand needs a machine you can reach over SSH. herdr is optional: a host
-without herdr or herdr-core still opens as an ordinary SSH shell.
+Using the app by hand needs a machine you can reach over SSH. herdr and tmux are optional: a
+host without herdr, herdr-core or tmux still opens as an ordinary SSH shell.
 
 You need:
 
@@ -185,7 +194,7 @@ Those files are the sources, and this document is not.
 
 ## How it is put together
 
-A SwiftUI app in `Driverr/` over a SwiftPM package in `DriverrKit/`, six modules:
+A SwiftUI app in `Driverr/` over a SwiftPM package in `DriverrKit/`, seven modules:
 
 | Module | Holds | Rule |
 | --- | --- | --- |
@@ -194,10 +203,12 @@ A SwiftUI app in `Driverr/` over a SwiftPM package in `DriverrKit/`, six modules
 | `DriverrTerm` | SwiftTerm, wrapped | Does not import `DriverrSSH` |
 | `DriverrHerdr` | herdr's wire format | herdr types never leave it |
 | `DriverrHC` | herdr-core's framed protocol | Its wire types never leave it |
+| `DriverrTmux` | tmux's command-line and control-mode output | Its wire types never leave it |
 | `DriverrTranscript` | The session files of Claude Code and Codex | Their record types never leave it |
 
 The boundaries are the point: they are what let stores be tested with no live SSH
-connection and no live herdr socket, and what confines upstream churn to one file each.
+connection, no live herdr socket and no live tmux server, and what confines upstream churn
+to one file each.
 
 - Conventions and the traps this project has already paid for: [`CLAUDE.md`](CLAUDE.md)
 
