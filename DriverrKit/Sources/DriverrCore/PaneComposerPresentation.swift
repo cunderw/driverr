@@ -281,9 +281,8 @@ public enum PaneComposerHold: Equatable, Sendable {
   /// Claude Code only, by `TranscriptAgent(of:)`, the rule the reader uses. Codex never reports
   /// a session to tmux, and its picker is another reason with its own evidence.
   public static func reason(agent: Agent?) -> PaneComposerHold? {
-    // PREVIOUS GUARD, for the round-2 red run.
-    guard let agent, agent.status == .blocked, agent.session == nil,
-      (agent.kind ?? agent.name.lowercased()).hasPrefix(TranscriptAgent.claude.rawValue)
+    guard let agent, agent.status == .blocked, agent.session == nil, agent.blockedKind == nil,
+      TranscriptAgent(of: agent) == .claude
     else { return nil }
     return .agentAsksOnScreen
   }
