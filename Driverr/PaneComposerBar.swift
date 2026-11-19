@@ -729,6 +729,9 @@ struct PaneComposerBar: View {
       .accessibilityLabel(PaneComposerCopy.closeSavedPrompts)
       .accessibilityIdentifier("composer.prompts.dismiss")
     }
+    // At the largest sizes the Save capsule is taller than the 44 pt row and touched the
+    // card's top edge.
+    .padding(.top, 4)
   }
 
   /// The rows, scrolling past `savedPromptCap` so the list cannot cover the conversation.
