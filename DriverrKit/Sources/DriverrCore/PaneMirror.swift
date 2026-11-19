@@ -38,7 +38,8 @@ public enum HerdrSessionKey: Hashable, Sendable {
   /// standard session.
   ///
   /// Measured on herdr 0.9.5: `herdr --session default` joins the standard session's server and
-  /// shows its panes, and no `sessions/default` socket appears.
+  /// shows its panes, and no `sessions/default` socket appears. `HERDR_SESSION=default` is not
+  /// measured, and is read the same way.
   public init(sessionName: String?) {
     guard let sessionName, !sessionName.isEmpty, sessionName != Self.standardName else {
       self = .standard

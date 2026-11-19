@@ -175,9 +175,21 @@ enum CoreSnapshotMapper {
       terminalID: terminal.address,
       directory: directory(of: terminal),
       viewportRows: terminal.rows,
-      // A pid names a process on one computer only, so a terminal on an added machine has none.
-      foregroundPID: terminal.machine == nil ? terminal.foreground?.pid : nil
+      foregroundPID: tmuxClientPID(of: terminal)
     )
+  }
+
+  /// The pid of the tmux client in the foreground of a terminal on this core's own computer, for
+  /// `MirrorClaim.Kind.tmuxClient`. `nil` for anything else.
+  ///
+  /// A pid names a process on one computer only, so a terminal on an added machine has none.
+  /// Only a tmux foreground carries one, because the pid is part of the pane's equality: every
+  /// command a shell runs changes it, and each change would be a new tree.
+  static func tmuxClientPID(of terminal: CoreTerminal) -> Int? {
+    guard terminal.machine == nil, let foreground = terminal.foreground else { return nil }
+    let program = foreground.argv?.first?.split(separator: "/").last.map(String.init)
+    guard foreground.name == "tmux" || program == "tmux" else { return nil }
+    return foreground.pid
   }
 
   /// Whether this terminal's pane is Claude, on this core or on a machine it added. Asks

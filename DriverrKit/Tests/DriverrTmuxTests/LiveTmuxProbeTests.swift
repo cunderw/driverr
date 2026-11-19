@@ -766,7 +766,7 @@
         }
         #expect(herdrClaims(tree) == expected)
 
-        // The read itself, for the client: the four variables come back and nothing else does,
+        // The read itself, for the client: the six variables come back and nothing else does,
         // although the unfiltered environment holds the secret.
         let pid = try #require(Int(try await tmux("list-clients -F '#{client_pid}'")))
         let raw = try await LocalShell.runner("ps -wwE -o command= -p \(pid)")

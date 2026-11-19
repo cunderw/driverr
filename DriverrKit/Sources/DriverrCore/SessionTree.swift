@@ -112,8 +112,9 @@ public struct Pane: Identifiable, Hashable, Sendable {
   /// tree's `MirrorClaim`s.
   public let isMirror: Bool
   /// The pid of the foreground process group's leader, for a core terminal on the core's own
-  /// computer, as the core reports it. `nil` for every other pane, including a core terminal on a
-  /// machine the core added, because a pid names nothing on another computer.
+  /// computer whose foreground is tmux, as the core reports it. `nil` for every other pane,
+  /// including a core terminal on a machine the core added, because a pid names nothing on
+  /// another computer.
   ///
   /// `CombinedControl` matches it against the clients of the tmux server on the same host. See
   /// `MirrorClaim.Kind.tmuxClient`.

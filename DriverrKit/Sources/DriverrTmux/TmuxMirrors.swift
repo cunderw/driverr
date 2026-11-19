@@ -349,12 +349,14 @@ enum TmuxMirrors {
 
 /// Which herdr-core an `hc` command reaches, from the variables that pick it.
 ///
-/// Measured on hc 0.1.21. `HC_SOCKET` names the socket outright. Else `HC_SESSION` names the
-/// session, and an unset or empty one is `default`, as `HC_SESSION=default` is. A session's
-/// socket is `$XDG_RUNTIME_DIR/herdr-core/<session>.sock`, or
-/// `~/.local/state/herdr-core/<session>/<session>.sock` with no `XDG_RUNTIME_DIR`. So a socket
-/// path in either layout is read back as its session, and only the end of it is read, as
-/// `HerdrSessionKey` does.
+/// Measured on hc 0.1.21: `HC_SOCKET` names the socket outright, and wins over `HC_SESSION`
+/// when both are set. Else `HC_SESSION` names the session, and an unset or empty one is
+/// `default`, as `HC_SESSION=default` is. A session's socket is
+/// `$XDG_RUNTIME_DIR/herdr-core/<session>.sock`. With no `XDG_RUNTIME_DIR` it was
+/// `~/.local/state/herdr-core/default/default.sock`, seen for `default` only, and read here as
+/// `<session>/<session>.sock`. A socket path in either layout is read back as its session, and
+/// only the end of it is read, as `HerdrSessionKey` does. A layout guessed wrong only leaves a
+/// mirror shown, because the keys then differ.
 ///
 /// **Limit.** A session name is not a core. One user with two `HOME`s or two `XDG_RUNTIME_DIR`s
 /// on one host can run two cores with one session name, and their keys compare equal. Nothing in
