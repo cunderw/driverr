@@ -551,7 +551,8 @@ struct TerminalScreen: View {
             && (pane.agent?.status != .blocked || screenModel?.hasReadForQuestion == true
               || chatModel?.transcript?.pendingToolCall?.asksItsOwnQuestions == true),
           pendingCall: chatModel?.transcript?.questionCall(
-            screen: screenModel?.screenForQuestion, agentStatus: pane.agent?.status)
+            screen: screenModel?.screenForQuestion, agentStatus: pane.agent?.status),
+          hold: composerHold
         ),
         onFocusChange: { isComposerFocused = $0 },
         // `nil` in shipping builds. See `composerFrame`.
