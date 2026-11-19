@@ -271,7 +271,8 @@ struct TmuxAttachmentTests {
     _ = try await read(&output, until: "H")
     try await bridge.resize(to: TerminalSize(columns: 40, rows: 30, pixelWidth: 0, pixelHeight: 0))
     await bridge.release()
-    #expect(host.stream.lines.filter { $0.contains("refresh-client -C @") } == [Self.firstSizing("@1", "60x20")])
+    let sizings = host.stream.lines.filter { $0.contains("refresh-client -C @") }
+    #expect(sizings == [Self.firstSizing("@1", "60x20")])
   }
 
   /// Only tmux before 3.3 answers `bad size argument`; any other refusal is about one size.

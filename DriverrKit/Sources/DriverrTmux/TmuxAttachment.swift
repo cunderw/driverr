@@ -278,7 +278,7 @@ final class TmuxSessionClient: @unchecked Sendable {
     binary: String,
     run: @escaping CommandRunner,
     stream: any HerdrStream,
-    ids: TmuxViewerIDs = TmuxViewerIDs()
+    ids: TmuxViewerIDs
   ) {
     self.session = session
     self.binary = binary
@@ -383,7 +383,8 @@ final class TmuxSessionClient: @unchecked Sendable {
       return
     }
     await attachment.sizeWindow()
-    try await attachment.paint(history: attachment.paintsHistory ? TmuxPaint.historyLines : 0, clearing: true)
+    try await attachment.paint(
+      history: attachment.paintsHistory ? TmuxPaint.historyLines : 0, clearing: true)
   }
 
   /// Sizes `window` to `size` for `attachment`, unless tmux has said it cannot, and waits for
@@ -397,16 +398,17 @@ final class TmuxSessionClient: @unchecked Sendable {
     let target = "\(columns)x\(rows)"
     await withCheckedContinuation { (waiting: CheckedContinuation<Void, Never>) in
       let sent: Bool = lock.withLock {
-        guard sizesWindows, attachments[attachment.id] === attachment else { return false }
+        guard sizesWindows, !isEnded, attachments[attachment.id] === attachment else { return false }
         let first = sizings[window] == nil
         var sizing = sizings[window] ?? Sizing()
         sizing.holders.removeAll { $0.id == attachment.id }
         sizing.holders.append((attachment.id, target))
         sizings[window] = sizing
+        let sizeLine = "refresh-client -C \(window):\(target)"
         let line =
           first
-          ? "display-message -p -t \(window) '#{window_width}x#{window_height}' ; refresh-client -C \(window):\(target)"
-          : "refresh-client -C \(window):\(target)"
+          ? "display-message -p -t \(window) '#{window_width}x#{window_height}' ; \(sizeLine)"
+          : sizeLine
         let id = attachment.id
         return enqueue(line, replies: first ? 2 : 1) { [weak self] result in
           self?.sized(window, by: id, first: first, result)
@@ -595,7 +597,9 @@ final class TmuxSessionClient: @unchecked Sendable {
         let (client, window) = try await relocate(attachment.pane)
         try await client.adopt(attachment, window: window)
       } catch {
+        // `.streamEnded`, which the scene reattaches, and off whichever client took it on.
         attachment.end(paneClosed: false)
+        await attachment.release()
       }
     }
   }
