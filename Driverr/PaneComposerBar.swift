@@ -713,6 +713,8 @@ struct PaneComposerBar: View {
       .disabled(!canSave)
       .accessibilityLabel(PaneComposerCopy.savePrompt)
       .accessibilityIdentifier("composer.prompts.save")
+      // A gap, or at the largest sizes the `xmark` touched the Save capsule.
+      .padding(.trailing, 4)
 
       Button {
         closeSavedPrompts()
@@ -805,6 +807,8 @@ struct PaneComposerBar: View {
       }
       .menuIndicator(.hidden)
       .buttonStyle(.plain)
+      // Off the card's edge, where the glyph sat at accessibility sizes.
+      .padding(.trailing, 4)
       .accessibilityLabel(PaneComposerCopy.promptActions(prompt.name))
       .accessibilityIdentifier("composer.prompts.row.\(index).more")
     }
@@ -814,31 +818,45 @@ struct PaneComposerBar: View {
   /// the keyboard cannot cover them, and tappable, because XCUITest cannot deliver Return.
   private func renameEditor(_ prompt: SavedPrompt, in saved: SavedPromptsModel) -> some View {
     let canCommit = RenameLabel.sanitised(renameDraft) != nil
-    return VStack(alignment: .leading, spacing: 8) {
-      HStack(spacing: 8) {
-        Text(PaneComposerCopy.renamePromptTitle)
-          .font(.footnote)
-          .lineLimit(1)
-          .minimumScaleFactor(0.7)
-        Spacer(minLength: 8)
-        Button {
-          endRenaming()
-        } label: {
-          BorderedButtonLabel(PaneComposerCopy.cancel)
-        }
-        .accessibilityIdentifier("composer.prompts.rename.cancel")
-        Button {
-          saved.rename(prompt.id, to: renameDraft)
-          endRenaming()
-        } label: {
-          Text(PaneComposerCopy.done)
-            .foregroundStyle(canCommit ? Color.primary : Color.secondary)
-        }
-        .disabled(!canCommit)
-        .accessibilityIdentifier("composer.prompts.rename.done")
+    let buttons = HStack(spacing: 8) {
+      Button {
+        endRenaming()
+      } label: {
+        BorderedButtonLabel(PaneComposerCopy.cancel)
       }
-      .buttonStyle(.bordered)
-      .controlSize(.small)
+      .accessibilityIdentifier("composer.prompts.rename.cancel")
+      Button {
+        saved.rename(prompt.id, to: renameDraft)
+        endRenaming()
+      } label: {
+        Text(PaneComposerCopy.done)
+          .foregroundStyle(canCommit ? Color.primary : Color.secondary)
+      }
+      .disabled(!canCommit)
+      .accessibilityIdentifier("composer.prompts.rename.done")
+    }
+    // One line per word: at accessibility sizes the buttons wrapped "Can" over "cel".
+    .lineLimit(1)
+    .fixedSize()
+    .buttonStyle(.bordered)
+    .controlSize(.small)
+    return VStack(alignment: .leading, spacing: 8) {
+      // The title goes where it does not fit beside the buttons. The field's placeholder and
+      // label still say what it is for.
+      ViewThatFits(in: .horizontal) {
+        HStack(spacing: 8) {
+          Text(PaneComposerCopy.renamePromptTitle)
+            .font(.footnote)
+            .lineLimit(1)
+            .fixedSize()
+          Spacer(minLength: 8)
+          buttons
+        }
+        HStack(spacing: 0) {
+          Spacer(minLength: 0)
+          buttons
+        }
+      }
 
       TextField(
         PaneComposerCopy.promptName,
