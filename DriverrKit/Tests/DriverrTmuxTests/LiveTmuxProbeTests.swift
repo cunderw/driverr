@@ -386,5 +386,61 @@
         #expect(working.blockedPanes.isEmpty)
       }
     }
+
+    // MARK: Codex (#102 S4b)
+
+    /// A `codex` that is `/bin/sleep` under another name, behind a shell that set the pane's
+    /// title with OSC 0, as Codex does. This measures that a real `ps` names it by the path it was
+    /// started by, that tmux carries the title to `#{pane_title}`, and that both reach the pane.
+    @Test("a process named codex is Codex, blocked by its Action Required title and then working")
+    func codex() async throws {
+      try await withThrowaway { control in
+        let scratch = try LocalShell.temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: scratch) }
+        let codex = scratch.appendingPathComponent("codex")
+        try FileManager.default.createSymbolicLink(
+          atPath: codex.path, withDestinationPath: "/bin/sleep")
+        let tmux = shellQuoted(control.binaryPath)
+
+        let pane = try await control.startTerminal()
+        let raw = try #require(TmuxID.raw(of: pane))
+        /// Runs `script` in the pane, in place of what ran there.
+        func respawn(_ script: String) async throws {
+          let result = try await LocalShell.runner(
+            "\(tmux) respawn-pane -k -t \(shellQuoted(raw)) \(shellQuoted(script))")
+          #expect(result.exitStatus == 0, "\(result.standardError)")
+        }
+        /// `respawn-pane` returns before `ps` shows the new process, so poll, then assert.
+        func settled(_ status: AgentStatus) async throws -> SessionTree {
+          var tree = try await control.snapshot()
+          for _ in 0..<40 where tree.pane(id: pane)?.agent?.status != status {
+            try await Task.sleep(for: .milliseconds(100))
+            tree = try await control.snapshot()
+          }
+          return tree
+        }
+
+        // The trailing `:` keeps the shell from exec-ing Codex, so the shell leads the group and
+        // Codex is only a member of it, as measured.
+        try await respawn(
+          "printf '\\033]0;[ ! ] Action Required | app\\007'; \(shellQuoted(codex.path)) 600; :")
+        let waiting = try await settled(.blocked)
+        let agent = waiting.pane(id: pane)?.agent
+        #expect(agent?.kind == TranscriptAgent.codex.rawValue)
+        #expect(agent?.status == .blocked)
+        #expect(agent?.blockedKind == nil)
+        #expect(agent?.session == nil)
+        #expect(waiting.pane(id: pane)?.title == "app")
+        #expect(waiting.blockedPanes.map(\.id) == [pane])
+
+        // Here Codex leads its group.
+        try await respawn("printf '\\033]0;⠋ app\\007'; exec \(shellQuoted(codex.path)) 600")
+        let working = try await settled(.working)
+        #expect(working.pane(id: pane)?.agent?.kind == TranscriptAgent.codex.rawValue)
+        #expect(working.pane(id: pane)?.agent?.status == .working)
+        #expect(working.pane(id: pane)?.title == "app")
+        #expect(working.blockedPanes.isEmpty)
+      }
+    }
   }
 #endif
