@@ -286,19 +286,45 @@ struct FlowLayout: Layout {
     return rows
   }
 
+  /// Where each chip goes and how big the whole is, for chips measured by `measure`.
+  struct Arrangement: Equatable {
+    var frames: [CGRect]
+    var proposals: [ProposedViewSize]
+    var size: CGSize
+  }
+
+  /// Lays chips out within `limit`. STUB: natural sizes, no clamp.
+  static func arrange(
+    count: Int, spacing: CGFloat, within limit: CGFloat,
+    measure: (Int, ProposedViewSize) -> CGSize
+  ) -> Arrangement {
+    let proposals = Array(repeating: ProposedViewSize.unspecified, count: count)
+    let sizes = (0..<count).map { measure($0, proposals[$0]) }
+    let rows = rows(of: sizes.map(\.width), spacing: spacing, within: limit)
+    var frames = Array(repeating: CGRect.zero, count: count)
+    var y: CGFloat = 0
+    var width: CGFloat = 0
+    for row in rows {
+      var x: CGFloat = 0
+      for index in row {
+        frames[index] = CGRect(origin: CGPoint(x: x, y: y), size: sizes[index])
+        x += sizes[index].width + spacing
+      }
+      width = max(width, x - spacing)
+      y += (row.map { sizes[$0].height }.max() ?? 0) + spacing
+    }
+    return Arrangement(
+      frames: frames, proposals: proposals,
+      size: CGSize(width: width, height: rows.isEmpty ? 0 : y - spacing))
+  }
+
   func sizeThatFits(
     proposal: ProposedViewSize, subviews: Subviews, cache: inout ()
   ) -> CGSize {
-    let sizes = subviews.map { $0.sizeThatFits(.unspecified) }
-    let rows = Self.rows(
-      of: sizes.map(\.width), spacing: spacing, within: proposal.width ?? .infinity)
-    let widths = rows.map { row in
-      row.map { sizes[$0].width }.reduce(0, +) + spacing * CGFloat(max(0, row.count - 1))
-    }
-    let heights = rows.map { row in row.map { sizes[$0].height }.max() ?? 0 }
-    return CGSize(
-      width: widths.max() ?? 0,
-      height: heights.reduce(0, +) + spacing * CGFloat(max(0, rows.count - 1)))
+    Self.arrange(
+      count: subviews.count, spacing: spacing, within: proposal.width ?? .infinity,
+      measure: { subviews[$0].sizeThatFits($1) }
+    ).size
   }
 
   /// Rows break against the proposed width, as in `sizeThatFits`, not against the bounds.
@@ -308,17 +334,13 @@ struct FlowLayout: Layout {
   func placeSubviews(
     in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()
   ) {
-    let sizes = subviews.map { $0.sizeThatFits(.unspecified) }
-    let rows = Self.rows(
-      of: sizes.map(\.width), spacing: spacing, within: proposal.width ?? .infinity)
-    var y = bounds.minY
-    for row in rows {
-      var x = bounds.minX
-      for index in row {
-        subviews[index].place(at: CGPoint(x: x, y: y), proposal: .unspecified)
-        x += sizes[index].width + spacing
-      }
-      y += (row.map { sizes[$0].height }.max() ?? 0) + spacing
+    let arrangement = Self.arrange(
+      count: subviews.count, spacing: spacing, within: proposal.width ?? .infinity,
+      measure: { subviews[$0].sizeThatFits($1) })
+    for (index, frame) in arrangement.frames.enumerated() {
+      subviews[index].place(
+        at: CGPoint(x: bounds.minX + frame.minX, y: bounds.minY + frame.minY),
+        proposal: arrangement.proposals[index])
     }
   }
 }
