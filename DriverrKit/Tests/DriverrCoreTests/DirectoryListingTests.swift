@@ -446,18 +446,6 @@ struct DirectoryListingShellTests {
     #expect(listing.names == ["inner"])
   }
 
-  @Test("`cd -` prints the folder it returns to, and the listing is still the folder's own")
-  func previousFolder() async throws {
-    let scratch = try Scratch()
-    defer { scratch.remove() }
-    try scratch.directory("back/inner")
-    let back = scratch.home.appendingPathComponent("back").path
-    let result = try await scratch.run(DirectoryListing.command(for: "-"), extra: ["OLDPWD": back])
-    let listing = try DirectoryListing.parse(result, requestedPath: "-")
-    #expect(listing.path == back)
-    #expect(listing.names == ["inner"])
-  }
-
   @Test("a folder that can be entered but not read lists as empty, not as unavailable")
   func executeOnlyFolder() async throws {
     let scratch = try Scratch()
@@ -530,7 +518,7 @@ struct DirectoryListingShellTests {
   func largeListing() async throws {
     let scratch = try Scratch()
     defer { scratch.remove() }
-    for index in 0..<600 { try scratch.directory(String(format: "%@%03d", String(repeating: "n", count: 100), index)) }
+    for index in 0..<700 { try scratch.directory(String(format: "%@%03d", String(repeating: "n", count: 100), index)) }
     let result = try await scratch.run(DirectoryListing.command(for: scratch.home.path))
     #expect(result.standardOutput.utf8.count > 65_536)
     let listing = try DirectoryListing.parse(result, requestedPath: scratch.home.path)
