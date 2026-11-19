@@ -132,7 +132,7 @@ public struct TmuxControl: HerdrControl {
     // has a tree.
     let table = try? await run(TmuxProcessTable.command)
     let processes = table.flatMap { $0.succeeded ? TmuxProcessTable.parse($0.standardOutput) : nil }
-    let agents = await agents(forRows: rows, processes: processes)
+    let agents = try await agents(forRows: rows, processes: processes)
     let claims = await mirrorClaims(
       forRows: rows, clientPIDs: TmuxClientFormat.pids(from: output), processes: processes)
     try Task.checkCancellation()
@@ -164,7 +164,7 @@ public struct TmuxControl: HerdrControl {
   private func agents(
     forRows rows: [TmuxPaneRow],
     processes: [TmuxProcess]?
-  ) async -> [String: Agent] {
+  ) async throws -> [String: Agent] {
     guard let processes else { return [:] }
 
     var candidates: [String: [Int]] = [:]
@@ -189,6 +189,15 @@ public struct TmuxControl: HerdrControl {
         agents[paneID] = record.agent
         break
       }
+    }
+
+    // NAIVE (#122 red run): every pane's screen, and the dialog overrides anything.
+    let naive = rows.map { (id: $0.paneID, quoted: shellQuoted($0.paneID)) }
+    let result = try await run(TmuxCommands.readPanes(binary: binary, panes: naive))
+    let screens = TmuxCommands.panes(
+      from: result.standardOutput, ids: naive.map(\.id), lines: Int.max)
+    for (id, lines) in screens where ClaudeTrustDialog.isShowing(lines) {
+      agents[id] = Agent(name: "Claude", kind: TranscriptAgent.claude.rawValue, status: .blocked)
     }
 
     // Codex keeps no record of its process, so its name in the foreground group makes the agent
