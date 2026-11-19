@@ -24,7 +24,7 @@ public struct ClaudeSessionRecord: Equatable, Sendable {
   public let waitingFor: String?
   public let directory: String?
 
-  /// The words `status` takes that this build maps.
+  /// The words `status` and `waitingFor` take that this build maps.
   public enum Word {
     public static let idle = "idle"
     public static let busy = "busy"
