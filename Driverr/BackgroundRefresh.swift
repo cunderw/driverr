@@ -197,8 +197,10 @@ final class BackgroundRefreshRunner {
       return .couldNotReachTheHost
     }
     // This process has no registry, so the card says what its other hosts already count.
+    // A mirror shows panes the tree lists on their own, so it is not announced twice.
     let tree = reported.hidingMachines(
-      coveredBy: environment.blockedPaneActivities.coreIDs(coveringHost: host.id))
+      coveredBy: environment.blockedPaneActivities.coreIDs(coveringHost: host.id)
+    ).hidingMirrors()
 
     // Its own notifier, reading the announced set the last run persisted. See
     // `AnnouncedPaneStore`.

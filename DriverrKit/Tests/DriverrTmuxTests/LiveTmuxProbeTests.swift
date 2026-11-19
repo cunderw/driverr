@@ -442,5 +442,86 @@
         #expect(working.blockedPanes.isEmpty)
       }
     }
+
+    // MARK: Mirrors (#102 S5)
+
+    /// A herdr client in a tmux pane, and a tmux client in a herdr pane, both stood in for.
+    ///
+    /// The herdr client is a copy of `cat` named `herdr`, with no arguments, so its session comes
+    /// from `HERDR_SOCKET_PATH`. **A copy, signed again, and not a link.** macOS `ps -E` shows no
+    /// environment for a platform binary such as `/bin/cat`, measured on this probe's first run;
+    /// an ad-hoc signed copy is not one, as Homebrew's `herdr` and `tmux` are not.
+    ///
+    /// The tmux client is a real `tmux attach` under `script`, which gives it a terminal, with a
+    /// made-up `HERDR_PANE_ID`. Its stdin is the stream's pipe, held open: `script` reads
+    /// end-of-file as ^D, which ends the session's shell. It needs `TERM`, which the stream's
+    /// environment leaves out.
+    ///
+    /// Both carry `DRIVERR_PROBE_SECRET`, which must not come back from the host.
+    @Test("a herdr client in a pane and a client in a herdr pane both claim, and no secret leaves")
+    func mirrors() async throws {
+      try await withLiveServer { control, tmux in
+        let scratch = try LocalShell.temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: scratch) }
+        let herdr = scratch.appendingPathComponent("herdr")
+        try FileManager.default.copyItem(atPath: "/bin/cat", toPath: herdr.path)
+        let signed = try await LocalShell.runner("codesign -f -s - \(shellQuoted(herdr.path))")
+        #expect(signed.exitStatus == 0, "\(signed.standardError)")
+        let socket = "/tmp/driverr-probe/sessions/probe/herdr.sock"
+
+        let respawned = try await LocalShell.runner(
+          "\(shellQuoted(control.binaryPath)) respawn-pane -k -t \(shellQuoted("%1")) "
+            + shellQuoted(
+              "env HERDR_SOCKET_PATH=\(socket) DRIVERR_PROBE_SECRET=nope \(shellQuoted(herdr.path))"))
+        #expect(respawned.exitStatus == 0, "\(respawned.standardError)")
+
+        let client = try LocalShellStream(
+          command: "env TERM=xterm-256color HERDR_PANE_ID=w9:p9 HERDR_SOCKET_PATH=\(socket) "
+            + "DRIVERR_PROBE_SECRET=nope "
+            + "script -q /dev/null \(shellQuoted(control.binaryPath)) attach -t probe")
+        defer { Task { await client.close() } }
+
+        let expected: Set<MirrorClaim> = [
+          MirrorClaim(paneID: "tmux:%1", session: .named("probe")),
+          MirrorClaim(paneID: "w9:p9", session: .named("probe")),
+        ]
+        var tree = try await control.snapshot()
+        for _ in 0..<50 where tree.mirrorClaims != expected {
+          try await Task.sleep(for: .milliseconds(100))
+          tree = try await control.snapshot()
+        }
+        #expect(tree.mirrorClaims == expected)
+
+        // The read itself, for the client: the four variables come back and nothing else does,
+        // although the unfiltered environment holds the secret.
+        let pid = try #require(Int(try await tmux("list-clients -F '#{client_pid}'")))
+        let raw = try await LocalShell.runner("ps -wwE -o command= -p \(pid)")
+        #expect(raw.standardOutput.contains("DRIVERR_PROBE_SECRET=nope"), "the secret is there to leak")
+        let read = try await LocalShell.runner(TmuxProcessDetailsRead.command(forPIDs: [pid]))
+        #expect(read.standardOutput.contains("HERDR_PANE_ID=w9:p9"), "\(read.standardOutput)")
+        #expect(!read.standardOutput.contains("DRIVERR_PROBE_SECRET"))
+        #expect(!read.standardOutput.contains("PATH=/usr/bin"))
+        let details = TmuxProcessDetailsRead.details(from: read.standardOutput, forPIDs: [pid])
+        #expect(details[pid]?.environment.keys.sorted() == ["HERDR_PANE_ID", "HERDR_SOCKET_PATH"])
+        #expect(details[pid]?.arguments.contains("attach -t probe") == true)
+
+        // And for the herdr stand-in, the leader of `%1`.
+        let tty = try await tmux("display-message -p -t \(shellQuoted("%1")) '#{pane_tty}'")
+        let leader = try #require(
+          Int(
+            try await LocalShell.runner(
+              "ps -A -o pid=,tpgid=,tty= | awk -v t=\(shellQuoted(TmuxProcessTable.ttyName(ofPaneTTY: tty))) '$3==t && $1==$2 {print $1}'"
+            ).standardOutput.trimmingCharacters(in: .whitespacesAndNewlines)))
+        let leaderRaw = try await LocalShell.runner("ps -wwE -o command= -p \(leader)")
+        #expect(leaderRaw.standardOutput.contains("DRIVERR_PROBE_SECRET=nope"), "the secret is there to leak")
+        let leaderRead = try await LocalShell.runner(
+          TmuxProcessDetailsRead.command(forPIDs: [leader]))
+        #expect(leaderRead.standardOutput.contains("HERDR_SOCKET_PATH=\(socket)"), "\(leaderRead.standardOutput)")
+        #expect(!leaderRead.standardOutput.contains("DRIVERR_PROBE_SECRET"))
+        #expect(
+          TmuxProcessDetailsRead.details(from: leaderRead.standardOutput, forPIDs: [leader])[leader]?
+            .environment.keys.sorted() == ["HERDR_SOCKET_PATH", "TMUX"])
+      }
+    }
   }
 #endif

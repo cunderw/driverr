@@ -135,6 +135,9 @@ public struct CombinedControl: HerdrControl {
   private let primaryIsTUI: Bool
   private let sides: [Side]
   private let memory = Memory()
+  /// The herdr session the TUI is bound to, which a `MirrorClaim` must name to hide its pane.
+  /// `nil` is the standard session, as it is for the TUI. See `bound(toSocketPath:)`.
+  private let socketPath: String?
 
   /// The TUI and a core, the shape this control first had.
   public init(tui: any HerdrControl, core: any HerdrControl) {
@@ -152,10 +155,13 @@ public struct CombinedControl: HerdrControl {
     self.init(primary: primary, primaryIsTUI: false, sides: sides)
   }
 
-  private init(primary: any HerdrControl, primaryIsTUI: Bool, sides: [Side]) {
+  private init(
+    primary: any HerdrControl, primaryIsTUI: Bool, sides: [Side], socketPath: String? = nil
+  ) {
     self.tui = primary
     self.primaryIsTUI = primaryIsTUI
     self.sides = sides
+    self.socketPath = socketPath
   }
 
   /// What serves a host, from what each discovery found. `nil` when nothing was found, and the
@@ -183,9 +189,11 @@ public struct CombinedControl: HerdrControl {
   public var binaryPath: String { tui.binaryPath }
 
   /// Binds the TUI side. `Host.herdrSocketPath` names a herdr session, which a core or a tmux
-  /// server is not.
+  /// server is not. The path is kept, because it says which session a mirror must show.
   public func bound(toSocketPath path: String?) -> any HerdrControl {
-    CombinedControl(primary: tui.bound(toSocketPath: path), primaryIsTUI: primaryIsTUI, sides: sides)
+    CombinedControl(
+      primary: tui.bound(toSocketPath: path), primaryIsTUI: primaryIsTUI, sides: sides,
+      socketPath: path)
   }
 
   /// The first stream a side has, never the TUI's. Only a core has one today. The TUI is
@@ -309,28 +317,45 @@ public struct CombinedControl: HerdrControl {
   }
 
   /// The TUI's focus and the first core id. With no TUI tree, the first side's focus.
+  ///
+  /// Every side's `MirrorClaim`s are kept on the result. Beside a TUI tree, the panes they claim
+  /// for its session are marked `isMirror`, which `SessionTree.hidingMirrors(keeping:)` reads.
   private func merged(
     _ tuiSide: TUISide,
     _ reads: [Result<SessionTree, any Error>]
   ) throws -> SessionTree {
     let trees = reads.compactMap { try? $0.get() }
+    let claims = trees.reduce(into: Set<MirrorClaim>()) { $0.formUnion($1.mirrorClaims) }
     switch tuiSide {
     case .tree(let tui):
-      return SessionTree(
+      let tree = SessionTree(
         workspaces: tui.workspaces + trees.flatMap(\.workspaces),
         focusedPaneID: tui.focusedPaneID,
-        coreID: tui.coreID ?? trees.lazy.compactMap(\.coreID).first
+        coreID: tui.coreID ?? trees.lazy.compactMap(\.coreID).first,
+        mirrorClaims: tui.mirrorClaims.union(claims)
       )
+      return primaryIsTUI ? tree.markingMirrors(mirrors(in: tree.mirrorClaims)) : tree
     case .noSession(let failure):
       guard !trees.isEmpty else { throw failure }
       return SessionTree(
         workspaces: trees.flatMap(\.workspaces),
         focusedPaneID: trees.lazy.compactMap(\.focusedPaneID).first,
-        coreID: trees.lazy.compactMap(\.coreID).first
+        coreID: trees.lazy.compactMap(\.coreID).first,
+        mirrorClaims: claims
       )
     case .failed(let failure):
       throw failure
     }
+  }
+
+  /// The panes whose claims name the herdr session this host's TUI is bound to.
+  ///
+  /// Only for a TUI that answered with a tree: with no herdr session listed, a mirror is the only
+  /// way to the panes it shows, so it stays. A core standing in for the TUI is not herdr's
+  /// session, and herdr-core hosts are not measured.
+  private func mirrors(in claims: Set<MirrorClaim>) -> Set<String> {
+    let session = HerdrSessionKey(socketPath: socketPath)
+    return Set(claims.filter { $0.session == session }.map(\.paneID))
   }
 
   /// Not `.notInstalled`, which `CLIControl.availability` also answers when its status

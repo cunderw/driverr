@@ -428,8 +428,10 @@ final class BackgroundWatchRunner {
       checks += 1
       if let reported {
         // As in `BackgroundRefreshRunner`: the card knows what the other hosts already count.
+        // And without mirrors, which show panes the tree already counts.
         let tree = reported.hidingMachines(
-          coveredBy: environment.blockedPaneActivities.coreIDs(coveringHost: host.id))
+          coveredBy: environment.blockedPaneActivities.coreIDs(coveringHost: host.id)
+        ).hidingMirrors()
         // The same feed as the foreground poll. `.oneHost` because this pass saw one machine,
         // and `canRequest: false` because cards are requested from the foreground. The driver
         // already has the preferences, because this is the same process.

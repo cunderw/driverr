@@ -318,7 +318,14 @@ final class AccessibilityUITests: XCTestCase {
     treePaneRow(app, titled: "needs a decision").tap()
     let toggle = require(app, "pane.surface.terminal", "Expected the toggle at this size")
     XCTAssertTrue(toggle.isHittable, "The Show Terminal toggle is not reachable at this size")
-    let turn = require(app, "pane.chat.turn.assistant", "Expected the agent's turn")
+    // By label, because the chat opens at the newest turn and older turns stay realized above
+    // the viewport, so the first identifier match is an off-screen turn that is not hittable.
+    let turn = app.descendants(matching: .any).matching(
+      NSPredicate(
+        format: "identifier == %@ AND label CONTAINS %@",
+        "pane.chat.turn.assistant", "Proceed with the migration?")
+    ).firstMatch
+    XCTAssertTrue(turn.waitForExistence(timeout: 15), "Expected the agent's newest turn")
     XCTAssertTrue(turn.isHittable, "The agent's turn is not reachable at this size")
 
     // The conversation's first row, so at this size it is reached by scrolling back to the

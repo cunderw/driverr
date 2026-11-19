@@ -97,13 +97,22 @@ public actor FakeTmuxHost {
     /// As `ps` prints it, with no `/dev/`.
     public var tty: String
     public var command: String
+    /// `ps`'s `args`, or `nil` for `command` alone.
+    public var arguments: String?
+    /// The whole environment, as the process holds it. The host's own command filters it.
+    public var environment: [String: String]
 
-    public init(pid: Int, groupID: Int? = nil, foregroundGroupID: Int? = nil, tty: String, command: String) {
+    public init(
+      pid: Int, groupID: Int? = nil, foregroundGroupID: Int? = nil, tty: String, command: String,
+      arguments: String? = nil, environment: [String: String] = [:]
+    ) {
       self.pid = pid
       self.groupID = groupID ?? pid
       self.foregroundGroupID = foregroundGroupID ?? pid
       self.tty = tty
       self.command = command
+      self.arguments = arguments
+      self.environment = environment
     }
   }
 
@@ -125,6 +134,8 @@ public actor FakeTmuxHost {
   /// `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/sessions/<pid>.json`, by pid. A pid with no entry has
   /// no file.
   public private(set) var records: [Int: String]
+  /// The pids of the clients attached to the server, as `list-clients` prints them.
+  public private(set) var clients: [Int]
   /// What `tmux -V` prints. `nil` is a host with no tmux, and every command says so.
   public var version: String?
   /// Every command line this host was given, in order.
@@ -139,11 +150,13 @@ public actor FakeTmuxHost {
     sessions: [Session] = [],
     processes: [Process] = [],
     records: [Int: String] = [:],
+    clients: [Int] = [],
     version: String? = "tmux 3.7c"
   ) {
     self.sessions = sessions
     self.processes = processes
     self.records = records
+    self.clients = clients
     self.version = version
     nextPane = (sessions.flatMap(\.windows).flatMap(\.panes).map(\.id).max() ?? -1) + 1
     nextWindow = (sessions.flatMap(\.windows).map(\.id).max() ?? -1) + 1
@@ -156,6 +169,7 @@ public actor FakeTmuxHost {
 
   public func setSessions(_ sessions: [Session]) { self.sessions = sessions }
   public func setProcesses(_ processes: [Process]) { self.processes = processes }
+  public func setClients(_ clients: [Int]) { self.clients = clients }
   /// Writes, or with `nil` deletes, Claude Code's record for a pid.
   public func setRecord(pid: Int, _ text: String?) { records[pid] = text }
 
@@ -348,6 +362,7 @@ public actor FakeTmuxHost {
       return cat(words, insideShell: insideShell)
     case "sh":
       guard words.count == 3, words[1] == "-c" else { return Self.failure("sh: usage", status: 2) }
+      if let details = processDetails(script: words[2]) { return details }
       return execute(words[2], insideShell: true)
     default:
       return Self.failure("sh: \(name): command not found", status: 127)
@@ -373,6 +388,30 @@ public actor FakeTmuxHost {
       return Self.failure("cat: \(path): No such file or directory", status: 1)
     }
     return Self.success(text + "\n")
+  }
+
+  /// `TmuxProcessDetailsRead`'s script, which this shell cannot parse, answered as a host would:
+  /// each pid's boundary, its `args`, and only the four variables of its environment. `nil` for
+  /// any other script, which runs as usual.
+  ///
+  /// The script must be exactly the one for the pids its boundaries name, so a change to the
+  /// command that drops the filter has to change this too.
+  private func processDetails(script: String) -> CommandResult? {
+    let prefix = "'\(TmuxProcessDetailsRead.marker) "
+    let pids = script.components(separatedBy: prefix).dropFirst().compactMap { part in
+      Int(part.prefix(while: \.isNumber))
+    }
+    guard !pids.isEmpty, script == TmuxProcessDetailsRead.script(forPIDs: pids) else { return nil }
+    var output = ""
+    for pid in pids {
+      output += "\n\(TmuxProcessDetailsRead.marker) \(pid)\n"
+      guard let process = processes.first(where: { $0.pid == pid }) else { continue }
+      output += "args \(process.arguments ?? process.command)\n"
+      for name in TmuxProcessDetailsRead.variables {
+        if let value = process.environment[name] { output += "\(name)=\(value)\n" }
+      }
+    }
+    return Self.success(output)
   }
 
   // MARK: tmux
@@ -441,6 +480,12 @@ public actor FakeTmuxHost {
     switch command[0] {
     case "list-panes":
       return listPanes(&flags)
+    case "list-clients":
+      guard !sessions.isEmpty else { return noServer() }
+      let format = flags.value("-F") ?? "#{client_pid}"
+      return Self.success(
+        clients.map { format.replacingOccurrences(of: "#{client_pid}", with: "\($0)") + "\n" }
+          .joined())
     case "send-keys":
       return sendKeys(&flags)
     case "capture-pane":
