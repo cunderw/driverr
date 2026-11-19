@@ -504,10 +504,6 @@ public struct CLIControl: HerdrControl {
     return max(1, min(requested, viewportRows))
   }
 
-  /// What herdr said when it refused, or `nil` when it did not.
-  ///
-  /// Checks both streams: herdr 0.8.0 wrote the envelope to stdout, later versions to
-  /// stderr. Returns the message, not the raw JSON.
   /// herdr's own message as the end of a sentence of Driverr's. It is lower case and has no
   /// full stop, so it is named as herdr's: "herdr said: timed out waiting for agent startup."
   static func attributed(_ message: String) -> String {
@@ -515,6 +511,10 @@ public struct CLIControl: HerdrControl {
     return "herdr said: \(trimmed)" + (trimmed.hasSuffix(".") ? "" : ".")
   }
 
+  /// What herdr said when it refused, or `nil` when it did not.
+  ///
+  /// Checks both streams: herdr 0.8.0 wrote the envelope to stdout, later versions to
+  /// stderr. Returns the message, not the raw JSON.
   static func refusal(in result: CommandResult) -> String? {
     errorMessage(in: result.standardError) ?? errorMessage(in: result.standardOutput)
   }
