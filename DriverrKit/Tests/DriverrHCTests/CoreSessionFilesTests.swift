@@ -264,6 +264,23 @@ struct CoreSessionFilesTests {
     #expect(read, "the read waited for a place that has not answered")
   }
 
+  /// The terminals read side by side, so the second asks while the first's answer is on its way.
+  @Test("terminals that read together on one place share one question")
+  func configDirectoryIsAskedOnceAtATime() async throws {
+    let stream = stream(claude("t1", pid: 101), claude("t2", pid: 102))
+    stream.exec = { _, _ in
+      try? await Task.sleep(for: .milliseconds(200))
+      return .result(FakeCoreStream.executed(stdout: "/cfg\n"))
+    }
+    stream.files = [
+      "/cfg/sessions/101.json": record(pid: 101, id: "first"),
+      "/cfg/sessions/102.json": record(pid: 102, id: "second"),
+    ]
+    let tree = try await control(stream).snapshot()
+    #expect(sessions(tree) == ["core:t1": "first", "core:t2": "second"])
+    #expect(try execs(stream).count == 1)
+  }
+
   /// With no home here, a core that names a directory is still read.
   @Test("a terminal on the core is read from a named directory even with no home")
   func configDirectoryWithNoHome() async throws {
