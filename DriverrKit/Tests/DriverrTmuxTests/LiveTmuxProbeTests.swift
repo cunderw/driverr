@@ -335,10 +335,10 @@
           ? config.appendingPathComponent("sessions")
           : home.appendingPathComponent(".claude/sessions")
         try FileManager.default.createDirectory(at: sessions, withIntermediateDirectories: true)
-        var environment = "HOME=\(shellQuoted(home.path)); export HOME; "
-        if configDirectorySet {
-          environment += "CLAUDE_CONFIG_DIR=\(shellQuoted(config.path)); export CLAUDE_CONFIG_DIR; "
-        }
+        let environment =
+          "HOME=\(shellQuoted(home.path)); export HOME; "
+          + (configDirectorySet
+            ? "CLAUDE_CONFIG_DIR=\(shellQuoted(config.path)); export CLAUDE_CONFIG_DIR; " : "")
         let run: CommandRunner = { try await LocalShell.runner(environment + $0) }
         let control = TmuxControl(binaryPath: plain.binaryPath, run: run)
         let tmux = shellQuoted(plain.binaryPath)
