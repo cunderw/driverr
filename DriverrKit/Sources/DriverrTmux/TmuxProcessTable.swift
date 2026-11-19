@@ -91,13 +91,19 @@ enum TmuxProcessTable {
   ///
   /// **Not when Claude leads the group.** Claude can start `codex mcp-server` as an MCP child in
   /// its own group, and with Claude's record missing or unreadable that child would make a
-  /// Claude pane a Codex one. Claude's `comm` is `claude`, or its version string, `2.1.325`.
+  /// Claude pane a Codex one.
   static func runsCodex(_ group: [TmuxProcess]) -> Bool {
-    if let leader = group.first, leader.pid == leader.groupID, !isCodex(leader) {
-      let leaderName = name(of: leader)
-      if leaderName == "claude" || TmuxSnapshotMapper.looksLikeVersion(leaderName) { return false }
-    }
-    return group.contains(where: isCodex)
+    !isClaudeLed(group) && group.contains(where: isCodex)
+  }
+
+  /// Whether Claude leads a pane's foreground group, from `foregroundGroup(forPaneTTY:in:)`.
+  ///
+  /// Claude's `comm` is `claude`, its path, or its version string, `2.1.325`. Measured on
+  /// 2.1.328 on macOS while its trust dialog showed: `claude`, the group's only member.
+  static func isClaudeLed(_ group: [TmuxProcess]) -> Bool {
+    guard let leader = group.first, leader.pid == leader.groupID else { return false }
+    let leaderName = name(of: leader)
+    return leaderName == "claude" || TmuxSnapshotMapper.looksLikeVersion(leaderName)
   }
 
   /// A command's last path component.
@@ -149,5 +155,13 @@ enum ClaudeRecordFiles {
       }
     }
     return records.mapValues { Data($0.joined(separator: "\n").utf8) }
+  }
+
+  /// Whether a pid's text from `contents(of:forPIDs:)` says it has no record: its boundary came
+  /// back with nothing after it. A pid with no boundary was not answered, which is not the same.
+  static func isMissing(_ text: Data?) -> Bool {
+    guard let text else { return false }
+    return String(decoding: text, as: UTF8.self)
+      .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
   }
 }

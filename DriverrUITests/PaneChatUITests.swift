@@ -1602,7 +1602,8 @@ final class PaneChatUITests: XCTestCase {
   /// The no-session-file notice invites a send, and the send carries the chat to `.ready`.
   ///
   /// `-uiTestingFirstMessage` gives `w1:p2`'s Claude no `agent_session` and an empty project
-  /// directory, so the pane resolves `.noSessionFiles` on arrival.
+  /// directory, so the pane resolves `.noSessionFiles` on arrival. The agent is idle, at its
+  /// own prompt.
   func testSendingTheFirstMessageAnswersTheNoSessionFileNotice() {
     XCUIDevice.shared.orientation = .portrait
     let app = connectedHostApp(["-uiTestingFirstMessage"])
@@ -1624,6 +1625,53 @@ final class PaneChatUITests: XCTestCase {
       timeout: 15
     )
     requireGone(app, "pane.chat.notice", "The notice must not survive the first reply")
+  }
+
+  /// The same pane blocked, as Claude Code is on its folder-trust prompt, whose Enter picks
+  /// "No, exit" (#122). Reply from Needs you leaves the keyboard down, so the notice's Show the
+  /// Screen is in view, and the composer keeps typed text with Send off. A UI test because the
+  /// hold is wired from the pane screen into the bar, the notice and the focus gate;
+  /// `PaneComposerHoldTests`, `ComposerFocusGate`'s tests and `PaneComposerModelTests` cover
+  /// the rules and the refusal. The slow transcript keeps the chat loading after the pane
+  /// opens, which must not lift the hold or let the keyboard up.
+  func testATrustPromptHoldsTheComposerAndPointsToTheScreen() {
+    XCUIDevice.shared.orientation = .portrait
+    let app = connectedHostApp(["-uiTestingTrustPrompt", "-uiTestingSlowTranscript"])
+    require(app, "session.workspace", "Expected the session tree")
+
+    let reply = app.descendants(matching: .any)
+      .matching(identifier: "session.blockedPane")
+      .matching(NSPredicate(format: "label CONTAINS %@", "needs a decision"))
+      .firstMatch
+    XCTAssertTrue(reply.waitForExistence(timeout: 10), "Expected the Needs-you row")
+    reply.tap()
+
+    let field = require(app, "composer.text", "Expected the composer under the notice")
+    // An inverted wait, because a broken gate focuses a frame after the chat draws.
+    // `hasKeyboardFocus`, because `app.keyboards.count` reads 1 with a hardware keyboard.
+    let focused = XCTNSPredicateExpectation(
+      predicate: NSPredicate(format: "hasKeyboardFocus == true"), object: field)
+    focused.isInverted = true
+    XCTAssertEqual(
+      XCTWaiter().wait(for: [focused], timeout: 3), .completed,
+      "Reply on a held pane must leave the keyboard down.\nTree was:\n\(app.debugDescription)"
+    )
+
+    let notice = require(app, "pane.chat.notice", "Expected the trust-prompt notice")
+    XCTAssertTrue(
+      notice.label.contains("A message sent from here would press Enter"),
+      "The notice must send the reader to the screen, got '\(notice.label)'"
+    )
+    XCTAssertFalse(notice.label.contains("Send a message below"), "got '\(notice.label)'")
+    let showScreen = require(app, "pane.chat.showScreen", "Expected the way to the screen")
+    XCTAssertTrue(showScreen.isHittable, "Show the Screen must be in view above the composer")
+    require(app, "composer.hold", "Expected the composer to say why Send is off")
+
+    field.tap()
+    app.typeText("yes")
+    let send = require(app, "composer.send", "Expected the send button")
+    XCTAssertFalse(send.isEnabled, "Send must stay off while the agent asks on its screen")
+    XCTAssertEqual(field.value as? String, "yes", "The typed text must stay")
   }
 
   // MARK: - The chat keeps looking

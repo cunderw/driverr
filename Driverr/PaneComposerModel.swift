@@ -45,6 +45,14 @@ final class PaneComposerModel: Identifiable {
     set { state.text = newValue }
   }
 
+  /// Why typed text may not go now, or `nil`. See `PaneComposerHold`. The bar writes it from
+  /// the pane and its chat, and the send itself checks it, so a tap that lands before the
+  /// redraw is refused too. What is typed stays.
+  var hold: PaneComposerHold? {
+    get { state.hold }
+    set { if state.hold != newValue { state.hold = newValue } }
+  }
+
   var isSending: Bool { state.isSending }
   var canSend: Bool { state.canSend }
   var failure: AppError? { state.failure }

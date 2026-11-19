@@ -83,21 +83,22 @@ struct ComposerFocusGateTests {
 
   @Test("the request waits until the chat has read the session")
   func waitsForTheRead() {
-    #expect(ComposerFocusGate(isSettled: false, pendingCall: nil) == .wait)
-    #expect(ComposerFocusGate(isSettled: false, pendingCall: question) == .wait)
+    #expect(ComposerFocusGate(isSettled: false, pendingCall: nil, hold: nil) == .wait)
+    #expect(ComposerFocusGate(isSettled: false, pendingCall: question, hold: nil) == .wait)
   }
 
   @Test("a pane asking its own question keeps the keyboard down")
   func aQuestionDeclines() {
-    #expect(ComposerFocusGate(isSettled: true, pendingCall: question) == .decline)
+    #expect(ComposerFocusGate(isSettled: true, pendingCall: question, hold: nil) == .decline)
   }
 
   /// A permission prompt's pair is short, and Reply there is for typing.
   @Test("nothing asking, or a call with no questions of its own, takes the keyboard")
   func otherwiseAllows() {
-    #expect(ComposerFocusGate(isSettled: true, pendingCall: nil) == .allow)
+    #expect(ComposerFocusGate(isSettled: true, pendingCall: nil, hold: nil) == .allow)
     #expect(
-      ComposerFocusGate(isSettled: true, pendingCall: ToolCall(name: "Bash", outcome: .pending))
+      ComposerFocusGate(
+        isSettled: true, pendingCall: ToolCall(name: "Bash", outcome: .pending), hold: nil)
         == .allow)
   }
 
@@ -107,6 +108,18 @@ struct ComposerFocusGateTests {
     let ten = ToolCall(
       name: "AskUserQuestion", outcome: .pending,
       questions: [PendingQuestion(question: "Which?", options: (1...10).map { "o\($0)" })])
-    #expect(ComposerFocusGate(isSettled: true, pendingCall: ten) == .allow)
+    #expect(ComposerFocusGate(isSettled: true, pendingCall: ten, hold: nil) == .allow)
+  }
+
+  /// A held composer cannot send, and on a large text size the keyboard hides the notice's
+  /// Show the Screen. So Reply leaves the keyboard down, before the chat has read and after
+  /// (#122).
+  @Test(
+    "a held composer declines the keyboard, whatever the chat has read",
+    arguments: [false, true])
+  func heldDeclines(isSettled: Bool) {
+    #expect(
+      ComposerFocusGate(isSettled: isSettled, pendingCall: nil, hold: .agentAsksOnScreen)
+        == .decline)
   }
 }

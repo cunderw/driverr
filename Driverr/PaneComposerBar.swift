@@ -182,6 +182,17 @@ struct PaneComposerBar: View {
   /// built without it, as in most hosted tests, is the bar it was.
   var savedPrompts: SavedPromptsModel?
 
+  /// Why typed text may not be sent now, from the pane's agent. `nil` lets it go. Handed
+  /// to the model, which refuses the send; the bar only says why. See `PaneComposerHold`.
+  var hold: PaneComposerHold?
+
+  /// What the hold's hand-off is keyed on. The bar survives a pane switch, and each pane's
+  /// model needs its own hold.
+  private struct HoldKey: Equatable {
+    let pane: String
+    let hold: PaneComposerHold?
+  }
+
   /// Whether the saved list is up, above the card in the `/` list's slot. The bar owns it; the
   /// value passed in is only where it starts, for hosted tests and previews.
   @State var isShowingSavedPrompts = false
@@ -204,6 +215,12 @@ struct PaneComposerBar: View {
         savedPromptsPanel(savedPrompts)
       } else if !slashSuggestions.isEmpty {
         slashSuggestionsList
+      }
+      // Why Send is off, over the card it explains. Not while collapsed, where the landscape
+      // bar has no room for another row; Send is still off there, and the chat's notice says
+      // why above it.
+      if let hold = model.hold, !isCollapsed {
+        holdRow(hold)
       }
       // Above the card, like the `/` list and for the same reasons. Unlike the list, it is shown
       // while collapsed: it is one short row, and hiding it would leave an upload running with
@@ -276,6 +293,8 @@ struct PaneComposerBar: View {
     // The list belongs to the pane it was opened on. `onChange`, not the `.task(id:)` above,
     // which also runs on the first appearance and would close a list opened from the start.
     .onChange(of: model.id) { closeSavedPrompts() }
+    // `initial`, so a pane opened in the held state is held before its first tap.
+    .onChange(of: HoldKey(pane: model.id, hold: hold), initial: true) { model.hold = hold }
     .onChange(of: pendingRenameSelection) { _, pending in
       guard pending != nil else { return }
       Task { @MainActor in pendingRenameSelection = nil }
@@ -1414,6 +1433,21 @@ struct PaneComposerBar: View {
     case .failed(let sentence):
       return sentence
     }
+  }
+
+  /// Why Send is off. The words are `PaneComposerHold.message`'s.
+  ///
+  /// The text is `.primary`: `.secondary` footnote text measured 3.4 to 3.6:1 in light. Only the
+  /// glyph is secondary.
+  private func holdRow(_ hold: PaneComposerHold) -> some View {
+    Label {
+      Text(hold.message).foregroundStyle(.primary)
+    } icon: {
+      Image(systemName: "hand.raised").foregroundStyle(.secondary)
+    }
+    .font(.footnote)
+    .fixedSize(horizontal: false, vertical: true)
+    .accessibilityIdentifier("composer.hold")
   }
 
   // MARK: - The reply

@@ -167,6 +167,15 @@ extension TranscriptAbsence {
     if case .agentNotSupported = self { return true }
     return false
   }
+
+  /// Whether this is the wait for a session's first file: the directory holds none, or the
+  /// agent named a session whose file is not written yet.
+  public var awaitsFirstFile: Bool {
+    switch self {
+    case .noSessionFiles, .reportedSessionMissing: true
+    default: false
+    }
+  }
 }
 
 extension TranscriptResolution {
@@ -282,6 +291,27 @@ public struct TranscriptNotice: Equatable, Sendable {
     }
   }
 
+  /// Why a pane has no transcript at all, for a pane whose composer may be held.
+  ///
+  /// A pane held as `.agentAsksOnScreen` that waits for a file is sent to the screen: its
+  /// agent asks on its screen, and a message would press Enter on the current choice. On
+  /// Claude Code's folder-trust prompt that choice is "No, exit" (#122). The same signal as
+  /// the hold, so the two never disagree. No Retry: the watcher still polls for the file.
+  /// Every other pane gets `init(absence:agentStatus:)`.
+  public init(absence: TranscriptAbsence, agentStatus: AgentStatus?, hold: PaneComposerHold?) {
+    guard hold == .agentAsksOnScreen, absence.awaitsFirstFile else {
+      self.init(absence: absence, agentStatus: agentStatus)
+      return
+    }
+    self.init(
+      title: "The agent is asking on its screen",
+      message:
+        "Answer it with \(Self.showScreenTitle). A message sent from here would press Enter "
+        + "on its current choice.",
+      symbolName: "hand.raised"
+    )
+  }
+
   /// Why a pane has no transcript at all.
   ///
   /// `agentStatus` decides whether a missing file is a wait or a fault. A session's file is
@@ -289,6 +319,7 @@ public struct TranscriptNotice: Equatable, Sendable {
   /// finished agent has had its prompt, so a missing file is a fault. A blocked agent keeps
   /// the wait, because a new Claude on its trust prompt reports blocked before any prompt
   /// (`FakeControl.treeWithUnstartedAgent`). No default, so a call site cannot forget it.
+  /// The chat calls `init(absence:agentStatus:hold:)`, which sends a held pane to its screen.
   public init(absence: TranscriptAbsence, agentStatus: AgentStatus?) {
     let leftTheDirectory = "If this pane has left the directory the agent started in,"
     switch absence {

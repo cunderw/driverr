@@ -513,6 +513,12 @@ struct TerminalScreen: View {
     return model.composers?.model(for: pane)
   }
 
+  /// Whether the composer may send typed text, from the pane's agent alone, whatever the
+  /// chat has loaded. See `PaneComposerHold.reason(agent:)`.
+  private var composerHold: PaneComposerHold? {
+    PaneComposerHold.reason(agent: scene.currentPane?.agent)
+  }
+
   /// The reply surface, under either chat-side surface. Here, not in `PaneChatView`, so it
   /// sits under the captured screen too.
   ///
@@ -545,7 +551,8 @@ struct TerminalScreen: View {
             && (pane.agent?.status != .blocked || screenModel?.hasReadForQuestion == true
               || chatModel?.transcript?.pendingToolCall?.asksItsOwnQuestions == true),
           pendingCall: chatModel?.transcript?.questionCall(
-            screen: screenModel?.screenForQuestion, agentStatus: pane.agent?.status)
+            screen: screenModel?.screenForQuestion, agentStatus: pane.agent?.status),
+          hold: composerHold
         ),
         onFocusChange: { isComposerFocused = $0 },
         // `nil` in shipping builds. See `composerFrame`.
@@ -563,7 +570,8 @@ struct TerminalScreen: View {
         modeControl: PaneModeControl(
           pane: pane,
           deliversShiftTab: model.herdrAvailability?.deliversShiftTab(toPane: pane.id) == true),
-        savedPrompts: savedPrompts
+        savedPrompts: savedPrompts,
+        hold: composerHold
       )
     }
   }

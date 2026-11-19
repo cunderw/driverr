@@ -238,7 +238,7 @@ struct TmuxControlSnapshotTests {
     #expect(try await TmuxControl(run: host.runner).snapshot().blockedPanes.count == 1)
   }
 
-  @Test("a pane with no record has no agent, even if claude runs in it")
+  @Test("a pane with no record and no trust dialog has no agent, even if claude runs in it")
   func missingRecord() async throws {
     let host = FakeTmuxHost.seeded()
     await host.setRecord(pid: 5002, nil)
@@ -405,6 +405,134 @@ struct TmuxControlCodexTests {
       return try await host.runner(command)
     })
     #expect(try await control.snapshot().blockedPanes.map(\.id) == ["tmux:%1"])
+  }
+}
+
+@Suite("TmuxControl Claude trust dialog")
+struct TmuxControlTrustDialogTests {
+  /// One session: `%0` a shell, and `%1` with `leader` leading its foreground group and
+  /// `screen` on its visible screen. No Claude record anywhere, as measured during the dialog.
+  private func host(
+    leader: String = "claude", screen: [String] = TrustDialogScreens.wide
+  ) -> FakeTmuxHost {
+    FakeTmuxHost(
+      sessions: [
+        .init(
+          id: 0, name: "work", attached: 1,
+          windows: [
+            .init(
+              id: 0, index: 0, name: "claude", isActive: true,
+              panes: [
+                .init(id: 0, isActive: true),
+                .init(id: 1, command: "2.1.328", path: "/home/x/project", screen: screen),
+              ])
+          ])
+      ],
+      processes: [
+        .init(pid: 5001, tty: "ttys100", command: "zsh"),
+        .init(pid: 6000, tty: "ttys101", command: leader),
+      ]
+    )
+  }
+
+  private func captures(_ host: FakeTmuxHost) async -> [String] {
+    await host.commands.filter { $0.contains("capture-pane") }
+  }
+
+  @Test(
+    "a Claude with no record showing the trust dialog is blocked, with no session and no kind",
+    arguments: ["claude", "/home/x/.local/bin/claude", "2.1.328"])
+  func blocked(leader: String) async throws {
+    let host = host(leader: leader)
+    let tree = try await TmuxControl(run: host.runner).snapshot()
+    let pane = try #require(tree.pane(id: "tmux:%1"))
+    let agent = try #require(pane.agent)
+    #expect(agent.name == "Claude")
+    #expect(agent.kind == TranscriptAgent.claude.rawValue)
+    #expect(agent.status == .blocked)
+    #expect(agent.session == nil, "the dialog writes no record, so there is no session")
+    #expect(agent.blockedKind == nil, "the dialog is neither a permission nor a question")
+    #expect(pane.title == "Claude", "the dialog sets no title, so tmux's default is passed over")
+    #expect(tree.blockedPanes.map(\.id) == ["tmux:%1"])
+    #expect(tree.pane(id: "tmux:%0")?.agent == nil)
+
+    let captures = await captures(host)
+    #expect(captures.count == 1, "one read for every unrecorded Claude pane")
+    #expect(captures.first?.contains("'%1'") == true)
+    #expect(captures.first?.contains("'%0'") == false, "a shell's screen is never read")
+  }
+
+  @Test("the dialog wrapped at 40 columns is still blocked")
+  func narrow() async throws {
+    let host = host(screen: TrustDialogScreens.narrow)
+    let tree = try await TmuxControl(run: host.runner).snapshot()
+    #expect(tree.pane(id: "tmux:%1")?.agent?.status == .blocked)
+  }
+
+  @Test("a shell showing the dialog's text is no agent, and its screen is never read")
+  func shellLed() async throws {
+    let host = host(leader: "zsh")
+    let tree = try await TmuxControl(run: host.runner).snapshot()
+    #expect(tree.pane(id: "tmux:%1")?.agent == nil)
+    #expect(tree.blockedPanes.isEmpty)
+    #expect(await captures(host).isEmpty)
+  }
+
+  @Test("a Claude with a record keeps the record's state, and its screen is never read")
+  func recorded() async throws {
+    let host = host()
+    await host.setRecord(
+      pid: 6000, FakeTmuxHost.claudeRecord(pid: 6000, sessionID: "s-1", status: "idle"))
+    let agent = try await TmuxControl(run: host.runner).snapshot().pane(id: "tmux:%1")?.agent
+    #expect(agent?.status == .idle)
+    #expect(agent?.session?.identifier == "s-1")
+    #expect(await captures(host).isEmpty)
+  }
+
+  @Test("a Claude with an unreadable record is not read for the dialog")
+  func malformedRecord() async throws {
+    let host = host()
+    await host.setRecord(pid: 6000, "{not json")
+    let tree = try await TmuxControl(run: host.runner).snapshot()
+    #expect(tree.pane(id: "tmux:%1")?.agent == nil)
+    #expect(await captures(host).isEmpty)
+  }
+
+  @Test("a Claude with no record quoting the question in prose is not blocked")
+  func prose() async throws {
+    let host = host(screen: TrustDialogScreens.prose)
+    let tree = try await TmuxControl(run: host.runner).snapshot()
+    #expect(tree.pane(id: "tmux:%1")?.agent == nil)
+    #expect(tree.blockedPanes.isEmpty)
+  }
+
+  @Test("a failed read of the records reads no screen, and the pane stays a shell")
+  func recordsFail() async throws {
+    let host = host()
+    let control = TmuxControl(run: { command in
+      if command.contains(ClaudeRecordFiles.marker) {
+        throw AppError.channelFailed(reason: "dropped")
+      }
+      return try await host.runner(command)
+    })
+    let tree = try await control.snapshot()
+    #expect(tree.pane(id: "tmux:%1")?.agent == nil)
+    #expect(await captures(host).isEmpty)
+  }
+
+  @Test("a failed read of the screen leaves the pane as it was, and the tree still comes back")
+  func captureFails() async throws {
+    for fails in [true, false] {
+      let host = host()
+      let control = TmuxControl(run: { command in
+        guard command.contains("capture-pane") else { return try await host.runner(command) }
+        if fails { throw AppError.channelFailed(reason: "dropped") }
+        return CommandResult(standardOutput: "", standardError: "denied", exitStatus: 1)
+      })
+      let tree = try await control.snapshot()
+      #expect(tree.allPanes.map(\.id) == ["tmux:%0", "tmux:%1"], "throws: \(fails)")
+      #expect(tree.pane(id: "tmux:%1")?.agent == nil, "throws: \(fails)")
+    }
   }
 }
 

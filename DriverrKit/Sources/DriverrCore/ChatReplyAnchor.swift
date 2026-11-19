@@ -77,8 +77,14 @@ public enum ComposerFocusGate: Equatable, Sendable {
   case allow
 
   /// `isSettled` is whether the chat's read has finished, with a page or without one.
-  /// `pendingCall` is the call the page says the agent is waiting on.
-  public init(isSettled: Bool, pendingCall: ToolCall?) {
+  /// `pendingCall` is the call the page says the agent is waiting on. `hold` is the
+  /// composer's; a held composer declines at once, because it cannot send and the keyboard
+  /// would cover the notice's way to the screen.
+  public init(isSettled: Bool, pendingCall: ToolCall?, hold: PaneComposerHold?) {
+    if hold != nil {
+      self = .decline
+      return
+    }
     guard isSettled else {
       self = .wait
       return

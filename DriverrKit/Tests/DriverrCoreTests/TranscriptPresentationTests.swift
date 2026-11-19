@@ -1222,6 +1222,9 @@ struct TranscriptPresentationTests {
       TranscriptNotice(absence: .agentNotSupported(agent: "Gemini"), agentStatus: nil),
       TranscriptNotice(absence: .paneHasNoDirectory, agentStatus: nil),
       TranscriptNotice(absence: .noSessionFiles(directory: "/p"), agentStatus: nil),
+      TranscriptNotice(
+        absence: .noSessionFiles(directory: "/p"), agentStatus: .blocked,
+        hold: .agentAsksOnScreen),
     ]
     let symbols = Set(distinguishable.map(\.symbolName))
     #expect(symbols.count == distinguishable.count, "every notice must have its own symbol")
@@ -1252,6 +1255,48 @@ struct TranscriptPresentationTests {
     let empty = TranscriptNotice(absence: .noSessionFiles(directory: "/p"), agentStatus: status)
     #expect(named.symbolName == "text.bubble")
     #expect(named.symbolName == empty.symbolName)
+  }
+
+  // MARK: - A held pane (#122)
+
+  /// Claude Code's folder-trust prompt: blocked, no session, no file. Enter on it picks
+  /// "No, exit", so the notice must not invite a message, and it has no Retry.
+  @Test(
+    "a held pane waiting for a file is sent to the screen, not to the composer",
+    arguments: [
+      TranscriptAbsence.noSessionFiles(directory: "/home/x/project"),
+      .reportedSessionMissing(sessionID: "s", directory: "/home/x/project"),
+    ])
+  func aHeldPaneIsSentToTheScreen(absence: TranscriptAbsence) {
+    let notice = TranscriptNotice(absence: absence, agentStatus: .blocked, hold: .agentAsksOnScreen)
+    #expect(notice.title == "The agent is asking on its screen")
+    #expect(notice.message.contains(TranscriptNotice.showScreenTitle))
+    #expect(!notice.message.contains("Send a message"))
+    #expect(!notice.message.contains("has not started"), "also true mid-conversation")
+    #expect(notice.offersScreen(inSubagentChat: false))
+    #expect(!notice.offersRetry)
+    #expect(notice.symbolName == "hand.raised")
+  }
+
+  /// No hold, or an absence that is not a wait for a file, is the notice it always was.
+  @Test(
+    "a pane that is not held, or not waiting for a file, gets its ordinary notice",
+    arguments: [AgentStatus?.none] + AgentStatus.allCases.map { $0 },
+    [
+      TranscriptAbsence.noSessionFiles(directory: "/home/x/project"),
+      .reportedSessionMissing(sessionID: "s", directory: "/home/x/project"),
+      .paneHasNoDirectory,
+      .agentNotSupported(agent: "Gemini"),
+    ])
+  func anUnheldPaneGetsTheOrdinaryNotice(status: AgentStatus?, absence: TranscriptAbsence) {
+    #expect(
+      TranscriptNotice(absence: absence, agentStatus: status, hold: nil)
+        == TranscriptNotice(absence: absence, agentStatus: status))
+    if !absence.awaitsFirstFile {
+      #expect(
+        TranscriptNotice(absence: absence, agentStatus: status, hold: .agentAsksOnScreen)
+          == TranscriptNotice(absence: absence, agentStatus: status))
+    }
   }
 
   /// A new Claude Code session is named before its file exists, and the file appears with
