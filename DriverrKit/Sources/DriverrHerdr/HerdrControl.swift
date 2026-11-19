@@ -153,6 +153,32 @@ public protocol HerdrControl: Sendable {
   /// see `SessionModel.startTerminal()`.
   func startTerminal() async throws -> String
 
+  /// Whether this host can start a coding agent in a folder of its own choosing.
+  ///
+  /// Defaulted to `false`. herdr's TUI, a core and tmux each can; a fake says what its test
+  /// asks.
+  var canStartAgent: Bool { get }
+
+  /// Starts an agent in a new workspace, window or space named after the folder, and returns
+  /// the id of the pane it runs in.
+  ///
+  /// The folder is resolved on the host first, so a missing one is
+  /// `AppError.directoryUnavailable` and opens nothing. A message too long to type is
+  /// `AppError.agentPromptTooLong`, before anything runs. Once a pane is open, a failure the
+  /// backend can see is `AppError.agentDidNotStart` naming that pane, which stays open. See
+  /// `AgentLaunch`.
+  ///
+  /// **Only herdr's TUI checks that the agent came up.** A core and tmux type the command and
+  /// return the pane, so a `claude` or `codex` that is not installed there still returns a pane
+  /// id, and the shell's own error is on its screen.
+  ///
+  /// An agent stopped at a startup question, such as Claude Code's folder trust check, has
+  /// started: the question is for the person, in that pane.
+  ///
+  /// It can take about 13 s on herdr's TUI, which waits for the agent. See
+  /// `CLIControl.startAgent(_:)`.
+  func startAgent(_ launch: AgentLaunch) async throws -> String
+
   /// Makes the next `snapshot()` ask every side it would skip on a timer.
   ///
   /// For a read the user asked for. A combined host asks a TUI with no session less and less
@@ -177,6 +203,10 @@ extension HerdrControl {
   public var canStartTerminal: Bool { false }
   public func startTerminal() async throws -> String {
     throw AppError.herdrCommandFailed(reason: "This host cannot start a terminal.")
+  }
+  public var canStartAgent: Bool { false }
+  public func startAgent(_ launch: AgentLaunch) async throws -> String {
+    throw AppError.herdrCommandFailed(reason: "This host cannot start an agent.")
   }
   public func resetBackoff() async {}
 }
@@ -528,6 +558,150 @@ public struct CLIControl: HerdrControl {
     case .tab(let id):
       return "tab rename \(shellQuoted(id)) \(label)"
     }
+  }
+
+  public var canStartAgent: Bool { true }
+
+  /// A new workspace named after the folder, focus left where it is, and the agent started in
+  /// its root pane with `agent start`, which types the command into the pane's shell.
+  ///
+  /// The folder is resolved first: `workspace create --cwd` with a missing folder exits 0 with
+  /// the workspace in `$HOME`. Measured on #97.
+  ///
+  /// **`agent_not_ready` is a start.** herdr answers it, with exit 1, when the agent stopped at
+  /// a startup question such as Claude Code's folder trust check, and the agent is running.
+  /// The message goes as `-- -- <message>`: the first `--` ends herdr's options, and herdr types
+  /// the second, so a message that starts with `-` stays a message.
+  ///
+  /// **The call can take about 13 s**: with a first message in a folder the agent trusts, and
+  /// for a program that is not installed. `agent start` waits up to
+  /// `agentStartTimeoutMilliseconds`, after herdr retries a busy pane for up to 2 s, and the
+  /// folder check, `workspace create` and `agent get` each add a round trip.
+  public func startAgent(_ launch: AgentLaunch) async throws -> String {
+    try launch.checkLength()
+    let directory = try await resolvedDirectory(for: launch)
+    let folder = AgentLaunch.folderName(of: directory)
+
+    let created = try await execute(
+      "workspace create --cwd \(shellQuoted(directory)) --label \(shellQuoted(folder)) --no-focus")
+    let paneID = try decode(HerdrResponse<HerdrWorkspaceCreated>.self, from: created)
+      .result.rootPane.paneID
+
+    var arguments =
+      "agent start \(Self.agentName(folder: folder, paneID: paneID, kind: launch.kind))"
+      + " --kind \(launch.kind.command) --pane \(shellQuoted(paneID))"
+      + " --timeout \(Self.agentStartTimeoutMilliseconds)"
+    if let prompt = launch.typedPrompt { arguments += " -- -- \(shellQuoted(prompt))" }
+
+    let result: CommandResult
+    do {
+      result = try await run(
+        Self.withSocketPathEnv("\(shellQuoted(binaryPath)) \(arguments)", socketPath: herdrSocketPath))
+    } catch {
+      throw AppError.agentDidNotStart(
+        paneID: paneID, place: folder,
+        reason: (error as? AppError)?.localizedDescription ?? "Could not run herdr on this host.")
+    }
+    if result.exitStatus == 0 || Self.refusalCode(in: result) == "agent_not_ready" { return paneID }
+    // A `timeout` is also a working agent, so the pane is asked before the start counts as
+    // failed. A missing program times out the same way and has no agent there.
+    if await hasAgent(launch.kind, inPane: paneID) { return paneID }
+    throw AppError.agentDidNotStart(
+      paneID: paneID, place: folder,
+      reason: Self.refusal(in: result)
+        ?? Self.failure(exitStatus: result.exitStatus, standardError: result.standardError)
+        .localizedDescription)
+  }
+
+  /// How long `agent start` may wait for the agent to be ready, in milliseconds.
+  ///
+  /// herdr's own default is 30 s, and it keeps waiting while the agent is `working`: it
+  /// returns at idle or done, at blocked (`agent_not_ready`), or at the timeout (herdr's
+  /// `src/cli/agent.rs`). A first message in a folder the agent already trusts starts a turn
+  /// at once, so that start ends at this timeout, and `hasAgent(_:inPane:)` then finds the
+  /// agent. 10 s, and not less: Claude Code reached its trust check in about 3.4 s and Codex
+  /// was ready in about 4 s on #97, and an agent that is not yet detected when this ends
+  /// reads as one that did not start.
+  static let agentStartTimeoutMilliseconds = 10_000
+
+  /// Whether herdr detects an agent of this kind in the pane: `agent get` by pane id. A shell
+  /// pane is `agent_not_found`. Measured on #97 against herdr 0.9.5.
+  private func hasAgent(_ kind: AgentLaunch.Kind, inPane paneID: String) async -> Bool {
+    guard let output = try? await execute("agent get \(shellQuoted(paneID))"),
+      let answer = try? JSONDecoder().decode(
+        HerdrResponse<HerdrAgentGetResult>.self, from: Data(output.utf8))
+    else { return false }
+    return answer.result.agent.agent == kind.command
+  }
+
+  /// The folder's absolute path on the host. Not a herdr call, so no socket path.
+  private func resolvedDirectory(for launch: AgentLaunch) async throws -> String {
+    let result: CommandResult
+    do {
+      result = try await run(AgentLaunch.resolveCommand(for: launch.directory))
+    } catch let error as AppError {
+      throw error
+    } catch {
+      throw AppError.channelFailed(reason: "Could not run a command on this host.")
+    }
+    return try AgentLaunch.resolvedDirectory(from: result, requested: launch.directory)
+  }
+
+  /// An agent's name as herdr takes one: the folder, then the pane.
+  ///
+  /// herdr refuses a name outside `[a-z][a-z0-9_-]{0,31}` (`invalid_agent_name`) and a live
+  /// agent's name (`agent_name_taken`). Measured on #97. Any other character in the folder is
+  /// a `-`, a folder that does not start with a letter gets the agent's kind in front, and the
+  /// pane id keeps the name unique, because no two live panes share one.
+  static func agentName(folder: String, paneID: String, kind: AgentLaunch.Kind) -> String {
+    func allowed(_ character: Character) -> Bool {
+      character.isASCII && (character.isLowercase || character.isNumber || character == "_")
+    }
+    let tag = paneTag(paneID)
+    var slug = ""
+    for character in folder.lowercased() {
+      if allowed(character) {
+        slug.append(character)
+      } else if !slug.isEmpty, slug.last != "-" {
+        slug.append("-")
+      }
+    }
+    while slug.hasSuffix("-") { slug.removeLast() }
+    if slug.first?.isLetter != true { slug = slug.isEmpty ? kind.command : "\(kind.command)-\(slug)" }
+    slug = String(slug.prefix(31 - tag.count))
+    while slug.hasSuffix("-") { slug.removeLast() }
+    return "\(slug)-\(tag)"
+  }
+
+  /// The pane id as the end of an agent name, one-to-one, in at most 16 characters.
+  ///
+  /// An id of lowercase letters, digits and `:` keeps them, with `:` as `-`. No such id holds a
+  /// `-`, so two ids never give one tag. Any other id, or one that would run past 16, is `_` and
+  /// its 32-bit FNV-1a in hex. `_` starts no tag of the first form. Lowercasing would have made
+  /// `w2:p1P3` and `w2P1:p3` one tag.
+  static func paneTag(_ paneID: String) -> String {
+    let plain = paneID.allSatisfy {
+      $0 == ":" || ($0.isASCII && ($0.isLowercase || $0.isNumber))
+    }
+    if plain, !paneID.isEmpty, paneID.count <= 16 {
+      return paneID.replacingOccurrences(of: ":", with: "-")
+    }
+    var hash: UInt32 = 2_166_136_261
+    for byte in paneID.utf8 { hash = (hash ^ UInt32(byte)) &* 16_777_619 }
+    let hex = String(hash, radix: 16)
+    return "_" + String(repeating: "0", count: 8 - hex.count) + hex
+  }
+
+  /// The `code` of herdr's refusal, from either stream. See `refusal(in:)`.
+  static func refusalCode(in result: CommandResult) -> String? {
+    for stream in [result.standardError, result.standardOutput] {
+      let trimmed = stream.trimmingCharacters(in: .whitespacesAndNewlines)
+      guard trimmed.hasPrefix("{"),
+        let failure = try? JSONDecoder().decode(HerdrErrorResponse.self, from: Data(trimmed.utf8))
+      else { continue }
+      return failure.error.code
+    }
+    return nil
   }
 
   /// Runs a herdr subcommand and returns its stdout, or throws something a person can act

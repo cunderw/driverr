@@ -366,6 +366,59 @@ public struct CoreControl: HerdrControl {
     return CorePaneID.id(forAddress: started.address)
   }
 
+  public var canStartAgent: Bool { true }
+
+  /// A labelled shell in the folder, which the desktop app shows as a new space named after the
+  /// folder, with the agent's command typed into it. See `CoreRunParams(agentShellIn:space:)`.
+  ///
+  /// **Not `herdr-app do space.new`.** It needs the app's window open, and fails with "no Herdr
+  /// window" when it is not, which a core on a server never has. Measured on #97.
+  ///
+  /// **Typed, not `argv`.** The login shell finds the agent on its own `PATH`, which a core
+  /// started from an SSH exec channel may not have, and the shell stays when the agent exits.
+  ///
+  /// The folder is resolved with `machine.exec` on the core's own computer first: a missing
+  /// `cwd` is `spawn_failed`, which names the program and not the folder.
+  public func startAgent(_ launch: AgentLaunch) async throws -> String {
+    try launch.checkLength()
+    let (connection, handshake) = await link.established()
+    guard let connection else { throw Self.failure(for: handshake) }
+
+    let answer = try await connection.call(
+      "machine.exec",
+      params: CoreExecParams(
+        // The line reaches the machine's shell inside a call, past the app's joins, so it is
+        // wrapped here. See `LoginShell`.
+        line: LoginShell.posix(AgentLaunch.resolveCommand(for: launch.directory)), on: nil,
+        timeout: Double(Self.execTimeout.components.seconds)),
+      as: CoreExecResult.self,
+      deadline: Self.execCallDeadline
+    )
+    let directory = try AgentLaunch.resolvedDirectory(
+      from: try Self.commandResult(of: answer, on: "This host"), requested: launch.directory)
+    let folder = AgentLaunch.folderName(of: directory)
+
+    let started = try await connection.call(
+      "terminal.run",
+      params: CoreRunParams(agentShellIn: directory, space: Self.newSpaceID()),
+      as: CoreTerminal.self)
+    let paneID = CorePaneID.id(forAddress: started.address)
+    do {
+      try await submitText(paneID: paneID, text: launch.typedLine)
+    } catch {
+      throw AppError.agentDidNotStart(
+        paneID: paneID, place: folder,
+        reason: (error as? AppError)?.localizedDescription ?? "Could not type into the new terminal.")
+    }
+    return paneID
+  }
+
+  /// A space id in the desktop app's own form, `sp` and 32 lowercase hex digits, as
+  /// `herdr-app ls` lists one.
+  static func newSpaceID() -> String {
+    "sp" + UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
+  }
+
   private static let noRename = AppError.herdrCommandFailed(reason: "herdr-core has no rename.")
 
   private static func availability(for handshake: CoreHandshake) -> HerdrAvailability {

@@ -55,6 +55,15 @@ public enum AppError: Error, Hashable, Sendable, LocalizedError {
   /// A folder the user asked to browse could not be opened on the host: missing, not a
   /// folder, or not readable by the login account. `path` is what the user asked for.
   case directoryUnavailable(path: String)
+  /// An agent's first message is too long to type into a new shell. Nothing was opened. See
+  /// `AgentLaunch.typedLineLimit`.
+  case agentPromptTooLong
+  /// A workspace, window or terminal was opened for an agent, and the agent did not start in
+  /// it. The pane stays open, so the person can read what the shell said there.
+  ///
+  /// `paneID` is that pane, so a caller can open it. `place` is the folder's name, which is
+  /// what the new workspace, window or space is called.
+  case agentDidNotStart(paneID: String, place: String, reason: String)
   case cancelled
 
   public var errorDescription: String? {
@@ -105,6 +114,10 @@ public enum AppError: Error, Hashable, Sendable, LocalizedError {
       reason
     case let .directoryUnavailable(path):
       "Could not open \(path) on this host. Check that the folder exists and that you can read it."
+    case .agentPromptTooLong:
+      "The first message is too long to start an agent with. Shorten it, and send the rest once the agent is running."
+    case let .agentDidNotStart(_, place, reason):
+      "Opened \(place), but the agent did not start there. \(reason)"
     case .cancelled:
       "Cancelled."
     }
@@ -130,6 +143,10 @@ public enum AppError: Error, Hashable, Sendable, LocalizedError {
     case .transcriptUnreadable: true
     // A missing or locked folder stays that way until the user picks another.
     case .directoryUnavailable: false
+    // The same message stays too long.
+    case .agentPromptTooLong: false
+    // The pane is open with the shell's answer in it. Another attempt would open another one.
+    case .agentDidNotStart: false
     }
   }
 }
