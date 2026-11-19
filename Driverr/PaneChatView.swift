@@ -735,7 +735,7 @@ struct PaneChatView: View {
           }
           .padding(.bottom, 10)
         }
-        replyChips
+        replyChips()
           .onGeometryChange(
             for: CGFloat.self, of: { $0.frame(in: .named(Self.replySpace)).minY }
           ) { top in
@@ -754,13 +754,14 @@ struct PaneChatView: View {
   }
 
   /// The chips themselves, in the band or under a notice.
-  private var replyChips: some View {
+  private func replyChips(alignment: HorizontalAlignment = .leading) -> some View {
     ReplyChipRow(
       groups: pendingGroups,
       selection: replySelection,
       isSending: isSending,
       onTap: { group, chip in choose(chip, in: group) },
-      onSend: { confirmReply() }
+      onSend: { confirmReply() },
+      alignment: alignment
     )
   }
 
@@ -1200,9 +1201,11 @@ struct PaneChatView: View {
           if answering, !pendingGroups.isEmpty {
             // No band geometry here: with no transcript turn, nothing takes the question over
             // and `ChatReplyAnchor`'s headroom has nothing to keep still.
-            replyChips
-              .frame(maxWidth: ChatColumn.width, alignment: .leading)
-              .frame(maxWidth: .infinity, alignment: .leading)
+            // Centred under the centred notice, as one block. In a conversation the band
+            // stays leading, under the turn it answers.
+            replyChips(alignment: .center)
+              .frame(maxWidth: ChatColumn.width)
+              .frame(maxWidth: .infinity)
               .padding(.horizontal, chatGutter)
               .padding(.bottom, ChatColumn.rowPadding)
           }

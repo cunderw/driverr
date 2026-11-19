@@ -125,7 +125,7 @@ public enum AppError: Error, Hashable, Sendable, LocalizedError {
     case let .agentDidNotStart(_, place, reason):
       "Opened \(place), but the agent did not start there. \(reason)"
     case .screenQuestionChanged:
-      "The question on the agent's screen changed, so nothing was sent. Use \(TranscriptNotice.showScreenTitle) to answer it."
+      "The question on the agent's screen changed, so nothing was sent. Open \(TranscriptNotice.showScreenTitle) to check it."
     case .cancelled:
       "Cancelled."
     }

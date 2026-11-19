@@ -1295,6 +1295,9 @@ struct PaneComposerBar: View {
     }
     .menuIndicator(.hidden)
     .buttonStyle(.plain)
+    // Off while held: the hand-off types the path into the pane. See
+    // `PaneComposerState.canAttach`.
+    .disabled(!model.canAttach)
     // The glyph has no words, so the label is all VoiceOver has.
     .accessibilityLabel(PaneAttachmentCopy.attachButton)
     .accessibilityIdentifier("composer.attach")

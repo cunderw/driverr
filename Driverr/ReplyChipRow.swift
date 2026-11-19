@@ -24,13 +24,19 @@ struct ReplyChipRow: View {
   /// Presses Send on a call that needs one. The button is enabled only while
   /// `selection.isComplete`, and the value refuses an incomplete confirmation anyway.
   let onSend: () -> Void
+  /// `.leading` under the turn it answers, `.center` under a centred notice
+  /// (`PaneChatView.centred(_:answering:)`). Centred, each group's chips stay one block, with
+  /// their rows flush left inside it, and the words above and under them are centred.
+  var alignment: HorizontalAlignment = .leading
+
+  private var textAlignment: TextAlignment { alignment == .center ? .center : .leading }
 
   var body: some View {
     // 16 between groups against 6 inside one, so a heading reads as belonging to the chips
     // below it.
-    VStack(alignment: .leading, spacing: 16) {
+    VStack(alignment: alignment, spacing: 16) {
       ForEach(groups) { group in
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: alignment, spacing: 6) {
           // The picker's tab label, the agent's only short name for the question.
           if let header = group.header {
             QuestionHeaderTag(header)
@@ -39,31 +45,38 @@ struct ReplyChipRow: View {
           // The question itself. The chat rests at this band's top while a question waits,
           // which scrolls the turn asking it off screen. The identifier is on the leaf.
           if let question = group.question {
-            // Footnote, so it does not compete with the chips it labels.
+            // Footnote, so it does not compete with the chips it labels. `Color.primary`, not
+            // `.secondary`: that grey measured 2.66:1 here in light, under 4.5:1, the fix the
+            // chat's notices took. The size keeps it below the chips.
             Text(question)
               .font(.footnote)
-              .foregroundStyle(.secondary)
+              .foregroundStyle(Color.primary)
+              .multilineTextAlignment(textAlignment)
               .fixedSize(horizontal: false, vertical: true)
               .accessibilityIdentifier("pane.chat.turn.pending.question.\(group.id)")
           }
           // Says a group takes several answers, until it has one; then the chips' glyphs say
-          // it. Secondary at caption size: tertiary failed contrast.
+          // it. `Color.primary` at caption size, for the question's reason: the secondary
+          // grey failed contrast too.
           if group.allowsMultiple, !isAnswered(group) {
             Text(PaneComposerCopy.chooseAny)
               .font(.caption)
-              .foregroundStyle(.secondary)
+              .foregroundStyle(Color.primary)
               .accessibilityIdentifier("pane.chat.turn.pending.hint.\(group.id)")
           }
           // A list when options have descriptions, so each description sits under its chip.
           if group.describesItsOptions {
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: alignment, spacing: 10) {
               ForEach(group.chips) { chip in
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: alignment, spacing: 4) {
                   chipButton(chip, in: group)
+                  // `Color.primary` for the question's reason. Codex's warnings, such as Full
+                  // Access's "Use with caution", are in these lines.
                   if let detail = chip.detail {
                     Text(detail)
                       .font(.footnote)
-                      .foregroundStyle(.secondary)
+                      .foregroundStyle(Color.primary)
+                      .multilineTextAlignment(textAlignment)
                       .fixedSize(horizontal: false, vertical: true)
                       .accessibilityIdentifier(
                         identifier(for: chip, in: group, kind: "detail"))

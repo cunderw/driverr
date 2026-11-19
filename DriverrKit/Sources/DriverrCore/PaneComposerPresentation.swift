@@ -82,7 +82,10 @@ public struct PaneComposerState: Equatable, Sendable {
 
   public var isSending: Bool { phase == .sending }
 
-  public var canAttach: Bool { true }  // STUB
+  /// Whether a picked image or file may be staged. An attachment's hand-off types its path
+  /// into the pane, which is typed text by another route, so a hold turns attaching off: into
+  /// Codex's picker the path is no keys, and into the trust prompt it is noise (#109).
+  public var canAttach: Bool { hold == nil }
 
   /// Nothing to send, or a hold, is a disabled button, not an error.
   public var canSend: Bool {
@@ -282,6 +285,12 @@ public enum PaneComposerHold: Equatable, Sendable {
   /// A Codex selection picker is open on the screen (#109). Pasted text is no keys to it, and
   /// the Enter after it picks the highlighted option, so a sent message is lost and changes a
   /// setting. The chat's chips answer it with a digit.
+  ///
+  /// **It fails open.** It holds only while `PaneQuestionScreen` parses the picker, so a
+  /// picker the parse rejects (a new layout, more than nine options, a screen too short to
+  /// show them all) is not held. It also starts only on the next read of the screen: after
+  /// `/permissions` sent from the composer, the read right after the send can come before
+  /// Codex draws the picker, and the hold then waits up to one 3 s watch tick.
   case pickerOpen
 
   /// The hold for a pane's agent, or `nil` when a send may go. `screen` is the pane's
