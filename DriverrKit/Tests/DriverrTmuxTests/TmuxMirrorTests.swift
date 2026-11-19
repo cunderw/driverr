@@ -253,7 +253,7 @@ struct TmuxMirrorTests {
       if command.contains(TmuxProcessDetailsRead.marker) {
         throw AppError.channelFailed(reason: "gone")
       }
-      return await fake.runner(command)
+      return try await fake.runner(command)
     })
     let tree = try await control.snapshot()
     #expect(tree.allPanes.count == 2)
@@ -317,7 +317,7 @@ struct TmuxMirrorTests {
   @Test("with no herdr session listed, the tmux pane is the only way in and stays")
   func noSessionHidesNothing() async throws {
     let control = combined(
-      tui: .failure(noSession), answer: .serverNotRunning, tmux: host(),
+      tui: .failure(noSession), answer: .serverNotRunning(version: nil), tmux: host(),
       socket: "/home/dev/.config/herdr/sessions/work/herdr.sock")
     let tree = try await control.snapshot()
     #expect(tree.allPanes.map(\.id) == ["tmux:%0", "tmux:%1"])
