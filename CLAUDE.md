@@ -8,9 +8,11 @@ format, `DriverrHC` confines herdr-core's, and `DriverrTranscript` reads agent s
 files. No backend of our own: Driverr talks directly to the user's own machines over SSH.
 
 **Not a config surface.** Global settings are theme, font, font size, whether a captured
-pane screen wraps its long lines, and whether Driverr draws Live Activities. The last of
-those is on the list because a card drawn outside the app has to be refusable from inside
-it. A sixth setting still has to argue its case. Driverr is **not a paid product**. It is
+pane screen wraps its long lines, whether Driverr draws Live Activities, and whether an open
+tmux pane's window takes the phone's size. Live Activities are on the list because a card
+drawn outside the app has to be refusable from inside it. The tmux resize is on the list
+because without it a desk-width tmux pane is unusable on the phone, and the resize changes
+the desk's window, so it has to be refusable. A seventh setting still has to argue its case. Driverr is **not a paid product**. It is
 described as an SSH client everywhere: herdr's own persistence covers reattachment, so
 there is no mosh support and none is planned.
 

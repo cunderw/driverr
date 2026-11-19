@@ -99,7 +99,10 @@ struct AppEnvironment {
       let run: CommandRunner = { try await transport.execChannel(command: $0) }
       async let tui = CLIControl.discovering(run: run)
       async let core = CoreControl.discovering(transport: transport)
-      async let tmux = TmuxControl.discovering(run: run)
+      // Read at each open, so turning the setting off reaches the next pane opened.
+      async let tmux = TmuxControl.discovering(
+        transport: transport,
+        resizesWindow: { await UserDefaultsSettingsStore().settings().resizesTmuxWindows })
       let (foundTUI, foundCore, foundTmux) = await (tui, core, tmux)
       let sides = [
         foundCore.map { CombinedControl.Side(prefix: CorePaneID.prefix, control: $0) },

@@ -125,7 +125,7 @@ struct TerminalSettingsTests {
     #expect(TerminalSettings.default.liveActivities)
   }
 
-  @Test("a blob missing a field keeps the other four")
+  @Test("a blob missing a field keeps the others")
   func partialBlobDecodes() throws {
     // The shape an older build wrote.
     let data = Data(#"{"themeID":"nord"}"#.utf8)
@@ -135,6 +135,7 @@ struct TerminalSettingsTests {
     #expect(decoded.fontSize == TerminalSettings.defaultFontSize)
     #expect(decoded.wrapsScreenLines)
     #expect(decoded.liveActivities)
+    #expect(decoded.resizesTmuxWindows)
   }
 
   /// Every blob written before `wrapsScreenLines` lacks the key, and those installs draw
@@ -172,6 +173,29 @@ struct TerminalSettingsTests {
     let data = try JSONEncoder().encode(off)
     let decoded = try JSONDecoder().decode(TerminalSettings.self, from: data)
     #expect(!decoded.liveActivities)
+    #expect(decoded == off)
+  }
+
+  /// The phone sizes an open tmux pane's window by default, because a pane at the desk's width
+  /// is unusable on a phone. The owner's call on #102.
+  @Test("a tmux window takes the phone's size by default, and in a blob from before the key")
+  func tmuxResizeDefaultsOn() throws {
+    #expect(TerminalSettings.default.resizesTmuxWindows)
+    let data = Data(
+      #"{"themeID":"nord","fontID":"menlo","fontSize":15,"wrapsScreenLines":false,"liveActivities":false}"#
+        .utf8)
+    let decoded = try JSONDecoder().decode(TerminalSettings.self, from: data)
+    #expect(decoded.resizesTmuxWindows)
+    #expect(!decoded.liveActivities)
+  }
+
+  /// A forgotten `decodeIfPresent` would resize the desk's window for somebody who said no.
+  @Test("turning tmux resizing off survives a round trip")
+  func tmuxResizeChoiceRoundTrips() throws {
+    let off = TerminalSettings(resizesTmuxWindows: false)
+    let data = try JSONEncoder().encode(off)
+    let decoded = try JSONDecoder().decode(TerminalSettings.self, from: data)
+    #expect(!decoded.resizesTmuxWindows)
     #expect(decoded == off)
   }
 

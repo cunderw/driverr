@@ -1,6 +1,7 @@
 import DriverrCore
 import DriverrHerdr
 import DriverrTerm
+import DriverrTmux
 import Foundation
 import Observation
 import UIKit
@@ -373,8 +374,13 @@ final class TerminalSceneModel {
   /// live or ended; see `holdsACoreObserversGrid(_:)`, which says why this rule is stricter
   /// than the screen's. `nil` sends the tile to the batched read, which on a core is the
   /// core's own screen. A core controller sizes the terminal to this grid.
+  ///
+  /// **A tmux pane never reads warm.** Its controller sizes the window only when the setting
+  /// allows and the host's tmux can, so even its grid may be at the desk's width. The batched
+  /// read is tmux's own screen.
   func visibleLines(for target: TerminalTarget, last count: Int) -> [String]? {
     guard let entry = entry(for: target) else { return nil }
+    if case .pane(let id) = target, TmuxID.isTmux(id) { return nil }
     if Self.isCorePane(target), entry.role != .controller { return nil }
     return entry.session.visibleLines(last: count)
   }
@@ -783,8 +789,9 @@ final class TerminalSceneModel {
   /// **A warm core pane comes back watching.** `surface(for:)` says what a pane shows when
   /// looked at, not that anyone is, and a core's typing viewer takes the terminal's size as it
   /// opens. One crash ends every warm pane at once, so each would take the size and hold it.
+  /// A tmux pane's controller sizes its window as it opens, so it comes back watching too.
   private func openSurface(for target: TerminalTarget, automatic: Bool = false) async {
-    if automatic, target != current, case .pane(let id) = target, CorePaneID.isCore(id) {
+    if automatic, target != current, Self.isCorePane(target) {
       await openObserver(for: target)
       return
     }
@@ -1128,9 +1135,12 @@ final class TerminalSceneModel {
     return entry.role == .observer || (entry.role == .ended && entry.endedFrom == .observer)
   }
 
+  /// A core pane, or a tmux pane, which behaves as one here: its viewer carries the program's
+  /// own bytes at the terminal's width, its controller takes the terminal's size as it opens,
+  /// and a refused open opens no stream.
   private static func isCorePane(_ target: TerminalTarget) -> Bool {
     guard case .pane(let id) = target else { return false }
-    return CorePaneID.isCore(id)
+    return CorePaneID.isCore(id) || TmuxID.isTmux(id)
   }
 
   /// herdr's first frame on a controller stream: the attach token is ours.
@@ -1294,7 +1304,7 @@ final class TerminalSceneModel {
       await self.openSurface(for: target, automatic: true)
       // A refused core attach opens no stream, so no second end will reach the bound, and
       // nothing else would offer a Retry.
-      if case .pane(let id) = target, CorePaneID.isCore(id), self.role(for: target) == .ended,
+      if Self.isCorePane(target), self.role(for: target) == .ended,
         self.pending[target] == nil, self.notices[target] == nil
       {
         self.notices[target] = .failed(
