@@ -6,7 +6,7 @@
 import assert from 'node:assert/strict';
 import { generateKeyPairSync } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, beforeEach, test } from 'node:test';
@@ -162,7 +162,7 @@ test('a group 404 is retried and then succeeds', async () => {
   assert.equal(posts, 3);
   assert.deepEqual(sleeps, [10_000, 10_000]);
   assert.deepEqual(warnings(), []);
-  assert.equal(summary(), '');
+  assert.doesNotMatch(summary(), /failed/);
 });
 
 test('a group 404 on every try warns, finishes, and tries once per allowed try', async () => {
@@ -227,8 +227,55 @@ test('an export compliance answer that App Store Connect refuses is a warning', 
   });
   await release('com.example.app', '7', '');
   assert.equal(count('PATCH /v1/builds/b7'), 1);
-  assert.equal(warnings().length, 1);
+  assert.equal(warnings().length, 2); // the failure, then the skipped distribution
   assert.match(warnings()[0], /export compliance failed/);
+});
+
+test('a failed export compliance answer skips distribution and says why', async () => {
+  process.env.EXPORT_COMPLIANCE_EXEMPT = 'true';
+  process.env.TESTFLIGHT_EXTERNAL_GROUPS = 'Beta';
+  stub((method, path) => {
+    if (path.startsWith('/v1/apps')) return { json: app };
+    if (path.startsWith('/v1/builds?')) return { json: build('7', 'VALID', null) };
+    return { status: 409, json: { errors: [] } };
+  });
+  await release('com.example.app', '7', 'notes');
+  assert.equal(count('POST'), 0);
+  assert.equal(count('GET /v1/betaGroups'), 0);
+  assert.equal(warnings().length, 2);
+  assert.match(warnings()[1], /distribution was skipped for build 7, because its export compliance answer failed/);
+  assert.match(summary(), /distribution was skipped, because its export compliance answer failed/);
+});
+
+test('an export compliance question left unanswered is a warning and a summary line', async () => {
+  stub((method, path) => {
+    if (path.startsWith('/v1/apps')) return { json: app };
+    if (path.startsWith('/v1/builds?')) return { json: build('7', 'VALID', null) };
+    return { status: 500, json: { errors: [] } };
+  });
+  await release('com.example.app', '7', '');
+  assert.equal(count('PATCH'), 0);
+  assert.equal(warnings().length, 1);
+  assert.match(warnings()[0], /export compliance for build 7 is not answered/);
+  assert.match(summary(), /export compliance is not answered, because EXPORT_COMPLIANCE_EXEMPT is not true/);
+});
+
+test('a build that is not ready for Beta App Review leaves a summary line', async () => {
+  process.env.TESTFLIGHT_EXTERNAL_GROUPS = 'Beta';
+  stub(groupServer(() => ({}), 'WAITING_FOR_BETA_REVIEW'));
+  await release('com.example.app', '7', '');
+  assert.equal(count('POST /v1/betaAppReviewSubmissions'), 0);
+  assert.deepEqual(warnings(), []);
+  assert.match(summary(), /externalBuildState is WAITING_FOR_BETA_REVIEW, not READY_FOR_BETA_SUBMISSION/);
+});
+
+test('a group name that does not exist is a warning that names a configuration error', async () => {
+  process.env.TESTFLIGHT_EXTERNAL_GROUPS = 'Missing';
+  stub(groupServer(() => ({})));
+  await release('com.example.app', '7', '');
+  assert.equal(count('POST'), 0);
+  assert.equal(warnings().length, 1);
+  assert.match(summary(), /configuration error: no TestFlight group named Missing/);
 });
 
 test('the next build number is the larger of the record and the highest tag, plus one', async () => {
@@ -251,6 +298,14 @@ test('importing the script runs no command, and running it with no arguments pri
   const run = spawnSync(process.execPath, [fileURLToPath(new URL('./testflight.mjs', import.meta.url))], {
     encoding: 'utf8',
   });
+  assert.equal(run.status, 2);
+  assert.match(run.stderr, /usage: testflight\.mjs/);
+});
+
+test('the entry-point guard holds through a symlinked path', () => {
+  const link = join(dir, 'link.mjs');
+  symlinkSync(fileURLToPath(new URL('./testflight.mjs', import.meta.url)), link);
+  const run = spawnSync(process.execPath, [link], { encoding: 'utf8' });
   assert.equal(run.status, 2);
   assert.match(run.stderr, /usage: testflight\.mjs/);
 });

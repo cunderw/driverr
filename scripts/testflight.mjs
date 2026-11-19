@@ -31,7 +31,7 @@
 // Tests, with stubbed network calls and no credentials (not part of CI):
 //   node --test scripts/testflight.test.mjs
 import { createSign } from 'node:crypto';
-import { appendFileSync, readFileSync } from 'node:fs';
+import { appendFileSync, readFileSync, realpathSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 
 // The tests replace these. Nothing else reads them.
@@ -165,6 +165,8 @@ async function answerCompliance(build) {
   }
   if (process.env.EXPORT_COMPLIANCE_EXEMPT !== 'true') {
     log('export compliance: NOT answered. No tester gets this build until it is.');
+    warn(`export compliance for build ${build.attributes.version} is not answered, so no tester gets it until it is`);
+    summarize(`Build ${build.attributes.version}: export compliance is not answered, because EXPORT_COMPLIANCE_EXEMPT is not true. No tester gets this build until it is answered in App Store Connect.`);
     return;
   }
   await api('PATCH', `/v1/builds/${build.id}`, {
@@ -218,7 +220,7 @@ async function distributeExternally(appId, build, notes) {
   }
   const groups = (await api('GET', `/v1/betaGroups?filter[app]=${appId}&limit=200&fields[betaGroups]=name`)).data;
   const missing = wanted.filter((name) => !groups.some((g) => g.attributes.name === name));
-  if (missing.length) throw new Error(`no TestFlight group named: ${missing.join(', ')}`);
+  if (missing.length) throw new Error(`configuration error: no TestFlight group named ${missing.join(', ')}`);
 
   if (notes) await writeNotes(build, notes);
   for (const name of wanted) {
@@ -230,6 +232,7 @@ async function distributeExternally(appId, build, notes) {
   const state = detail.data.attributes.externalBuildState;
   if (state !== 'READY_FOR_BETA_SUBMISSION') {
     log(`Beta App Review: not submitted, externalBuildState is ${state}`);
+    summarize(`Build ${build.attributes.version}: Beta App Review not requested, because externalBuildState is ${state}, not READY_FOR_BETA_SUBMISSION.`);
     return;
   }
   try {
@@ -252,13 +255,16 @@ async function distributeExternally(appId, build, notes) {
 }
 
 // The upload has succeeded by now. A failed call here is reported and never fails the run.
+// Returns whether the step succeeded.
 async function nonFatal(label, number, step) {
   try {
     await step();
+    return true;
   } catch (error) {
     log(`${label}: ${error.message}`);
     warn(`${label} failed for build ${number}: ${oneLine(error.message)}`);
     summarize(`Build ${number}: ${label} failed (${oneLine(error.message)}). The build is uploaded. Finish this step in App Store Connect.`);
+    return false;
   }
 }
 
@@ -272,7 +278,12 @@ export async function release(bundleId, number, notes) {
     summarize(`Build ${number}: still processing after ${minutes} minutes. Distribution was skipped. Do not upload it again; finish distribution in App Store Connect once processing ends.`);
     return;
   }
-  await nonFatal('export compliance', number, () => answerCompliance(build));
+  // Every call after a failed compliance answer ends in MISSING_EXPORT_COMPLIANCE, so none is made.
+  if (!(await nonFatal('export compliance', number, () => answerCompliance(build)))) {
+    warn(`distribution was skipped for build ${number}, because its export compliance answer failed`);
+    summarize(`Build ${number}: distribution was skipped, because its export compliance answer failed. Answer it in App Store Connect, then add the build to its groups.`);
+    return;
+  }
   await nonFatal('distribution', number, () => distributeExternally(appId, build, notes));
 }
 
@@ -297,4 +308,6 @@ async function main(args) {
   }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) await main(process.argv.slice(2));
+// The path is resolved first, because a symlink to this file is a way to run it.
+const entry = process.argv[1] && realpathSync(process.argv[1]);
+if (entry && import.meta.url === pathToFileURL(entry).href) await main(process.argv.slice(2));
