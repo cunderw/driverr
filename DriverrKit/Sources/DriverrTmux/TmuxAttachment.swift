@@ -24,7 +24,11 @@ import Foundation
 /// - A client that never sets a window size leaves the desk in charge, through desk resizes and
 ///   window changes. That is the setting-off path.
 /// - With `window-size smallest` or `largest` and a desk attached, the attach line's client size
-///   holds the desk's windows at that size when the desk grows or shrinks past it. Not fixed.
+///   holds the desk's windows at that size when the desk grows or shrinks past it. Not fixed,
+///   and the two obvious fixes are worse. The `ignore-size` client flag frees the desk, but
+///   with a desk attached tmux then ignores this client's `@W:` sizes too. A client size no
+///   desk can lose to, 10000x10000 under `smallest` or 1x1 under `largest`, frees the desk,
+///   but with no desk attached every window takes that size.
 ///
 /// **tmux before 3.3, measured on 3.2a:** `refresh-client -C` takes only `WxH`, and anything
 /// else answers `bad size argument`, so a window cannot be sized. A client size there is not
