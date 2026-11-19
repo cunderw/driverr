@@ -153,6 +153,24 @@ public protocol HerdrControl: Sendable {
   /// see `SessionModel.startTerminal()`.
   func startTerminal() async throws -> String
 
+  /// Whether this host can start a coding agent in a folder of its own choosing.
+  ///
+  /// Defaulted to `false`. herdr's TUI, a core and tmux each can; a fake says what its test
+  /// asks.
+  var canStartAgent: Bool { get }
+
+  /// Starts an agent in a new workspace, window or space named after the folder, and returns
+  /// the id of the pane it runs in.
+  ///
+  /// The folder is resolved on the host first, so a missing one is
+  /// `AppError.directoryUnavailable` and opens nothing. Once a pane is open, a failure is
+  /// `AppError.agentDidNotStart` naming that pane, which stays open. A message too long to type
+  /// is `AppError.agentPromptTooLong`, before anything runs. See `AgentLaunch`.
+  ///
+  /// An agent stopped at a startup question, such as Claude Code's folder trust check, has
+  /// started: the question is for the person, in that pane.
+  func startAgent(_ launch: AgentLaunch) async throws -> String
+
   /// Makes the next `snapshot()` ask every side it would skip on a timer.
   ///
   /// For a read the user asked for. A combined host asks a TUI with no session less and less
@@ -177,6 +195,10 @@ extension HerdrControl {
   public var canStartTerminal: Bool { false }
   public func startTerminal() async throws -> String {
     throw AppError.herdrCommandFailed(reason: "This host cannot start a terminal.")
+  }
+  public var canStartAgent: Bool { false }
+  public func startAgent(_ launch: AgentLaunch) async throws -> String {
+    throw AppError.herdrCommandFailed(reason: "This host cannot start an agent.")
   }
   public func resetBackoff() async {}
 }
@@ -529,6 +551,8 @@ public struct CLIControl: HerdrControl {
       return "tab rename \(shellQuoted(id)) \(label)"
     }
   }
+
+  static func agentName(folder: String, paneID: String, kind: AgentLaunch.Kind) -> String { "" }
 
   /// Runs a herdr subcommand and returns its stdout, or throws something a person can act
   /// on.

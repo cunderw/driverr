@@ -65,6 +65,7 @@ public actor FakeControl: HerdrControl {
     attacher: (any PaneAttacher)? = nil,
     unsupported: Set<PaneActionKind> = [],
     canStartTerminal: Bool = false,
+    canStartAgent: Bool = false,
     startFailure: AppError? = nil,
     imageUploads: ImageUploads? = nil
   ) {
@@ -76,6 +77,7 @@ public actor FakeControl: HerdrControl {
     self.attacher = attacher
     self.unsupported = unsupported
     self.canStartTerminal = canStartTerminal
+    self.canStartAgent = canStartAgent
     self.startFailure = startFailure
     self.imageUploads = imageUploads
   }
@@ -90,6 +92,7 @@ public actor FakeControl: HerdrControl {
     attacher = nil
     unsupported = []
     canStartTerminal = false
+    canStartAgent = false
     startFailure = nil
     imageUploads = nil
   }
@@ -140,6 +143,8 @@ public actor FakeControl: HerdrControl {
   }
 
   public nonisolated let canStartTerminal: Bool
+
+  public nonisolated let canStartAgent: Bool
 
   public nonisolated func attachCommand(for pane: Pane) -> String? {
     // The same command and branch `CLIControl` produces. Every seeded pane has a terminal
@@ -399,6 +404,17 @@ public actor FakeControl: HerdrControl {
     tree = Self.tree(tree, renaming: target, to: label)
     // Stop the script, as in `perform`.
     scriptOverridden = true
+  }
+
+  /// Every agent this fake was asked to start, refused ones included.
+  public private(set) var agentLaunches: [AgentLaunch] = []
+
+  /// Records the launch and answers with a pane id, or with `startFailure`. The tree does not
+  /// change: a test that needs the new pane listed sets it with `update(to:)`.
+  public func startAgent(_ launch: AgentLaunch) async throws -> String {
+    agentLaunches.append(launch)
+    if let startFailure { throw startFailure }
+    return "agent:\(agentLaunches.count)"
   }
 
   /// How many terminals this fake was asked to start.

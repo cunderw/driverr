@@ -684,25 +684,37 @@ public actor FakeTmuxHost {
     guard
       let index = sessions.indices.max(by: { sessions[$0].activity < sessions[$1].activity })
     else { return noServer() }
-    let pane = Pane(id: nextPane, isActive: true)
+    let pane = Self.newPane(id: nextPane, flags)
     nextPane += 1
     let window = Window(
-      id: nextWindow, index: (sessions[index].windows.map(\.index).max() ?? -1) + 1, name: "zsh",
-      panes: [pane])
+      id: nextWindow, index: (sessions[index].windows.map(\.index).max() ?? -1) + 1,
+      name: flags.value("-n") ?? "zsh", isAutoNamed: flags.value("-n") == nil, panes: [pane])
     nextWindow += 1
     sessions[index].windows.append(window)
     return Self.success(flags.has("-P") ? expand(flags.value("-F") ?? "", session: sessions[index], window: window, pane: pane) + "\n" : "")
   }
 
   private func newSession(_ flags: inout Flags) -> CommandResult {
-    let pane = Pane(id: nextPane, isActive: true)
+    let pane = Self.newPane(id: nextPane, flags)
     nextPane += 1
-    let window = Window(id: nextWindow, index: 0, name: "zsh", isActive: true, panes: [pane])
+    let window = Window(
+      id: nextWindow, index: 0, name: flags.value("-n") ?? "zsh",
+      isAutoNamed: flags.value("-n") == nil, isActive: true, panes: [pane])
     nextWindow += 1
     let session = Session(id: nextSession, name: String(nextSession), windows: [window])
     nextSession += 1
     sessions.append(session)
     return Self.success(flags.has("-P") ? expand(flags.value("-F") ?? "", session: session, window: window, pane: pane) + "\n" : "")
+  }
+
+  /// A new window's pane, in the folder `-c` names. tmux expands a format in `-c`, and `##` is
+  /// its only way to a `#`. Any other `#` is a format this fake does not expand, so the pane
+  /// lands in the home folder, as tmux's does when the expansion names no folder.
+  private static func newPane(id: Int, _ flags: Flags) -> Pane {
+    guard let folder = flags.value("-c") else { return Pane(id: id, isActive: true) }
+    let unescaped = folder.replacingOccurrences(of: "##", with: "")
+    guard !unescaped.contains("#") else { return Pane(id: id, isActive: true) }
+    return Pane(id: id, path: folder.replacingOccurrences(of: "##", with: "#"), isActive: true)
   }
 
   private static func isControl(_ character: Character) -> Bool {

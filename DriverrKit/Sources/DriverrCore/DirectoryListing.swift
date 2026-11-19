@@ -59,7 +59,7 @@ public struct DirectoryListing: Hashable, Sendable {
     return "sh -c " + HookInstallCommands.loginShellQuoted(script)
   }
 
-  private static func cdArgument(_ path: String) -> String {
+  static func cdArgument(_ path: String) -> String {
     if path.isEmpty || path == "~" { return #""$HOME""# }
     if path.hasPrefix("~/") {
       let rest = String(path.dropFirst(2))
