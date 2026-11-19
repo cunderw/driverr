@@ -4,7 +4,8 @@ import Foundation
 /// Which Claude session each terminal on this core, or on a machine it added, is in.
 ///
 /// herdr-core has no `agent_session`. Claude Code keeps a `<pid>.json` per running process
-/// under `~/.claude/sessions`, and rewrites its `sessionId` on `/clear` and on resume, so the
+/// under `sessions` in its configuration directory, `~/.claude` or where `CLAUDE_CONFIG_DIR`
+/// moves it (see `configDirectory(on:over:)`), and rewrites its `sessionId` on `/clear` and on resume, so the
 /// foreground pid names the session even with two Claudes in one folder. This reads that over
 /// the core's `file.read`, on the terminal's own machine, whenever `CoreEventState` says a
 /// terminal's may have moved, because a host command in the reader would let a failed read
@@ -29,6 +30,10 @@ actor CoreSessionFiles {
   private let home: String?
   /// The last good id per address.
   private var remembered: [String: String] = [:]
+  /// What each place said its configuration directory is, by machine, `nil` for the core's own
+  /// computer. A task, so two reads that land together share one question. Kept only once it
+  /// has an answer, so a place that did not answer is asked again at the next read.
+  private var directories: [String?: Task<String?, Never>] = [:]
 
   init(home: String?) {
     self.home = home
@@ -51,10 +56,20 @@ actor CoreSessionFiles {
     let claudes = terminals.filter {
       CoreSnapshotMapper.isClaude($0) && ($0.machine != nil || home != nil)
     }
+    // One question for each place, before the reads, so the reads run side by side as before.
+    let reading = claudes.filter { addresses.contains($0.address) }
+    var known: [String?: String] = [:]
+    for machine in Set(reading.map(\.machine)) {
+      known[machine] = await configDirectory(on: machine, over: connection)
+    }
     let reads = await withTaskGroup(of: (String, String?).self) { group in
-      for terminal in claudes where addresses.contains(terminal.address) {
-        group.addTask { [home] in
-          (terminal.address, await Self.identifier(of: terminal, home: home, over: connection))
+      for terminal in reading {
+        group.addTask { [home, directory = known[terminal.machine]] in
+          (
+            terminal.address,
+            await Self.identifier(
+              of: terminal, home: home, directory: directory, over: connection)
+          )
         }
       }
       var reads: [String: String] = [:]
@@ -68,13 +83,59 @@ actor CoreSessionFiles {
     return remembered
   }
 
+  /// What `CLAUDE_CONFIG_DIR` makes of the configuration directory on this core's computer, or
+  /// on `machine`, learned once from a `machine.exec` there. `nil` when the place did not say
+  /// an absolute directory, which leaves the record under `~/.claude`.
+  ///
+  /// Asked of the place itself and not over Driverr's SSH channel, because a machine's shell is
+  /// only reachable through the core and its variable is its own. The core's computer answers
+  /// with the variable the core was started with, which is what its Claude terminals inherited.
+  /// A shell that does not have the variable cannot name it: see `AgentIntegration`.
+  private func configDirectory(on machine: String?, over connection: CoreConnection) async
+    -> String?
+  {
+    if let asking = directories[machine] { return await asking.value }
+    let asking = Task { await Self.askConfigDirectory(on: machine, over: connection) }
+    directories[machine] = asking
+    let directory = await asking.value
+    if directory == nil, directories[machine] == asking { directories[machine] = nil }
+    return directory
+  }
+
+  /// Bounded to what a record's own `file.read` gets, near enough, so a machine that does not
+  /// answer holds up the ids no longer than the read it replaces.
+  private static let askTimeout: Duration = .seconds(5)
+  private static let askDeadline: Duration = .seconds(8)
+
+  private static func askConfigDirectory(
+    on machine: String?, over connection: CoreConnection
+  ) async -> String? {
+    guard
+      let answer = try? await connection.call(
+        "machine.exec",
+        params: CoreExecParams(
+          line: configDirectoryCommand, on: machine,
+          timeout: Double(askTimeout.components.seconds)),
+        as: CoreExecResult.self,
+        deadline: askDeadline),
+      let result = try? CoreControl.commandResult(of: answer, on: machine ?? "This host"),
+      result.exitStatus == 0
+    else { return nil }
+    return CoreControl.discoveredHome(in: result.standardOutput)
+  }
+
+  /// The configuration directory, printed as `AgentIntegration.claudeCode` writes it.
+  static let configDirectoryCommand = LoginShell.posix(
+    "printf '%s\\n' \(AgentIntegration.claudeCode.configDirectory)")
+
   private static func identifier(
     of terminal: CoreTerminal,
     home: String?,
+    directory: String?,
     over connection: CoreConnection
   ) async -> String? {
     guard let pid = terminal.foreground?.pid,
-      let params = params(of: terminal, pid: pid, home: home),
+      let params = params(of: terminal, pid: pid, home: home, directory: directory),
       let file = try? await connection.call(
         "file.read", params: params, as: CoreFileReadResult.self),
       let record = try? JSONDecoder().decode(Record.self, from: Data(file.text.utf8)),
@@ -84,8 +145,9 @@ actor CoreSessionFiles {
     return record.sessionId
   }
 
-  /// Where this terminal's record is: under `home` here, or on its machine from that
-  /// machine's home, because `file.read` with `on` starts a relative path there.
+  /// Where this terminal's record is: under `directory` when its place named one, else under
+  /// `home` here, or on its machine from that machine's home, because `file.read` with `on`
+  /// starts a relative path there.
   ///
   /// **Never this host's file for a machine's terminal.** Its pid is that machine's, and the
   /// same number here is some other process, or another Claude's record.
@@ -93,8 +155,11 @@ actor CoreSessionFiles {
   /// This assumes a relayed terminal's `foreground.pid` is the pid on its machine, which a
   /// record whose `pid` does not match refuses if it is not.
   private static func params(
-    of terminal: CoreTerminal, pid: Int, home: String?
+    of terminal: CoreTerminal, pid: Int, home: String?, directory: String?
   ) -> CoreFileReadParams? {
+    if let directory {
+      return CoreFileReadParams(path: "\(directory)/sessions/\(pid).json", on: terminal.machine)
+    }
     let record = ".claude/sessions/\(pid).json"
     if let machine = terminal.machine {
       return CoreFileReadParams(path: record, on: machine)

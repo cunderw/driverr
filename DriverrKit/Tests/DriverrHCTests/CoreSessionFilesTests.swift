@@ -146,6 +146,118 @@ struct CoreSessionFilesTests {
     #expect(stream.readPaths == [".claude/sessions/106.json"])
   }
 
+  // MARK: - CLAUDE_CONFIG_DIR
+
+  /// What the core's `machine.exec` says the configuration directory is, by machine.
+  private func answers(_ directories: [String?: String]) -> @Sendable (String, String?) async -> FakeCoreStream.Reply {
+    { _, on in
+      directories[on].map { .result(FakeCoreStream.executed(stdout: $0 + "\n")) }
+        ?? .error("no exec")
+    }
+  }
+
+  private func execs(_ stream: FakeCoreStream) throws -> [(line: String, on: String?)] {
+    try stream.params(of: "machine.exec").map { ($0["line"] as? String ?? "", $0["on"] as? String) }
+  }
+
+  @Test("a configuration directory the core's computer names is where the records are read")
+  func configDirectoryHere() async throws {
+    let stream = stream(claude("t1", pid: 101))
+    stream.exec = answers([nil: "/cfg"])
+    stream.files = [
+      "/cfg/sessions/101.json": record(pid: 101, id: "moved"),
+      path(101): record(pid: 101, id: "home"),
+    ]
+    let tree = try await control(stream).snapshot()
+
+    #expect(sessions(tree) == ["core:t1": "moved"])
+    #expect(stream.readPaths == ["/cfg/sessions/101.json"])
+    let asked = try execs(stream)
+    #expect(asked.count == 1)
+    #expect(asked.first?.on == nil)
+    #expect(asked.first?.line.contains("CLAUDE_CONFIG_DIR:-$HOME/.claude") == true)
+  }
+
+  @Test("a directory that cannot be learned falls back to the home's .claude")
+  func configDirectoryUnknown() async throws {
+    let stream = stream(claude("t1", pid: 101))
+    stream.exec = answers([:])
+    stream.files = [path(101): record(pid: 101, id: "home")]
+    #expect(sessions(try await control(stream).snapshot()) == ["core:t1": "home"])
+    #expect(stream.readPaths == [path(101)])
+  }
+
+  /// A banner ahead of the answer is ordinary, and a relative answer is not a directory.
+  @Test("the last line is the directory, and it has to be absolute")
+  func configDirectoryShape() async throws {
+    let banner = stream(claude("t1", pid: 101))
+    banner.exec = { _, _ in .result(FakeCoreStream.executed(stdout: "Welcome\n/cfg\n")) }
+    banner.files = ["/cfg/sessions/101.json": record(pid: 101, id: "moved")]
+    #expect(sessions(try await control(banner).snapshot()) == ["core:t1": "moved"])
+
+    let relative = stream(claude("t1", pid: 101))
+    relative.exec = { _, _ in .result(FakeCoreStream.executed(stdout: "cfg\n")) }
+    relative.files = [path(101): record(pid: 101, id: "home")]
+    #expect(sessions(try await control(relative).snapshot()) == ["core:t1": "home"])
+  }
+
+  /// Its `$HOME` and its variable are its own, not the core's computer's.
+  @Test("a machine's own directory is asked of that machine, and read there")
+  func configDirectoryOnAMachine() async throws {
+    let stream = stream(claude("t1", pid: 101), claude("box/t1", pid: 106))
+    stream.exec = answers([nil: "/cfg", "box": "/m/cfg"])
+    stream.files = [
+      "/cfg/sessions/101.json": record(pid: 101, id: "here"),
+      "/m/cfg/sessions/106.json": record(pid: 106, id: "there"),
+    ]
+    let tree = try await control(stream).snapshot()
+
+    #expect(sessions(tree) == ["core:t1": "here", "core:box/t1": "there"])
+    let reads = try stream.params(of: "file.read").map { ($0["path"] as? String, $0["on"] as? String) }
+    #expect(reads.contains { $0 == ("/m/cfg/sessions/106.json", "box") })
+    #expect(reads.contains { $0 == ("/cfg/sessions/101.json", nil) })
+    #expect(Set(try execs(stream).map(\.on)) == [nil, "box"])
+  }
+
+  @Test("a machine with no answer is read from its home, as before")
+  func configDirectoryUnknownOnAMachine() async throws {
+    let stream = stream(claude("box/t1", pid: 106))
+    stream.exec = answers([:])
+    stream.files = [".claude/sessions/106.json": record(pid: 106, id: "there")]
+    #expect(sessions(try await control(stream, home: nil).snapshot()) == ["core:box/t1": "there"])
+  }
+
+  @Test("the directory is asked once for each place, not on every read")
+  func configDirectoryIsCached() async throws {
+    let stream = stream(claude("t1", pid: 101), claude("box/t1", pid: 106))
+    stream.exec = answers([nil: "/cfg", "box": "/m/cfg"])
+    stream.files = [
+      "/cfg/sessions/101.json": record(pid: 101, id: "here"),
+      "/m/cfg/sessions/106.json": record(pid: 106, id: "there"),
+    ]
+    let control = control(stream)
+    _ = try await control.snapshot()
+    try await raiseStatus(on: stream)
+    #expect(try execs(stream).count == 2)
+  }
+
+  @Test("an answer that failed is asked again on the next read")
+  func configDirectoryRetries() async throws {
+    let stream = stream(claude("t1", pid: 101))
+    stream.exec = answers([:])
+    stream.files = [
+      path(101): record(pid: 101, id: "home"),
+      "/cfg/sessions/101.json": record(pid: 101, id: "moved"),
+    ]
+    let control = control(stream)
+    #expect(sessions(try await control.snapshot()) == ["core:t1": "home"])
+
+    stream.exec = answers([nil: "/cfg"])
+    stream.event("status", on: "t1", working)
+    _ = try await tree(of: control) { sessions($0) == ["core:t1": "moved"] }
+    #expect(try execs(stream).count == 2)
+  }
+
   @Test("the record of a status with no app is read too")
   func noApp() async throws {
     let stream = stream(

@@ -18,7 +18,7 @@ struct TranscriptCommandsTests {
   @Test("the project directory is expanded on the host, not on the phone")
   func homeIsTheHostsAnswer() {
     let command = TranscriptCommands.listCommand(projectSlug: "-Users-x-dev")
-    #expect(command.contains(#"d="$HOME/.claude/projects"/-Users-x-dev"#))
+    #expect(command.contains(#"d="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"/projects/-Users-x-dev"#))
     #expect(command.contains(#"printf '%s\n' "$d""#))
   }
 
@@ -69,13 +69,13 @@ struct TranscriptCommandsTests {
   }
 
   /// For a file herdr named before the agent wrote it. The directory is built on the host
-  /// from `$HOME`, as the listing does.
+  /// from the configuration directory, as the listing does.
   @Test("the reported-file size command names the file under the host's projects root")
   func reportedSizeCommandIsTheSizeCommand() {
     #expect(
       TranscriptCommands.reportedSizeCommand(projectSlug: "-Users-x-dev", sessionID: "a1b2")
         == """
-        f="$HOME/.claude/projects"/-Users-x-dev/a1b2.jsonl; \
+        f="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"/projects/-Users-x-dev/a1b2.jsonl; \
         m=$(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f" 2>/dev/null); \
         s=$(wc -c < "$f" 2>/dev/null); \
         printf '%s\\t%s\\n' "${m:-?}" "${s:-?}"
@@ -195,10 +195,10 @@ struct TranscriptCommandsTests {
 
   // MARK: - Codex rollouts
 
-  @Test("the Codex listing walks day directories under $HOME/.codex/sessions, newest first")
+  @Test("the Codex listing walks day directories under ${CODEX_HOME:-$HOME/.codex}/sessions, newest first")
   func codexListingWalksDayDirectories() {
     let command = TranscriptCommands.codexListCommand()
-    #expect(command.contains(#"d="$HOME/.codex/sessions""#))
+    #expect(command.contains(#"d="${CODEX_HOME:-$HOME/.codex}"/sessions"#))
     #expect(command.contains(#"find "$d" -mindepth 3 -maxdepth 3 -type d 2>/dev/null | sort -r"#))
     #expect(command.contains("head -n \(CodexRollouts.maxDayDirectories)"))
     // A `while IFS= read -r` loop rather than word-splitting, because `$HOME` often has a space
@@ -492,11 +492,14 @@ struct EmptyGlobCommandTests {
     func remove() { try? FileManager.default.removeItem(at: home) }
 
     /// Runs a command as the exec channel hands it to a login shell.
-    func run(_ command: String, shell: String) async throws -> CommandResult {
+    func run(
+      _ command: String, shell: String, environment: [String: String] = [:]
+    ) async throws -> CommandResult {
       let process = Process()
       process.executableURL = URL(fileURLWithPath: shell)
       process.arguments = ["-c", command]
-      process.environment = ["HOME": home.path, "PATH": "/usr/bin:/bin"]
+      process.environment =
+        ["HOME": home.path, "PATH": "/usr/bin:/bin"].merging(environment) { _, new in new }
       let output = Pipe()
       let error = Pipe()
       process.standardOutput = output
@@ -540,6 +543,77 @@ struct EmptyGlobCommandTests {
     let listing = TranscriptReader.listing(from: result.standardOutput)
     #expect(listing.directory == scratch.home.appendingPathComponent(".claude/projects/-Users-x-dev").path)
     #expect(listing.files.isEmpty)
+  }
+
+  /// A real shell, so the `:-` default and the quoting are what a host makes of them. The
+  /// config directory is outside the scratch home, as a moved one is.
+  @Test("the Claude listing reads CLAUDE_CONFIG_DIR's projects, and ~/.claude's when it is unset", arguments: shells)
+  func claudeListingHonoursTheConfigDirectory(shell: String) async throws {
+    let scratch = Scratch()
+    defer { scratch.remove() }
+    try scratch.file(".claude/projects/-Users-x-dev/a.jsonl", "{}\n")
+    let config = scratch.home.appendingPathComponent("moved config")
+    try scratch.file("moved config/projects/-Users-x-dev/b.jsonl", "{}\n")
+    let command = TranscriptCommands.listCommand(projectSlug: "-Users-x-dev")
+
+    let unset = try await scratch.run(command, shell: shell)
+    #expect(unset.standardError == "")
+    #expect(TranscriptReader.listing(from: unset.standardOutput).files.map(\.path)
+      == [scratch.home.appendingPathComponent(".claude/projects/-Users-x-dev/a.jsonl").path])
+
+    let set = try await scratch.run(command, shell: shell, environment: ["CLAUDE_CONFIG_DIR": config.path])
+    #expect(set.standardError == "")
+    let listing = TranscriptReader.listing(from: set.standardOutput)
+    #expect(listing.directory == config.appendingPathComponent("projects/-Users-x-dev").path)
+    #expect(listing.files.map(\.path) == [config.appendingPathComponent("projects/-Users-x-dev/b.jsonl").path])
+  }
+
+  @Test("the Codex listing reads CODEX_HOME's sessions, and ~/.codex's when it is unset", arguments: shells)
+  func codexListingHonoursTheCodexHome(shell: String) async throws {
+    let scratch = Scratch()
+    defer { scratch.remove() }
+    try scratch.file(".codex/sessions/2026/09/24/rollout-a.jsonl", "{}\n")
+    try scratch.file("moved codex/sessions/2026/09/24/rollout-b.jsonl", "{}\n")
+    let moved = scratch.home.appendingPathComponent("moved codex")
+    let command = TranscriptCommands.codexListCommand()
+
+    let unset = try await scratch.run(command, shell: shell)
+    #expect(unset.standardOutput.contains("/.codex/sessions/2026/09/24/rollout-a.jsonl\t"))
+    #expect(!unset.standardOutput.contains("rollout-b"))
+
+    let set = try await scratch.run(command, shell: shell, environment: ["CODEX_HOME": moved.path])
+    #expect(set.standardOutput.contains("/moved codex/sessions/2026/09/24/rollout-b.jsonl\t"))
+    #expect(!set.standardOutput.contains("rollout-a"))
+  }
+
+  /// The user's own skills and the plugin manifest both move with `CLAUDE_CONFIG_DIR`. The
+  /// project's `.claude` does not: it is the project's, not the user's.
+  @Test("the skills command reads CLAUDE_CONFIG_DIR's skills and plugins, and ~/.claude's when it is unset", arguments: shells)
+  func skillsHonourTheConfigDirectory(shell: String) async throws {
+    let scratch = Scratch()
+    defer { scratch.remove() }
+    try scratch.file(".claude/skills/from-home/SKILL.md", "---\nname: from-home\n---\n")
+    try scratch.file("moved config/skills/from-config/SKILL.md", "---\nname: from-config\n---\n")
+    try scratch.file(".claude/project/.claude/skills/from-project/SKILL.md", "---\nname: from-project\n---\n")
+    let config = scratch.home.appendingPathComponent("moved config")
+    let install = config.appendingPathComponent("plugins/cache/acme/tools/1.0")
+    try scratch.file("moved config/plugins/cache/acme/tools/1.0/skills/sync-files/SKILL.md", "---\nname: sync-files\n---\n")
+    try scratch.file(
+      "moved config/plugins/installed_plugins.json", #"{"plugins":{"tools@acme":[{"installPath":"\#(install.path)"}]}}"#)
+    let project = scratch.home.appendingPathComponent(".claude/project")
+    let command = TranscriptCommands.skillsCommand(cwd: project.path)
+
+    let unset = try await scratch.run(command, shell: shell)
+    #expect(unset.standardOutput.contains("!u\tfrom-home\n"))
+    #expect(unset.standardOutput.contains("from-project"))
+    #expect(!unset.standardOutput.contains("from-config"))
+    #expect(!unset.standardOutput.contains("sync-files"))
+
+    let set = try await scratch.run(command, shell: shell, environment: ["CLAUDE_CONFIG_DIR": config.path])
+    #expect(set.standardOutput.contains("!u\tfrom-config\n"))
+    #expect(set.standardOutput.contains("!g\ttools:sync-files\n"))
+    #expect(set.standardOutput.contains("from-project"))
+    #expect(!set.standardOutput.contains("from-home"))
   }
 
   /// The newest day directory is empty and an older one holds a rollout.

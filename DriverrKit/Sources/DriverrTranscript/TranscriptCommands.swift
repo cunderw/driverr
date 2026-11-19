@@ -327,7 +327,7 @@ enum TranscriptCommands {
     return [
       literalEmptyGlobs,
       "date +%s",
-      // Built on the host because `$HOME` is the host's answer. The slug is quoted
+      // Built on the host because the configuration directory is the host's answer. The slug is quoted
       // separately and the shell concatenates the two.
       "d=\(ClaudeProjects.root)/\(shellQuoted(projectSlug))",
       // Echoed back so the phone can build absolute paths. A relative one would depend on
@@ -384,7 +384,7 @@ enum TranscriptCommands {
   /// instead of a whole listing. The path is built on the host, as in `listCommand`.
   ///
   /// ```
-  /// f="$HOME/.claude/projects"/'-Users-x-dev'/'0a1b2c3d-….jsonl'
+  /// f="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"/projects/'-Users-x-dev'/'0a1b2c3d-….jsonl'
   /// ```
   static func reportedSizeCommand(projectSlug: String, sessionID: String) -> String {
     sizeCommand(
@@ -577,12 +577,12 @@ enum TranscriptCommands {
   ///
   /// Four locations:
   ///
-  /// - `$HOME/.claude/skills/*/SKILL.md`, the user's own. Some are symlinks, so the test is
-  ///   `[ -f "$d/SKILL.md" ]`, not a directory check.
+  /// - `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/skills/*/SKILL.md`, the user's own. Some are
+  ///   symlinks, so the test is `[ -f "$d/SKILL.md" ]`, not a directory check.
   /// - `<cwd>/.claude/skills/*/SKILL.md` and `<cwd>/.claude/commands/*.md`, the project's.
   ///   Absent when the pane has no `cwd`.
   /// - Plugin skills under the `installPath` values in
-  ///   `$HOME/.claude/plugins/installed_plugins.json`.
+  ///   `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/installed_plugins.json`.
   ///
   /// **Plugins are filtered by that file, not globbed from the cache.** The cache keeps old
   /// version directories, and a skill from a version that is not installed is a command the
@@ -605,11 +605,14 @@ enum TranscriptCommands {
     var lines: [String] = [
       literalEmptyGlobs,
       "(h=\(home)",
+      // Claude Code's own override, when the shell that runs this has it. The project's
+      // `.claude` below is the project's and does not move.
+      "k=${CLAUDE_CONFIG_DIR:-$h/.claude}",
       "a=\(selector)",
       "n=0",
     ]
     lines += entryLoop(
-      glob: #""$h"/.claude/skills/*/"#,
+      glob: #""$k"/skills/*/"#,
       scope: userSkillScope
     )
     if let cwd, !cwd.isEmpty {
@@ -628,7 +631,7 @@ enum TranscriptCommands {
       ]
     }
     lines += [
-      "j=$h/.claude/plugins/installed_plugins.json",
+      "j=$k/plugins/installed_plugins.json",
       // **`then` and `do` carry their first statement on the same element.** The lines are
       // joined with `; `, and `then; cmd` and `do; cmd` are syntax errors in `sh`.
       //

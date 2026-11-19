@@ -15,7 +15,7 @@ struct SkillCatalogTests {
   @Test("all four locations are asked about in one command")
   func asksAboutEveryLocation() {
     let command = TranscriptCommands.skillsCommand(cwd: "/home/carson/dev/driverr")
-    #expect(command.contains(#""$h"/.claude/skills/*/"#))
+    #expect(command.contains(#""$k"/skills/*/"#))
     #expect(command.contains(#""$c"/.claude/skills/*/"#))
     #expect(command.contains(#""$c"/.claude/commands/*.md"#))
     #expect(command.contains("installed_plugins.json"))
@@ -25,7 +25,7 @@ struct SkillCatalogTests {
   @Test("a pane with no directory asks only about the user and plugin scopes")
   func degradesWithoutADirectory() {
     let command = TranscriptCommands.skillsCommand(cwd: nil)
-    #expect(command.contains(#""$h"/.claude/skills/*/"#))
+    #expect(command.contains(#""$k"/skills/*/"#))
     #expect(!command.contains(".claude/commands"))
     #expect(!command.contains("$c"))
     #expect(command.contains("installed_plugins.json"))
@@ -34,6 +34,15 @@ struct SkillCatalogTests {
   @Test("the home directory is the host's own answer, not one built on the phone")
   func homeIsTheHostsAnswer() {
     #expect(TranscriptCommands.skillsCommand(cwd: nil).contains(#"h="$HOME""#))
+  }
+
+  /// `$h` is the fallback, so a host with no variable reads `~/.claude` as before.
+  @Test("the user's skills and plugin manifest follow CLAUDE_CONFIG_DIR, and the project's do not")
+  func userScopeFollowsTheConfigDirectory() {
+    let command = TranscriptCommands.skillsCommand(cwd: "/home/carson/dev/driverr")
+    #expect(command.contains("k=${CLAUDE_CONFIG_DIR:-$h/.claude}"))
+    #expect(command.contains("j=$k/plugins/installed_plugins.json"))
+    #expect(!command.contains(#""$h"/.claude"#))
   }
 
   /// A working directory reaches `/bin/sh` as a string; `shellQuoted` keeps it an argument.
