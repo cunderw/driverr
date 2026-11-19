@@ -914,7 +914,7 @@ final class ConnectionModel {
       binaryPath: herdr.binaryPath,
       socketPath: host.herdrSocketPath
     ) { command in
-      ExecStreamBridge(stream: try await coordinator.openStream(command: command))
+      ExecStreamBridge(stream: try await coordinator.openStream(command: LoginShell.posix(command)))
     }
   }
 

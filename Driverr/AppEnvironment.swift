@@ -100,7 +100,7 @@ struct AppEnvironment {
     // one found is served, with no per-host switch. A host with none of herdr, a core and tmux
     // gets a control bound to the bare name, whose first command reports `herdrNotInstalled`.
     makeHerdrControl: { transport in
-      let run: CommandRunner = { try await transport.execChannel(command: $0) }
+      let run: CommandRunner = transport.posixRunner
       async let tui = CLIControl.discovering(run: run)
       async let core = CoreControl.discovering(transport: transport)
       // Read at each open, so turning the setting off reaches the next pane opened.
@@ -2761,7 +2761,9 @@ struct AppEnvironment {
       .drop { $0 != "control" && $0 != "observe" }
       .dropFirst()
       .first
-      .map { $0.trimmingCharacters(in: CharacterSet(charactersIn: "'")) } ?? "unknown"
+      // The app sends the command as one `sh -c` word, so a quote around the id arrives as
+      // `'\''`. Trims backslashes as well as quotes. See `LoginShell`.
+      .map { $0.trimmingCharacters(in: CharacterSet(charactersIn: "'\\")) } ?? "unknown"
     let payload = isDemo ? demoTranscript : "herdr pane \(terminalID)\r\n"
     let encoded = Data(payload.utf8).base64EncodedString()
     let record = """

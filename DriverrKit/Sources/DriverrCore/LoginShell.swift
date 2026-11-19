@@ -12,6 +12,6 @@
 public enum LoginShell {
   /// `script` as a command that any supported login shell hands to `sh` unchanged.
   public static func posix(_ script: String) -> String {
-    script
+    "sh -c " + HookInstallCommands.loginShellQuoted(script)
   }
 }
