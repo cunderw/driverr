@@ -1910,6 +1910,38 @@ struct TerminalSceneModelTests {
     #expect(scene.session(for: .pane(id: "w9:p9")) == nil)
   }
 
+  /// The attach command typed into the pty is a line for the login shell, which can be fish.
+  /// It goes as one `sh -c` word, so fish reads its quoted values as `sh` does. See
+  /// `LoginShell`. The fake pty echoes what it is sent, so the echo is the typed line.
+  @Test("a pane with no terminal id types its attach command as one sh -c word")
+  func thePTYAttachCommandIsWrapped() async throws {
+    let control = FakeControl()
+    await control.update(to: Self.treeWithNoTerminalID)
+    let (scene, _) = await makeScene(
+      initialTarget: .pane(id: "w9:p9"),
+      surface: .terminal,
+      herdr: control,
+      responder: Self.everythingPaints
+    )
+
+    scene.start()
+    await scene.settle()
+    let session = try #require(
+      scene.session(for: .pane(id: "w9:p9")), "the pane opened no pty, so this asserts nothing")
+
+    // `attach` flushes what arrived before it. The suite's time limit bounds the loop.
+    let (chunks, chunk) = AsyncStream.makeStream(of: String.self)
+    session.attach { chunk.yield(String(decoding: $0, as: UTF8.self)) }
+    var typed = ""
+    for await text in chunks {
+      typed += text
+      if typed.contains("\n") || typed.contains("\r") { break }
+    }
+
+    #expect(typed.hasPrefix("sh -c '"), "the attach command reached the login shell raw: \(typed)")
+    #expect(typed.contains("herdr agent attach"))
+  }
+
   /// A tmux pane has no terminal id and, until the live tmux terminal lands, no attach command.
   /// Its Terminal side must say so and open nothing: the old stand-in attached to whichever pane
   /// was current in the session, which was often another one.

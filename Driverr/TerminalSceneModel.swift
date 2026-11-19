@@ -1004,7 +1004,8 @@ final class TerminalSceneModel {
           return
         }
         session.start()
-        session.send(text: command + "\n")
+        // Through `sh`, so a fish login shell reads the quoted values as `sh` does.
+        session.send(text: LoginShell.posix(command) + "\n")
         await install(
           Entry(
             id: nextID(),

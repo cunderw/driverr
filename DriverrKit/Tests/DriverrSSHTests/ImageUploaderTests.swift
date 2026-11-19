@@ -370,7 +370,8 @@ struct ImageUploadStallTests {
     await #expect(throws: ImageUploadFailure.stalled) { try await uploader.upload() }
 
     #expect(await collected.value == [0, 100])
-    #expect(await transport.streamLog.last == "close: head -c 101")
+    // Opened as one `sh -c` word. See `LoginShell`.
+    #expect(await transport.streamLog.last == "close: sh -c 'head -c 101'")
   }
 
   /// The link died before the upload started, so the channel never opens.
@@ -414,9 +415,11 @@ struct ImageUploadStallTests {
 
     for await _ in closes { break }
     let log = await transport.streamLog
+    // The script goes to the login shell as one `sh -c` word. See `LoginShell`.
+    let opened = "sh -c 'head -c 100'"
     #expect(
       log == [
-        "unanswered: head -c 100", "open: head -c 100", "unanswered: close head -c 100", "close: head -c 100",
+        "unanswered: \(opened)", "open: \(opened)", "unanswered: close \(opened)", "close: \(opened)",
       ])
   }
 }

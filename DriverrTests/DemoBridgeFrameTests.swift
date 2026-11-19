@@ -1,3 +1,4 @@
+import DriverrCore
 import Foundation
 import Testing
 
@@ -10,8 +11,8 @@ struct DemoBridgeFrameTests {
   private let command = "herdr terminal session control 'term_w1p2' --cols 55 --rows 28"
 
   /// The bytes of the one `terminal.frame` record, as the emulator receives them.
-  private func text(isDemo: Bool) throws -> String {
-    let frame = AppEnvironment.bridgeFrame(for: command, isDemo: isDemo)
+  private func text(isDemo: Bool, command: String? = nil) throws -> String {
+    let frame = AppEnvironment.bridgeFrame(for: command ?? self.command, isDemo: isDemo)
     let record = try #require(
       try JSONSerialization.jsonObject(with: frame) as? [String: Any],
       "The frame is not one JSON record")
@@ -26,6 +27,14 @@ struct DemoBridgeFrameTests {
   @Test("An ordinary launch names the terminal and prints nothing else")
   func anOrdinaryLaunchNamesTheTerminal() throws {
     #expect(try text(isDemo: false) == "herdr pane term_w1p2\r\n")
+  }
+
+  /// `ConnectionModel` opens each bridge through `LoginShell.posix`, so the id's quotes reach
+  /// the fake as `'\''`.
+  @Test("The command as the app sends it, through sh -c, still names the terminal")
+  func theWrappedCommandNamesTheTerminal() throws {
+    let wrapped = LoginShell.posix(command)
+    #expect(try text(isDemo: false, command: wrapped) == "herdr pane term_w1p2\r\n")
   }
 
   @Test("The store tour's frame is the agent session, without the line that names the terminal")

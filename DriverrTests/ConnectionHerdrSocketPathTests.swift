@@ -113,7 +113,8 @@ struct ConnectionHerdrSocketPathTests {
     let streamed = await transport.streamedCommands
     let observe = try #require(streamed.first { $0.contains("terminal session observe") })
     let control = try #require(streamed.first { $0.contains("terminal session control") })
-    #expect(observe.hasPrefix("export HERDR_SOCKET_PATH=/run/herdr.sock; "))
-    #expect(control.hasPrefix("export HERDR_SOCKET_PATH=/run/herdr.sock; "))
+    // Each stream goes to the login shell as one `sh -c` word. See `LoginShell`.
+    #expect(observe.hasPrefix("sh -c 'export HERDR_SOCKET_PATH=/run/herdr.sock; "))
+    #expect(control.hasPrefix("sh -c 'export HERDR_SOCKET_PATH=/run/herdr.sock; "))
   }
 }
