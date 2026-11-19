@@ -552,7 +552,100 @@ public struct CLIControl: HerdrControl {
     }
   }
 
-  static func agentName(folder: String, paneID: String, kind: AgentLaunch.Kind) -> String { "" }
+  public var canStartAgent: Bool { true }
+
+  /// A new workspace named after the folder, focus left where it is, and the agent started in
+  /// its root pane with `agent start`, which types the command into the pane's shell.
+  ///
+  /// The folder is resolved first: `workspace create --cwd` with a missing folder exits 0 with
+  /// the workspace in `$HOME`. Measured on #97.
+  ///
+  /// **`agent_not_ready` is a start.** herdr answers it, with exit 1, when the agent stopped at
+  /// a startup question such as Claude Code's folder trust check, and the agent is running.
+  /// The message goes as `-- -- <message>`: the first `--` ends herdr's options, and herdr types
+  /// the second, so a message that starts with `-` stays a message.
+  public func startAgent(_ launch: AgentLaunch) async throws -> String {
+    try launch.checkLength()
+    let directory = try await resolvedDirectory(for: launch)
+    let folder = AgentLaunch.folderName(of: directory)
+
+    let created = try await execute(
+      "workspace create --cwd \(shellQuoted(directory)) --label \(shellQuoted(folder)) --no-focus")
+    let paneID = try decode(HerdrResponse<HerdrWorkspaceCreated>.self, from: created)
+      .result.rootPane.paneID
+
+    var arguments =
+      "agent start \(Self.agentName(folder: folder, paneID: paneID, kind: launch.kind))"
+      + " --kind \(launch.kind.command) --pane \(shellQuoted(paneID))"
+    if let prompt = launch.prompt { arguments += " -- -- \(shellQuoted(prompt))" }
+
+    let result: CommandResult
+    do {
+      result = try await run(
+        Self.withSocketPathEnv("\(shellQuoted(binaryPath)) \(arguments)", socketPath: herdrSocketPath))
+    } catch {
+      throw AppError.agentDidNotStart(
+        paneID: paneID, place: folder,
+        reason: (error as? AppError)?.localizedDescription ?? "Could not run herdr on this host.")
+    }
+    if result.exitStatus == 0 || Self.refusalCode(in: result) == "agent_not_ready" { return paneID }
+    throw AppError.agentDidNotStart(
+      paneID: paneID, place: folder,
+      reason: Self.refusal(in: result)
+        ?? Self.failure(exitStatus: result.exitStatus, standardError: result.standardError)
+        .localizedDescription)
+  }
+
+  /// The folder's absolute path on the host. Not a herdr call, so no socket path.
+  private func resolvedDirectory(for launch: AgentLaunch) async throws -> String {
+    let result: CommandResult
+    do {
+      result = try await run(AgentLaunch.resolveCommand(for: launch.directory))
+    } catch let error as AppError {
+      throw error
+    } catch {
+      throw AppError.channelFailed(reason: "Could not run a command on this host.")
+    }
+    return try AgentLaunch.resolvedDirectory(from: result, requested: launch.directory)
+  }
+
+  /// An agent's name as herdr takes one: the folder, then the pane.
+  ///
+  /// herdr refuses a name outside `[a-z][a-z0-9_-]{0,31}` (`invalid_agent_name`) and a live
+  /// agent's name (`agent_name_taken`). Measured on #97. Any other character in the folder is
+  /// a `-`, a folder that does not start with a letter gets the agent's kind in front, and the
+  /// pane id keeps the name unique, because no two live panes share one.
+  static func agentName(folder: String, paneID: String, kind: AgentLaunch.Kind) -> String {
+    func allowed(_ character: Character) -> Bool {
+      character.isASCII && (character.isLowercase || character.isNumber || character == "_")
+    }
+    let tag = String(paneID.lowercased().filter { $0.isASCII && ($0.isLetter || $0.isNumber) })
+    var slug = ""
+    for character in folder.lowercased() {
+      if allowed(character) {
+        slug.append(character)
+      } else if !slug.isEmpty, slug.last != "-" {
+        slug.append("-")
+      }
+    }
+    while slug.hasSuffix("-") { slug.removeLast() }
+    if slug.first?.isLetter != true { slug = slug.isEmpty ? kind.command : "\(kind.command)-\(slug)" }
+    slug = String(slug.prefix(31 - tag.count))
+    while slug.hasSuffix("-") { slug.removeLast() }
+    return "\(slug)-\(tag)"
+  }
+
+  /// The `code` of herdr's refusal, from either stream. See `refusal(in:)`.
+  static func refusalCode(in result: CommandResult) -> String? {
+    for stream in [result.standardError, result.standardOutput] {
+      let trimmed = stream.trimmingCharacters(in: .whitespacesAndNewlines)
+      guard trimmed.hasPrefix("{"),
+        let failure = try? JSONDecoder().decode(HerdrErrorResponse.self, from: Data(trimmed.utf8))
+      else { continue }
+      return failure.error.code
+    }
+    return nil
+  }
 
   /// Runs a herdr subcommand and returns its stdout, or throws something a person can act
   /// on.

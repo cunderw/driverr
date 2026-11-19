@@ -77,7 +77,7 @@ struct CLIControlAgentLaunchTests {
       host.commands == [
         AgentLaunch.resolveCommand(for: "~/my app"),
         "herdr workspace create --cwd '/srv/my app' --label 'my app' --no-focus",
-        "herdr agent start my-app-w2p1 --kind claude --pane w2:p1 -- -- 'fix the build'",
+        "herdr agent start my-app-w2p1 --kind claude --pane 'w2:p1' -- -- 'fix the build'",
       ])
   }
 
@@ -86,7 +86,7 @@ struct CLIControlAgentLaunchTests {
     let host = LaunchHost()
     _ = try await CLIControl(run: host.runner).startAgent(
       AgentLaunch(kind: .codex, directory: "/srv/my app"))
-    #expect(host.commands.last == "herdr agent start my-app-w2p1 --kind codex --pane w2:p1")
+    #expect(host.commands.last == "herdr agent start my-app-w2p1 --kind codex --pane 'w2:p1'")
   }
 
   /// A herdr call without the socket path reaches the default session, silently.

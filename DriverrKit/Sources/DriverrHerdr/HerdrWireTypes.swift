@@ -21,6 +21,23 @@ struct HerdrErrorResponse: Decodable, Sendable {
   let error: Failure
 }
 
+/// What `workspace create` answers. Only the root pane is read: the agent starts there.
+struct HerdrWorkspaceCreated: Decodable, Sendable {
+  struct RootPane: Decodable, Sendable {
+    let paneID: String
+
+    enum CodingKeys: String, CodingKey {
+      case paneID = "pane_id"
+    }
+  }
+
+  let rootPane: RootPane
+
+  enum CodingKeys: String, CodingKey {
+    case rootPane = "root_pane"
+  }
+}
+
 struct HerdrSnapshotResult: Decodable, Sendable {
   let snapshot: HerdrSessionSnapshot
 }

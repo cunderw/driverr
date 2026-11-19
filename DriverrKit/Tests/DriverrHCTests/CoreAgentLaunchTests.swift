@@ -77,8 +77,9 @@ struct CoreAgentLaunchTests {
   @Test("each start is a new space")
   func newSpaceEachTime() async throws {
     let stream = core()
-    _ = try await control(stream).startAgent(launch)
-    _ = try await control(stream).startAgent(launch)
+    let control = control(stream)
+    _ = try await control.startAgent(launch)
+    _ = try await control.startAgent(launch)
     let spaces = try stream.params(of: "terminal.run").compactMap {
       ($0["labels"] as? [String: String])?["herdr.space"]
     }

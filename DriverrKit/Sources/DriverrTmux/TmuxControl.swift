@@ -296,6 +296,50 @@ public struct TmuxControl: HerdrControl {
     return TmuxID.pane(id)
   }
 
+  /// Not tied to a terminal, as `canStartTerminal` is: an agent's chat reads its transcript.
+  public var canStartAgent: Bool { true }
+
+  /// A window named after the folder, in the most recently used session or a new one, with the
+  /// agent's command typed into its shell and submitted.
+  ///
+  /// The folder is resolved first: `new-window -c` with a missing folder exits 0 with the window
+  /// in `$HOME`. Measured on #97. `-d` leaves the desk's current window current.
+  public func startAgent(_ launch: AgentLaunch) async throws -> String {
+    try launch.checkLength()
+    let checked: CommandResult
+    do {
+      checked = try await run(AgentLaunch.resolveCommand(for: launch.directory))
+    } catch let error as AppError {
+      throw error
+    } catch {
+      throw AppError.channelFailed(reason: "Could not run a command on this host.")
+    }
+    let directory = try AgentLaunch.resolvedDirectory(from: checked, requested: launch.directory)
+    let folder = AgentLaunch.folderName(of: directory)
+
+    var output: String
+    do {
+      output = try await execute(
+        TmuxCommands.newWindow(binary: binary, named: folder, in: directory))
+    } catch AppError.herdrCommandFailed(let reason) where Self.isNoServer(reason) {
+      output = try await execute(
+        TmuxCommands.newSession(binary: binary, named: folder, in: directory))
+    }
+    await backoff.reset()
+    let raw = output.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard let id = TmuxID.validRaw(raw, kind: .pane) else { throw AppError.herdrResponseUnreadable }
+    let paneID = TmuxID.pane(id)
+
+    do {
+      try await submitText(paneID: paneID, text: launch.typedLine)
+    } catch {
+      throw AppError.agentDidNotStart(
+        paneID: paneID, place: folder,
+        reason: (error as? AppError)?.localizedDescription ?? "Could not run tmux on this host.")
+    }
+    return paneID
+  }
+
   // MARK: Plumbing
 
   private func quotedPane(_ id: String) throws -> String {

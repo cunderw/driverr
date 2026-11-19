@@ -220,6 +220,24 @@ enum TmuxCommands {
   static func newSession(binary: String) -> String {
     "\(binary) new-session -d -P -F \(shellQuoted("#{pane_id}"))"
   }
+
+  /// `newWindow(binary:)`, named `name` and started in `folder`.
+  ///
+  /// tmux expands a format in `-c`, so every `#` is doubled: measured on 3.7c, a folder named
+  /// `c#Sx` opened in `$HOME` and `c##Sx` opened `c#Sx`. `-n` takes `label(_:)`, which doubles
+  /// them too, and turns off the window's automatic rename.
+  static func newWindow(binary: String, named name: String, in folder: String) -> String {
+    newWindow(binary: binary) + startingIn(name: name, folder: folder)
+  }
+
+  /// `newSession(binary:)`, named and started as `newWindow(binary:named:in:)`.
+  static func newSession(binary: String, named name: String, in folder: String) -> String {
+    newSession(binary: binary) + startingIn(name: name, folder: folder)
+  }
+
+  private static func startingIn(name: String, folder: String) -> String {
+    " -n \(TmuxArgument.label(name)) -c \(TmuxArgument.quoted(folder.replacingOccurrences(of: "#", with: "##")))"
+  }
 }
 
 extension Character {

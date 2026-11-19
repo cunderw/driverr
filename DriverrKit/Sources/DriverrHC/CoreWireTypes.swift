@@ -47,7 +47,8 @@ struct CoreFileReadResult: Decodable, Sendable {
 /// so nothing is left running on the machine once the call has given up.
 struct CoreExecParams: Encodable, Sendable {
   let line: String
-  let on: String
+  /// The machine, or `nil` for the core's own computer, which is the SSH host.
+  let on: String?
   let timeout: Double
 }
 
@@ -138,6 +139,18 @@ struct CoreRunParams: Encodable, Sendable {
     var labels = ["herdr.space": space, "herdr.seen": "0"]
     labels["herdr.tab"] = source.labels?["herdr.tab"]
     self.labels = labels
+    keep = true
+  }
+
+  /// A shell on this machine, in `directory`, that the desktop app shows as a new space.
+  ///
+  /// `space` is an id the app has not seen. The app adopts the terminal into a new space with
+  /// that id, named after the folder, when its window is open and when it opens later.
+  /// Measured on #97. `herdr.seen` and `keep` are what the app gives its own terminals.
+  init(agentShellIn directory: String, space: String) {
+    cwd = directory
+    on = nil
+    labels = ["herdr.space": space, "herdr.seen": "0"]
     keep = true
   }
 

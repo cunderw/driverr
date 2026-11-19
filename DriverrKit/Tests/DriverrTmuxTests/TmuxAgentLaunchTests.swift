@@ -64,7 +64,7 @@ struct TmuxAgentLaunchTests {
     let commands = await host.tmux.commands
     #expect(
       commands.first
-        == "tmux new-window -d -P -F '#{pane_id}' -n 'my app' -c '/srv/my app'")
+        == "tmux -u new-window -d -P -F '#{pane_id}' -n 'my app' -c '/srv/my app'")
     #expect(await host.tmux.input["%4"] == [.text("claude -- 'fix it'"), .key("Enter")])
 
     let tree = try await control.snapshot()
@@ -81,7 +81,7 @@ struct TmuxAgentLaunchTests {
     #expect(id == "tmux:%0")
     let commands = await host.tmux.commands
     #expect(commands.count == 3, "new-window refused, new-session, then the typing")
-    #expect(commands[1] == "tmux new-session -d -P -F '#{pane_id}' -n 'my app' -c '/srv/my app'")
+    #expect(commands[1] == "tmux -u new-session -d -P -F '#{pane_id}' -n 'my app' -c '/srv/my app'")
     #expect(await host.tmux.input["%0"] == [.text("codex"), .key("Enter")])
   }
 

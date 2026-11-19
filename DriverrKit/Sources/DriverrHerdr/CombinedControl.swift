@@ -469,6 +469,28 @@ public struct CombinedControl: HerdrControl {
     nonTUI.first { $0.canStartTerminal }
   }
 
+  /// Whether any side can start an agent, the TUI included. See `startAgent(_:)`.
+  public var canStartAgent: Bool { launchers.contains { $0.canStartAgent } }
+
+  /// Started by the first control that can: the TUI, which puts a workspace on the desk, then a
+  /// core, then tmux. Not `starter`, which never picks the TUI.
+  ///
+  /// **A TUI whose last poll found no session is passed over**, because its `workspace create`
+  /// would fail with a core or tmux beside it that is up. **One side only**: a failure is the
+  /// answer and no other side is tried, because a failure after a pane opened would open a
+  /// second.
+  public func startAgent(_ launch: AgentLaunch) async throws -> String {
+    var candidates = launchers
+    if primaryIsTUI, case .noSession = await memory.tui { candidates.removeFirst() }
+    guard let launcher = candidates.first(where: { $0.canStartAgent }) else {
+      throw AppError.herdrCommandFailed(reason: "This host cannot start an agent.")
+    }
+    return try await launcher.startAgent(launch)
+  }
+
+  /// Every control, in the order an agent start tries them: the primary, then the sides.
+  private var launchers: [any HerdrControl] { [tui] + sides.map(\.control) }
+
   /// Every control but the TUI, the primary first when it is not the TUI.
   private var nonTUI: [any HerdrControl] {
     (primaryIsTUI ? [] : [tui]) + sides.map(\.control)
