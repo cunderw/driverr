@@ -53,6 +53,7 @@ private let noSession = AppError.herdrCommandFailed(reason: "no session running"
 private func host(
   herdr arguments: String? = "/opt/homebrew/bin/herdr --session work",
   herdrEnvironment: [String: String] = [:],
+  herdrEnvironmentReadable: Bool = true,
   clients: [(pid: Int, environment: [String: String])] = []
 ) -> FakeTmuxHost {
   var processes = [FakeTmuxHost.Process(pid: 7000, tty: "ttys100", command: "zsh")]
@@ -61,8 +62,10 @@ private func host(
     processes.append(
       FakeTmuxHost.Process(
         pid: 7001, tty: "ttys101", command: program, arguments: arguments,
-        environment: herdrEnvironment.merging(
-          ["TMUX": "/tmp/tmux-1000/default,1,0", "SECRET_TOKEN": "hunter2"]) { mine, _ in mine }))
+        environment: herdrEnvironmentReadable
+          ? herdrEnvironment.merging(
+            ["TMUX": "/tmp/tmux-1000/default,1,0", "SECRET_TOKEN": "hunter2"]) { mine, _ in mine }
+          : [:]))
   } else {
     processes.append(FakeTmuxHost.Process(pid: 7001, tty: "ttys101", command: "zsh"))
   }
@@ -240,6 +243,18 @@ struct TmuxMirrorTests {
     #expect(tree.mirrorClaims.isEmpty)
   }
 
+  /// A process in a tmux pane always carries `TMUX`, so a leader without it is one whose
+  /// environment could not be read: a hardened binary, or a `/proc` the user cannot read. Read
+  /// as empty, a plain `herdr` would claim the standard session whatever it really shows.
+  @Test("a herdr leader whose environment cannot be read claims nothing, flag or not")
+  func unreadLeader() async throws {
+    for arguments in ["herdr", "herdr --session work"] {
+      let fake = host(herdr: arguments, herdrEnvironmentReadable: false)
+      #expect(
+        try await TmuxControl(run: fake.runner).snapshot().mirrorClaims.isEmpty, "\(arguments)")
+    }
+  }
+
   @Test("a remote herdr in a tmux pane claims nothing")
   func remoteHerdr() async throws {
     let fake = host(herdr: "herdr --remote box --session work")
@@ -332,6 +347,29 @@ struct TmuxMirrorTests {
       tui: .failure(.herdrResponseUnreadable), tmux: host(),
       socket: "/home/dev/.config/herdr/sessions/work/herdr.sock")
     await #expect(throws: AppError.self) { try await control.snapshot() }
+  }
+
+  /// A core standing in for an absent TUI is not a herdr session, so a claim on the standard
+  /// session must not match the unbound host's standard key.
+  @Test("beside a core that stands in for the TUI, a claim marks nothing")
+  func corePrimary() async throws {
+    let core = StubTUI(.success(SessionTree(workspaces: [
+      Workspace(
+        id: "core:ws", number: 1, label: "core",
+        tabs: [
+          DriverrCore.Tab(
+            id: "core:tab", workspaceID: "core:ws", number: 1, label: "Terminals",
+            panes: [Pane(id: "core:t1", tabID: "core:tab", workspaceID: "core:ws", title: "t1")])
+        ])
+    ])))
+    let tmux = TmuxControl(run: host(herdr: "herdr").runner)
+    let control = CombinedControl(
+      primary: core, sides: [CombinedControl.Side(prefix: TmuxID.prefix, control: tmux)]
+    ).bound(toSocketPath: nil)
+    let tree = try await control.snapshot()
+    #expect(tree.mirrorClaims == [MirrorClaim(paneID: "tmux:%1", session: .standard)])
+    #expect(tree.allPanes.map(\.id) == ["core:t1", "tmux:%0", "tmux:%1"])
+    #expect(tree.allPanes.allSatisfy { !$0.isMirror })
   }
 
   @Test("tmux alone hides nothing, even with a claim")

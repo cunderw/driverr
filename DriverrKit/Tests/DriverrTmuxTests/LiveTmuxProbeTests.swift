@@ -504,6 +504,23 @@
         let details = TmuxProcessDetailsRead.details(from: read.standardOutput, forPIDs: [pid])
         #expect(details[pid]?.environment.keys.sorted() == ["HERDR_PANE_ID", "HERDR_SOCKET_PATH"])
         #expect(details[pid]?.arguments.contains("attach -t probe") == true)
+
+        // And for the herdr stand-in, the leader of `%1`.
+        let tty = try await tmux("display-message -p -t \(shellQuoted("%1")) '#{pane_tty}'")
+        let leader = try #require(
+          Int(
+            try await LocalShell.runner(
+              "ps -A -o pid=,tpgid=,tty= | awk -v t=\(shellQuoted(TmuxProcessTable.ttyName(ofPaneTTY: tty))) '$3==t && $1==$2 {print $1}'"
+            ).standardOutput.trimmingCharacters(in: .whitespacesAndNewlines)))
+        let leaderRaw = try await LocalShell.runner("ps -wwE -o command= -p \(leader)")
+        #expect(leaderRaw.standardOutput.contains("DRIVERR_PROBE_SECRET=nope"), "the secret is there to leak")
+        let leaderRead = try await LocalShell.runner(
+          TmuxProcessDetailsRead.command(forPIDs: [leader]))
+        #expect(leaderRead.standardOutput.contains("HERDR_SOCKET_PATH=\(socket)"), "\(leaderRead.standardOutput)")
+        #expect(!leaderRead.standardOutput.contains("DRIVERR_PROBE_SECRET"))
+        #expect(
+          TmuxProcessDetailsRead.details(from: leaderRead.standardOutput, forPIDs: [leader])[leader]?
+            .environment.keys.sorted() == ["HERDR_SOCKET_PATH", "TMUX"])
       }
     }
   }
