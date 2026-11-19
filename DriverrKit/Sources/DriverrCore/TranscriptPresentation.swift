@@ -293,23 +293,41 @@ public struct TranscriptNotice: Equatable, Sendable {
 
   /// Why a pane has no transcript at all, for a pane whose composer may be held.
   ///
-  /// A pane held as `.agentAsksOnScreen` that waits for a file is sent to the screen: its
-  /// agent asks on its screen, and a message would press Enter on the current choice. On
-  /// Claude Code's folder-trust prompt that choice is "No, exit" (#122). The same signal as
-  /// the hold, so the two never disagree. No Retry: the watcher still polls for the file.
-  /// Every other pane gets `init(absence:agentStatus:)`.
-  public init(absence: TranscriptAbsence, agentStatus: AgentStatus?, hold: PaneComposerHold?) {
-    guard hold == .agentAsksOnScreen, absence.awaitsFirstFile else {
+  /// A held pane that waits for a file is sent to the screen, or to the chips drawn under this
+  /// notice when `answersBelow`. The same signal as the hold, so the two never disagree. No
+  /// Retry: the watcher still polls for the file. Every other pane gets
+  /// `init(absence:agentStatus:)`. Each hold has its own words:
+  /// - `.agentAsksOnScreen`: a message would press Enter on the current choice. On Claude
+  ///   Code's folder-trust prompt that choice is "No, exit" (#122).
+  /// - `.pickerOpen`: a new Codex has no rollout before its first prompt, and `/model` can be
+  ///   that first thing (#109). A message would pick the picker's highlighted option.
+  public init(
+    absence: TranscriptAbsence, agentStatus: AgentStatus?, hold: PaneComposerHold?,
+    answersBelow: Bool
+  ) {
+    guard let hold, absence.awaitsFirstFile else {
       self.init(absence: absence, agentStatus: agentStatus)
       return
     }
-    self.init(
-      title: "The agent is asking on its screen",
-      message:
-        "Answer it with \(Self.showScreenTitle). A message sent from here would press Enter "
-        + "on its current choice.",
-      symbolName: "hand.raised"
-    )
+    let below = answersBelow ? " below or" : ""
+    switch hold {
+    case .agentAsksOnScreen:
+      self.init(
+        title: "The agent is asking on its screen",
+        message:
+          "Answer it\(below) with \(Self.showScreenTitle). A message sent from here would "
+          + "press Enter on its current choice.",
+        symbolName: "hand.raised"
+      )
+    case .pickerOpen:
+      self.init(
+        title: "A picker is open on the agent's screen",
+        message:
+          "Choose an option\(below) with \(Self.showScreenTitle). A message sent from here "
+          + "would pick its highlighted option.",
+        symbolName: "list.bullet.circle"
+      )
+    }
   }
 
   /// Why a pane has no transcript at all.
@@ -319,7 +337,8 @@ public struct TranscriptNotice: Equatable, Sendable {
   /// finished agent has had its prompt, so a missing file is a fault. A blocked agent keeps
   /// the wait, because a new Claude on its trust prompt reports blocked before any prompt
   /// (`FakeControl.treeWithUnstartedAgent`). No default, so a call site cannot forget it.
-  /// The chat calls `init(absence:agentStatus:hold:)`, which sends a held pane to its screen.
+  /// The chat calls `init(absence:agentStatus:hold:answersBelow:)`, which sends a held pane to
+  /// its screen or its chips.
   public init(absence: TranscriptAbsence, agentStatus: AgentStatus?) {
     let leftTheDirectory = "If this pane has left the directory the agent started in,"
     switch absence {
@@ -830,11 +849,14 @@ public struct PendingToolCallNotice: Hashable, Sendable {
 
   /// `nil` for a pane with no agent, which differs from `.unknown`. See `AgentStatus`.
   public init(call: ToolCall, agentStatus: AgentStatus?, blockedKind: AgentBlockedKind? = nil) {
+    // A question read off a screen other than Claude's `AskUserQuestion` picker has no tool
+    // name, so its line is the status alone (`PaneQuestionScreen.call`).
     let named = TranscriptChatCopy.namingCall(call)
+    func line(_ status: String) -> String { named.isEmpty ? status : "\(status) · \(named)" }
     // The file's own answer first, whatever the status: a written question with no result
     // is unanswered.
     guard !call.asksItsOwnQuestions else {
-      label = "\(TranscriptChatCopy.pendingQuestion) · \(named)"
+      self.label = line(TranscriptChatCopy.pendingQuestion)
       isAsking = true
       groups = call.replyChipGroups
       return
@@ -844,21 +866,21 @@ public struct PendingToolCallNotice: Hashable, Sendable {
       isAsking = true
       switch blockedKind {
       case .question:
-        label = "\(TranscriptChatCopy.pendingQuestion) · \(named)"
+        self.label = line(TranscriptChatCopy.pendingQuestion)
         groups = []
       case .auth:
-        label = "\(TranscriptChatCopy.pendingAuth) · \(named)"
+        self.label = line(TranscriptChatCopy.pendingAuth)
         groups = []
       case .permission, nil:
-        label = "\(TranscriptChatCopy.pendingBlocked) · \(named)"
+        self.label = line(TranscriptChatCopy.pendingBlocked)
         groups = call.replyChipGroups
       }
     case .working:
-      label = "\(TranscriptChatCopy.pendingWorking) · \(named)"
+      self.label = line(TranscriptChatCopy.pendingWorking)
       isAsking = false
       groups = []
     case .idle, .done, .error, .unknown, nil:
-      label = "\(TranscriptChatCopy.pendingUnanswered) · \(named)"
+      self.label = line(TranscriptChatCopy.pendingUnanswered)
       isAsking = false
       groups = []
     }
@@ -866,7 +888,7 @@ public struct PendingToolCallNotice: Hashable, Sendable {
 }
 
 extension ToolCall {
-  /// The row this call gets under its run, which always names the call. There is no form
+  /// The row this call gets under its run, which names the call when it has a name. No form
   /// without `agentStatus`, because a label built from a resultless call alone would claim
   /// a permission prompt that may not exist.
   public func pendingNotice(

@@ -34,6 +34,9 @@ public actor FakeControl: HerdrControl {
   /// something. A blank screen is an answer and a refused read is a fault, and tests must
   /// reach both.
   private let screenOverride: PaneScreen?
+  /// What a single-pane read answers with until anything is sent, then the fixture: a picker
+  /// a chip answers and closes. `screenOverride` wins over it.
+  private let screenUntilSent: PaneScreen?
   /// What opens a core pane, for a test of that path. A pane on the TUI gets the bridge.
   private let attacher: (any PaneAttacher)?
   /// What this fake has no equivalent for, as a core has no rename. See `canPerform(_:on:)`.
@@ -62,6 +65,7 @@ public actor FakeControl: HerdrControl {
       protocolVersion: HerdrProtocol.lastVerified
     ),
     screen: PaneScreen? = nil,
+    screenUntilSent: PaneScreen? = nil,
     attacher: (any PaneAttacher)? = nil,
     unsupported: Set<PaneActionKind> = [],
     canStartTerminal: Bool = false,
@@ -74,6 +78,7 @@ public actor FakeControl: HerdrControl {
     self.failure = failure
     availabilityOverride = availability
     screenOverride = screen
+    self.screenUntilSent = screenUntilSent
     self.attacher = attacher
     self.unsupported = unsupported
     self.canStartTerminal = canStartTerminal
@@ -97,6 +102,7 @@ public actor FakeControl: HerdrControl {
     failure = nil
     availabilityOverride = .ready(version: "0.9.1", protocolVersion: HerdrProtocol.lastVerified)
     screenOverride = nil
+    screenUntilSent = nil
     attacher = nil
     unsupported = []
     canStartTerminal = false
@@ -330,6 +336,7 @@ public actor FakeControl: HerdrControl {
     screenReads.append((pane.id, lines))
     if let failure { throw failure }
     if let screenOverride { return screenOverride }
+    if let screenUntilSent, sent.isEmpty { return screenUntilSent }
     return PaneScreen.sanitised(Self.fixtureScreen(for: pane), lines: lines)
   }
 
@@ -968,6 +975,85 @@ public actor FakeControl: HerdrControl {
       viewportRows: pane.viewportRows
     )
   }
+
+  /// A pane showing Codex's `/permissions` picker, which herdr reports `idle` and Codex writes
+  /// nowhere (#109).
+  ///
+  /// A real capture of Codex CLI 0.170.0 at 60 columns, from `tmux capture-pane -e -p`. The
+  /// folder is replaced. A digit alone picks an option.
+  public static let codexPickerScreen = PaneScreen.sanitised(
+    [
+      "",
+      "  \u{1B}[38;2;99;168;248m>_ \u{1B}[1m\u{1B}[39mOpenAI Codex\u{1B}[0;2m (v0.170.0)\u{1B}[0m",
+      "     \u{1B}[2m~/scratch/codex109\u{1B}[0m",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "  \u{1B}[1mUpdate Model Permissions\u{1B}[0m",
+      "",
+      "",
+      "  1. Ask for approval          \u{1B}[2mRead and edit workspace files",
+      "\u{1B}[0m                               \u{1B}[2mand run commands, with\u{1B}[0m",
+      "                               \u{1B}[2mapproval required for\u{1B}[0m",
+      "                               \u{1B}[2minternet access or edits\u{1B}[0m",
+      "                               \u{1B}[2moutside the workspace\u{1B}[0m",
+      "\u{1B}[1;7m› 2. Approve for me (current)  \u{1B}[0;7mOnly ask for actions detected",
+      "\u{1B}[1m                               \u{1B}[0;7mas potentially unsafe\u{1B}[1m",
+      "\u{1B}[0m  3. Full Access               \u{1B}[2mUse with caution: Codex can\u{1B}[0m",
+      "                               \u{1B}[2medit files outside this\u{1B}[0m",
+      "                               \u{1B}[2mworkspace and access the\u{1B}[0m",
+      "                               \u{1B}[2minternet without approval\u{1B}[0m",
+      "  4. Read Only                 \u{1B}[2mRead workspace files, with\u{1B}[0m",
+      "                               \u{1B}[2mapproval required for edits\u{1B}[0m",
+      "                               \u{1B}[2mor internet access\u{1B}[0m",
+      "",
+      "  \u{1B}[1menter\u{1B}[0;2m select · \u{1B}[0;1mesc\u{1B}[0;2m back",
+    ].joined(separator: "\n"),
+    lines: PaneScreen.maximumLines
+  )
+
+  /// A pane showing Claude Code 2.1.328's folder-trust dialog, with no session file yet.
+  ///
+  /// A real `pane read --format ansi` capture in herdr 0.9.5. The folder is replaced, and the
+  /// shell's prompt rows above the dialog are left out. It takes no digits: `Down` then `Enter`
+  /// trusts the folder.
+  public static let claudeTrustScreen = PaneScreen.sanitised(
+    [
+      "",
+      "\u{1B}[0m\u{1B}[38;2;255;193;7m───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\u{1B}[0m",
+      " \u{1B}[0m\u{1B}[1m\u{1B}[38;2;255;193;7mAccessing workspace:\u{1B}[0m",
+      "",
+      " \u{1B}[0m\u{1B}[1m/home/x/project\u{1B}[0m",
+      "",
+      " Quick safety check: Is this a project you created or one you trust? (Like your own code, a well-known open source",
+      " project, or work from your team). If not, take a moment to review what's in this folder first.",
+      "",
+      " Claude Code'll be able to read, edit, and execute files here.",
+      "",
+      " \u{1B}[0m\u{1B}[38;2;153;153;153mSecurity guide\u{1B}[0m",
+      "",
+      " \u{1B}[0m\u{1B}[38;2;177;185;249m❯ No, exit\u{1B}[0m",
+      "   Yes, I trust this folder",
+      "",
+      " \u{1B}[0m\u{1B}[38;2;153;153;153mEnter to confirm · Esc to cancel\u{1B}[0m",
+    ].joined(separator: "\n"),
+    lines: PaneScreen.maximumLines
+  )
 
   /// A pane showing Claude Code's `AskUserQuestion` picker, with nothing about it in the
   /// session file.

@@ -66,6 +66,7 @@ struct AppErrorTests {
       .herdrDidNotAnswer(host: "h"),
       .herdrResponseUnreadable,
       .transcriptUnreadable(reason: "gone"),
+      .screenQuestionChanged,
       .cancelled,
     ]
     for error in cases {

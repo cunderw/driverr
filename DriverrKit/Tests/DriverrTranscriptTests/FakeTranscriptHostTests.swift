@@ -107,7 +107,7 @@ struct FakeTranscriptHostTests {
     let pane = pane(session: nil)
     let resolution = try await TranscriptReader(run: host.run).resolve(for: pane)
     #expect(resolution.source?.provenance == .matchedByDirectory)
-    #expect(PaneComposerHold.reason(agent: pane.agent) == .agentAsksOnScreen)
+    #expect(PaneComposerHold.reason(agent: pane.agent, screen: nil) == .agentAsksOnScreen)
   }
 
   /// `look.sh` captures the answered state from this, so a dropped reply record would capture

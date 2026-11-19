@@ -50,11 +50,16 @@ final class PaneComposerModel: Identifiable {
   /// redraw is refused too. What is typed stays.
   var hold: PaneComposerHold? {
     get { state.hold }
-    set { if state.hold != newValue { state.hold = newValue } }
+    set {
+      if state.hold != newValue { state.hold = newValue }
+      attachment.isHandOffHeld = newValue != nil
+    }
   }
 
   var isSending: Bool { state.isSending }
   var canSend: Bool { state.canSend }
+  /// See `PaneComposerState.canAttach`.
+  var canAttach: Bool { state.canAttach }
   var failure: AppError? { state.failure }
   /// What the bar says about the last attempt, read against the ticking clock so a reply
   /// nothing has confirmed ages on screen rather than sitting at `Sent` for ever.
@@ -153,7 +158,39 @@ final class PaneComposerModel: Identifiable {
       await send(key)
     case .keys(let keys):
       await perform { $0.beginSending(keys) }
+    case .cursorTo(let option):
+      await sendCursorAnswer(to: option)
     }
+  }
+
+  /// Answers a picker that takes no digits. Reads the screen once, right before sending, and
+  /// works the arrows out from where the cursor is now, not where it was when the chips were
+  /// drawn. A screen that no longer shows the question sends nothing and says so.
+  ///
+  /// **Every failure here is a refusal, with no Retry.** A Retry repeats the last attempt
+  /// as it was, and arrows are only right for the cursor they were counted from.
+  /// `CLIControl.sendKeys` runs one herdr call per key, so `Down` can land and `Enter` fail,
+  /// and the same arrows again would wrap onto "No, exit". The next read of the screen draws
+  /// the chips again from where the cursor is.
+  private func sendCursorAnswer(to option: Int) async {
+    guard !state.isSending else { return }
+    guard let control = control() else {
+      state.refused(.notConnected(host: "this host"))
+      return
+    }
+    let screen: PaneScreen
+    do {
+      screen = try await control.readScreen(of: pane, lines: PaneScreen.maximumLines)
+    } catch {
+      state.refused(Self.appError(from: error))
+      return
+    }
+    guard let keys = PaneQuestionScreen.cursorKeys(to: option, on: screen) else {
+      state.refused(.screenQuestionChanged)
+      return
+    }
+    await perform { $0.beginSending(keys) }
+    if let failure = state.failure { state.refused(failure) }
   }
 
   /// Sends the failed attempt again, unchanged, rather than rebuilding it from the field.

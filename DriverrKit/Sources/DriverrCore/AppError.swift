@@ -66,6 +66,10 @@ public enum AppError: Error, Hashable, Sendable, LocalizedError {
   /// `paneID` is that pane, so a caller can open it. `place` is the folder's name, which is
   /// what the new workspace, window or space is called.
   case agentDidNotStart(paneID: String, place: String, reason: String)
+  /// A chip that answers a question read off the pane's screen found, on a fresh read just
+  /// before sending, that the question is gone or its cursor cannot be read. Nothing was sent.
+  /// See `ReplyChip.Action.cursorTo(option:)`.
+  case screenQuestionChanged
   case cancelled
 
   public var errorDescription: String? {
@@ -120,6 +124,8 @@ public enum AppError: Error, Hashable, Sendable, LocalizedError {
       "The first message is too long to start an agent with. Shorten it, and send the rest once the agent is running."
     case let .agentDidNotStart(_, place, reason):
       "Opened \(place), but the agent did not start there. \(reason)"
+    case .screenQuestionChanged:
+      "The question on the agent's screen changed, so nothing was sent. Open \(TranscriptNotice.showScreenTitle) to check it."
     case .cancelled:
       "Cancelled."
     }
@@ -149,6 +155,8 @@ public enum AppError: Error, Hashable, Sendable, LocalizedError {
     case .agentPromptTooLong: false
     // The pane is open with the shell's answer in it. Another attempt would open another one.
     case .agentDidNotStart: false
+    // The same answer to a changed question is the mistake the read prevented.
+    case .screenQuestionChanged: false
     }
   }
 }

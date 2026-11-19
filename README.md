@@ -29,7 +29,9 @@ why they are identical on every run.*
 - **Reply without a terminal** — a Claude Code or Codex conversation shows as a chat. Type a
   reply in the composer below it, or attach an image. When the agent asks a question that
   has options, tap a reply chip under the question. For a permission prompt, the chips are
-  Approve and Deny.
+  Approve and Deny. Codex's own pickers, such as `/permissions` and `/model`, and Claude
+  Code's folder-trust prompt also show as chips, and the composer does not send while one
+  is open.
 - **A real terminal when you want one** — attach to any pane, with a key row for the
   characters iOS hides, and themes and type sizes you can change while looking at it.
 - **Pane controls** — rename or close a pane from the toolbar, and open a new one from the

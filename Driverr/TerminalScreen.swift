@@ -513,10 +513,33 @@ struct TerminalScreen: View {
     return model.composers?.model(for: pane)
   }
 
-  /// Whether the composer may send typed text, from the pane's agent alone, whatever the
-  /// chat has loaded. See `PaneComposerHold.reason(agent:)`.
+  /// Whether the composer may send typed text, from the pane's agent and the screen the chat
+  /// read for a question, whatever the chat has loaded. See
+  /// `PaneComposerHold.reason(agent:screen:)`.
+  ///
+  /// An open picker stays held while a restarted watch has no settled read, so the hold lifts
+  /// only on a settled read, answered or refused. A refused read also releases it, the chosen
+  /// trade against a hold that sticks for ever on a pane whose reads keep failing. See
+  /// `PaneComposerHold.reason(agent:screen:awaitingRead:previous:)`.
   private var composerHold: PaneComposerHold? {
-    PaneComposerHold.reason(agent: scene.currentPane?.agent)
+    PaneComposerHold.reason(
+      agent: scene.currentPane?.agent, screen: screenForQuestion,
+      awaitingRead: watchesScreenForQuestion && screenModel?.hasReadForQuestion != true,
+      previous: composerModel?.hold)
+  }
+
+  /// Whether the chat reads the pane's screen for a question, by `PaneChatView`'s rule, so the
+  /// hold and the focus gate read the screen the chips come from.
+  private var watchesScreenForQuestion: Bool {
+    PaneQuestionScreen.watches(
+      agent: scene.currentPane?.agent,
+      pendingCall: chatModel?.transcript?.pendingToolCall)
+  }
+
+  /// The screen the chat read for a question, or `nil` while it is not reading one. Without
+  /// the rule, a capture from before a Codex started working would hold its composer.
+  private var screenForQuestion: PaneScreen? {
+    watchesScreenForQuestion ? screenModel?.screenForQuestion : nil
   }
 
   /// The reply surface, under either chat-side surface. Here, not in `PaneChatView`, so it
@@ -544,14 +567,14 @@ struct TerminalScreen: View {
         header: PaneComposerHeader(pane: pane),
         takeFocusRequest: { scene.takeComposerFocusRequest() },
         // A pane asking its own question keeps the keyboard down, so its chips are not
-        // under it. Waits for the chat's read, and on a blocked pane for the screen read
-        // that can find a question the file lacks.
+        // under it. Waits for the chat's read, and while the chat reads the screen, for the
+        // screen read that can find a question the file lacks.
         focusGate: ComposerFocusGate(
           isSettled: (chatModel.map { !$0.isLoading && $0.state != .idle } ?? true)
-            && (pane.agent?.status != .blocked || screenModel?.hasReadForQuestion == true
-              || chatModel?.transcript?.pendingToolCall?.asksItsOwnQuestions == true),
-          pendingCall: chatModel?.transcript?.questionCall(
-            screen: screenModel?.screenForQuestion, agentStatus: pane.agent?.status),
+            && (!watchesScreenForQuestion || screenModel?.hasReadForQuestion == true),
+          pendingCall: Transcript.questionCall(
+            in: chatModel?.transcript, screen: screenForQuestion,
+            agentStatus: pane.agent?.status),
           hold: composerHold
         ),
         onFocusChange: { isComposerFocused = $0 },
