@@ -55,7 +55,7 @@ struct PaneComposerBar: View {
   /// A view update that pushes a selection then makes the field drain that queue inside the
   /// update, and the same update writes the text it started with over the drained keys:
   /// five to seven keys of a 36-key burst, every time, on `Driverr iPad`.
-  /// `PaneComposerUITests.testAFastBurstArrivesIntact` is that burst.
+  /// `PaneComposerInputUITests.testAFastBurstArrivesIntact` is that burst.
   @State private var reportedSelection: TextSelection?
 
   /// A caret for the field to take once, set only by `choose` and withdrawn as soon as the
@@ -598,7 +598,8 @@ struct PaneComposerBar: View {
   /// The gate is inside each handler because `onKeyPress` has no `isEnabled:` overload.
   ///
   /// Up and Down are verified under XCUITest. Return and Escape are not: XCUITest delivers them
-  /// to no handler at all, including Send's shipped ⌘↩. `PaneComposerUITests` records the probe.
+  /// to no handler at all, including Send's shipped ⌘↩. `PaneComposerInputUITests` records the
+  /// probe.
   ///
   /// The list can be up over wrapped text, because the `/word` can follow prose. Up and Down
   /// still reach these handlers there, not the field's caret: measured under XCUITest by
