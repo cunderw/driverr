@@ -15,6 +15,10 @@ final class SavedPromptsModel {
 
   @ObservationIgnored private let store: any SavedPromptStore
 
+  /// The newest write to the store. Each write waits for the one before it, so the store
+  /// always ends on the newest list, and a test awaits this instead of polling the store.
+  @ObservationIgnored private(set) var lastWrite: Task<Void, Never>?
+
   init(store: any SavedPromptStore) {
     self.store = store
   }
@@ -47,7 +51,11 @@ final class SavedPromptsModel {
     guard next != list else { return }
     list = next
     let prompts = next.prompts
-    Task { [store] in await store.save(prompts) }
+    let previous = lastWrite
+    lastWrite = Task { [store] in
+      await previous?.value
+      await store.save(prompts)
+    }
   }
 }
 

@@ -15,6 +15,19 @@ public struct SavedPrompt: Codable, Hashable, Identifiable, Sendable {
     self.name = name
     self.text = text
   }
+
+  /// The second line a row draws under the name: what the name does not already say, or
+  /// `nil` when it says all of it.
+  ///
+  /// A save names a prompt after its first line, so that line is left out: a one-line prompt
+  /// has no preview, and a longer one previews the rest. After a rename the whole text is the
+  /// preview, because the name no longer quotes it.
+  public var preview: String? {
+    var lines = text.split(whereSeparator: \.isNewline).map(String.init)
+    while let first = lines.first, RenameLabel.sanitised(first) == nil { lines.removeFirst() }
+    if let first = lines.first, RenameLabel.sanitised(first) == name { lines.removeFirst() }
+    return RenameLabel.sanitised(lines.joined(separator: "\n"))
+  }
 }
 
 /// The saved prompts and every rule about changing them. A value, so `swift test` covers the

@@ -1255,6 +1255,42 @@ extension PaneComposerUITests {
       "Rename must not touch the composer's text")
   }
 
+  /// A rename field that loses the keyboard some other way than Done or Cancel ends the
+  /// rename unsaved. Here a tap on the composer's field takes the keyboard: the rename field
+  /// goes, the row keeps its name, and the keyboard stays with the composer.
+  ///
+  /// Left running, the rename would keep reporting the composer as focused to the chat with
+  /// no field holding the keyboard.
+  func testTheRenameEndsWhenItsFieldLosesTheKeyboard() {
+    let app = composerWithSavedPrompts(["-uiTestingSavedPrompts"])
+    openSavedPrompts(app)
+    require(app, "composer.prompts.row.1.more", "Expected the row's menu").tap()
+    require(app, "composer.prompts.rename", "Expected Rename in the row's menu").tap()
+
+    let renameField = require(app, "composer.prompts.rename.field", "Expected a rename field")
+    let renameFocused = XCTNSPredicateExpectation(
+      predicate: NSPredicate(format: "hasKeyboardFocus == true"), object: renameField)
+    XCTAssertEqual(
+      XCTWaiter().wait(for: [renameFocused], timeout: 5), .completed,
+      "Expected the rename field to take the keyboard first")
+
+    let composer = element(app, "composer.text")
+    composer.tap()
+
+    requireGone(
+      app, "composer.prompts.rename.field",
+      "The rename must end when its field loses the keyboard")
+    let composerFocused = XCTNSPredicateExpectation(
+      predicate: NSPredicate(format: "hasKeyboardFocus == true"), object: composer)
+    XCTAssertEqual(
+      XCTWaiter().wait(for: [composerFocused], timeout: 5), .completed,
+      "The keyboard must stay with the composer's field")
+    XCTAssertEqual(
+      require(app, "composer.prompts.row.1", "Expected the list back").label,
+      "Review the diff",
+      "A rename that ended this way must not save")
+  }
+
   /// Delete, from the row's menu, removes that prompt and only that one.
   func testDeletingASavedPromptRemovesItsRow() {
     let app = composerWithSavedPrompts(["-uiTestingSavedPrompts"])

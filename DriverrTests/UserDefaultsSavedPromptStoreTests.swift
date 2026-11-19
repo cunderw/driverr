@@ -59,15 +59,10 @@ struct UserDefaultsSavedPromptStoreTests {
     model.rename(renamed.id, to: "Tests")
     model.delete(try #require(model.prompts.first).id)
 
-    // The write is a background task, so wait for the next launch to see it rather than
-    // assume it has landed.
+    // The writes are background tasks, each after the last, so the newest one is the end.
+    await model.lastWrite?.value
     let next = SavedPromptsModel(store: UserDefaultsSavedPromptStore(suiteName: suite))
-    let deadline = ContinuousClock.now + .seconds(5)
-    repeat {
-      await next.load()
-      if next.prompts.map(\.name) == ["Tests"] { break }
-      try await Task.sleep(for: .milliseconds(20))
-    } while ContinuousClock.now < deadline
+    await next.load()
     #expect(next.prompts.map(\.name) == ["Tests"])
     #expect(next.prompts.map(\.text) == ["Run the tests."])
   }

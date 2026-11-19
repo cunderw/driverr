@@ -119,6 +119,37 @@ struct SavedPromptsTests {
     #expect(again != nil)
   }
 
+  @Test("a one-line prompt named after itself has no preview")
+  func aOneLinePromptHasNoPreview() {
+    var list = SavedPromptList()
+    let saved = list.save("run the tests")
+    #expect(saved?.preview == nil)
+  }
+
+  @Test("a longer prompt previews the lines after its name")
+  func aLongerPromptPreviewsTheRest() {
+    var list = SavedPromptList()
+    let saved = list.save("\nreview the diff\nthen summarise it")
+    #expect(saved?.name == "review the diff")
+    #expect(saved?.preview == "then summarise it")
+  }
+
+  @Test("a renamed prompt previews its whole text")
+  func aRenamedPromptPreviewsTheText() {
+    var list = SavedPromptList()
+    list.save("run the tests", id: first)
+    list.rename(first, to: "Tests")
+    #expect(list.prompts[0].preview == "run the tests")
+  }
+
+  @Test("a name cut short previews the whole text")
+  func aCutNamePreviewsTheText() {
+    var list = SavedPromptList()
+    let text = String(repeating: "abcde ", count: 12).trimmingCharacters(in: .whitespaces)
+    let saved = list.save(text)
+    #expect(saved?.preview == text)
+  }
+
   @Test("an empty field takes the prompt as it is")
   func insertIntoEmpty() {
     #expect(SavedPromptInsertion.inserting("run the tests", into: "") == "run the tests")

@@ -609,6 +609,10 @@ struct PaneComposerBar: View {
   }
 
   /// What `onFocusChange` reports: the field, or the rename field standing in for it.
+  ///
+  /// A rename counts from its start, so the hand-over from the composer's field to the rename
+  /// field never reads as focus leaving. It stops counting when the rename field loses the
+  /// keyboard any other way, because that ends the rename (`renameEditor`).
   private var isComposerFocused: Bool {
     isTextFocused || renamingPromptID != nil
   }
@@ -621,11 +625,25 @@ struct PaneComposerBar: View {
       : 4
   }
 
+  /// Whether `prompt`'s row draws a second line: where the text fits, and where the text says
+  /// something the name does not (`SavedPrompt.preview`).
+  private func previewLine(for prompt: SavedPrompt) -> String? {
+    showsDescriptions ? prompt.preview : nil
+  }
+
   /// One saved row's height, from the scaled line heights: 8 pt padding above and below, the
   /// name, and the preview where it shows, never under 44 pt.
-  private var savedPromptRowHeight: CGFloat {
-    let lines = promptNameLine + (showsDescriptions ? 1 + promptPreviewLine : 0)
+  private func savedPromptRowHeight(for prompt: SavedPrompt) -> CGFloat {
+    let lines = promptNameLine + (previewLine(for: prompt) == nil ? 0 : 1 + promptPreviewLine)
     return max(44, 16 + lines)
+  }
+
+  /// The scrolled list's height: the first `savedPromptCap` rows and half the next, row by
+  /// row, because a row with a preview is taller than one without.
+  private func scrolledListHeight(for prompts: [SavedPrompt]) -> CGFloat {
+    let shown = prompts.prefix(savedPromptCap).map(savedPromptRowHeight(for:)).reduce(0, +)
+    let peek = prompts.dropFirst(savedPromptCap).first.map(savedPromptRowHeight(for:)) ?? 0
+    return shown + peek / 2
   }
 
   /// Opens and closes the saved list. An accent glyph on a neutral circle, like Attach.
@@ -726,6 +744,9 @@ struct PaneComposerBar: View {
       } label: {
         Image(systemName: "xmark")
           .font(.body)
+          // Capped, so the glyph stays inside its 44 pt frame and about 12 pt from the card's
+          // edge, in line with the text. Uncapped it reached to 7 pt at accessibility sizes.
+          .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
           .foregroundStyle(.secondary)
           .frame(minWidth: 44, minHeight: 44)
           .contentShape(Rectangle())
@@ -753,7 +774,7 @@ struct PaneComposerBar: View {
     }
     if saved.prompts.count > savedPromptCap {
       ScrollView { rows }
-        .frame(height: savedPromptRowHeight * (CGFloat(savedPromptCap) + 0.5))
+        .frame(height: scrolledListHeight(for: saved.prompts))
     } else {
       rows
     }
@@ -772,10 +793,11 @@ struct PaneComposerBar: View {
           Text(prompt.name)
             .font(.callout)
             .lineLimit(1)
-          // The first line of the text, where it fits: after a rename the name no longer says
-          // what the prompt is. Dropped at accessibility sizes, as the `/` list's descriptions.
-          if showsDescriptions {
-            Text(prompt.text)
+          // What the name does not already say, where it fits: after a rename the name no
+          // longer says what the prompt is. Dropped at accessibility sizes, as the `/` list's
+          // descriptions are.
+          if let preview = previewLine(for: prompt) {
+            Text(preview)
               .font(.caption)
               .foregroundStyle(.secondary)
               .lineLimit(1)
@@ -809,14 +831,15 @@ struct PaneComposerBar: View {
       } label: {
         Image(systemName: "ellipsis")
           .font(.body)
+          // Capped like the header's `xmark`, and in the same 44 pt column at the trailing
+          // edge, so the two line up.
+          .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
           .foregroundStyle(.secondary)
           .frame(minWidth: 44, minHeight: 44)
           .contentShape(Rectangle())
       }
       .menuIndicator(.hidden)
       .buttonStyle(.plain)
-      // Off the card's edge, where the glyph sat at accessibility sizes.
-      .padding(.trailing, 4)
       .accessibilityLabel(PaneComposerCopy.promptActions(prompt.name))
       .accessibilityIdentifier("composer.prompts.row.\(index).more")
     }
@@ -885,7 +908,14 @@ struct PaneComposerBar: View {
       // it, so the first key replaces the name.
       .task { isRenameFocused = true }
       .onChange(of: isRenameFocused) { _, focused in
-        guard focused else { return }
+        guard focused else {
+          // The field lost the keyboard some other way than Done or Cancel: a tap on the
+          // composer's field, an image opened, the iPad's hide-keyboard key. The rename ends
+          // unsaved, so `isComposerFocused` stops counting a field that has no keyboard.
+          // Done and Cancel clear `renamingPromptID` first, so they do not come here.
+          if renamingPromptID != nil { renamingPromptID = nil }
+          return
+        }
         pendingRenameSelection = TextSelection(range: renameDraft.startIndex..<renameDraft.endIndex)
       }
     }
