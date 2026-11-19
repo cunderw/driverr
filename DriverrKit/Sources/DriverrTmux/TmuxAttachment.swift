@@ -29,7 +29,7 @@ import Foundation
 /// **tmux before 3.3, measured on 3.2a:** `refresh-client -C` takes only `WxH`, and anything
 /// else answers `bad size argument`, so a window cannot be sized. A client size there is not
 /// one window's: it holds every window in the session, under `smallest` and `largest` with a
-/// desk and under any setting without one. So the attach line puts `@W:` first, which 3.2
+/// desk, and under those and `latest` without one. So the attach line puts `@W:` first, which 3.2
 /// refuses, and tmux skips the rest of the line. The desk stays in charge, as with the setting
 /// off. 3.3 and later run all three, and `@W:` on a window nobody sized changes nothing.
 ///

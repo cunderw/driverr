@@ -497,7 +497,9 @@ struct TmuxAttachmentTests {
     async let second = attacher.open(
       terminalID: "tmux:%4", size: TerminalSize(columns: 40, rows: 30, pixelWidth: 0, pixelHeight: 0))
     try await poll { host.stream.lines.filter { $0.contains("refresh-client -C @1:") }.count == 2 }
+    let inFlight = host.stream.lines.filter { $0.contains("refresh-client -C @1:") }.count
     host.stream.resumeHeld()
+    #expect(inFlight == 2, "both sizes were written before tmux answered either")
     let bridges = try await [first, second]
     for bridge in bridges { await bridge.release() }
     #expect(host.stream.size(of: "@1") == "150x43")
