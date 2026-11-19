@@ -18,10 +18,31 @@ import Foundation
 /// - `refresh-client -C @W:WxH` sizes one window, current or not, and `@W:` hands it back. A
 ///   window the desk views returns to the desk at once. With a desk attached, one it is not
 ///   viewing keeps the phone's size until it does; with none, it returns to the client's size.
+///   So the hand-back is `@W:P ; @W:`, with `P` the size the window had before the first size
+///   from this client: that gives a window the desk is not viewing its own size back, and the
+///   desk still takes it over when it views it.
 /// - A client that never sets a window size leaves the desk in charge, through desk resizes and
 ///   window changes. That is the setting-off path.
-/// - tmux before 3.3 has no `@W:` (read from tmux's source at 3.2 and 3.2a, not measured). The
-///   first one answers `%error`, and that client sizes nothing from then on.
+/// - With `window-size smallest` or `largest` and a desk attached, the attach line's client size
+///   holds the desk's windows at that size when the desk grows or shrinks past it. Not fixed,
+///   and the two obvious fixes are worse. The `ignore-size` client flag frees the desk, but
+///   with a desk attached tmux then ignores this client's `@W:` sizes too. A client size no
+///   desk can lose to, 10000x10000 under `smallest` or 1x1 under `largest`, frees the desk,
+///   but with no desk attached every window takes that size.
+///
+/// **tmux before 3.3, measured on 3.2a:** `refresh-client -C` takes only `WxH`, and anything
+/// else answers `bad size argument`, so a window cannot be sized. A client size there is not
+/// one window's: it holds every window in the session, under `smallest` and `largest` with a
+/// desk, and under those and `latest` without one. So the attach line puts `@W:` first, which 3.2
+/// refuses, and tmux skips the rest of the line. The desk stays in charge, as with the setting
+/// off. 3.3 and later run all three, and `@W:` on a window nobody sized changes nothing.
+///
+/// **A pane moved to another session**, measured on 3.2a and 3.7c: after `move-pane`,
+/// `join-pane`, `break-pane -t B:` or `move-window -t B:`, the old session's client hears
+/// `%layout-change` or `%unlinked-window-close` and then none of the pane's output. So the viewer
+/// moves to the new session's client and is painted again there. Moving a session's last pane
+/// ends that client with `%exit` before tmux answers where the pane went, so that viewer ends
+/// `.streamEnded` instead, and the scene reattaches it.
 final class TmuxAttacher: PaneAttacher, @unchecked Sendable {
   private let binary: String
   private let run: CommandRunner
@@ -31,6 +52,8 @@ final class TmuxAttacher: PaneAttacher, @unchecked Sendable {
   private let lock = NSLock()
   private var clients: [String: TmuxSessionClient] = [:]
   private var starting: [String: Task<TmuxSessionClient, any Error>] = [:]
+  /// One count for every client, so a viewer that moves between them keeps a unique id.
+  private let ids = TmuxViewerIDs()
 
   /// `binary` is the tmux command as `TmuxControl` runs it, quoted and with `-u`.
   init(
@@ -90,8 +113,13 @@ final class TmuxAttacher: PaneAttacher, @unchecked Sendable {
       let window = TmuxID.validRaw(String(words[1]), kind: .window)
     else { return nil }
     let size = words.count > 2 ? String(words[2]) : nil
-    let isSize = size.map { $0.split(separator: "x").count == 2 && $0.allSatisfy { $0 == "x" || $0.isNumber } } ?? false
-    return Place(session: session, window: window, currentWindowSize: isSize ? size : nil)
+    return Place(session: session, window: window, currentWindowSize: size.flatMap { isSize($0) ? $0 : nil })
+  }
+
+  /// Whether `text` is a size as tmux prints one, `150x43`.
+  static func isSize(_ text: String) -> Bool {
+    let parts = text.split(separator: "x", omittingEmptySubsequences: false)
+    return parts.count == 2 && parts.allSatisfy { !$0.isEmpty && $0.allSatisfy(\.isNumber) }
   }
 
   private func locate(_ pane: String) async throws -> Place {
@@ -115,10 +143,21 @@ final class TmuxAttacher: PaneAttacher, @unchecked Sendable {
   }
 
   /// The command that starts a control client on `session`, sized to its current window.
+  ///
+  /// `@W:` goes first, so tmux before 3.3 refuses it and skips the client size. See the type's
+  /// comment.
   static func attachCommand(binary: String, place: Place) -> String {
     var command = "\(binary) -C attach-session -t \(shellQuoted(place.session))"
-    if let size = place.currentWindowSize { command += " \\; refresh-client -C \(size)" }
+    if let size = place.currentWindowSize {
+      command += " \\; refresh-client -C \(place.window): \\; refresh-client -C \(size)"
+    }
     return command
+  }
+
+  /// Where `pane` is now, and its session's client, for a viewer that follows it there.
+  private func relocate(_ pane: String) async throws -> (TmuxSessionClient, String) {
+    let place = try await locate(pane)
+    return (try await client(for: place), place.window)
   }
 
   /// The session's client, starting one if none is up. Concurrent opens share one start.
@@ -128,9 +167,10 @@ final class TmuxAttacher: PaneAttacher, @unchecked Sendable {
       if let client = clients[place.session], client.isUsable {
         return Task { client }
       }
-      let task = Task { [binary, run, open] () throws -> TmuxSessionClient in
+      let task = Task { [binary, run, open, ids] () throws -> TmuxSessionClient in
         let stream = try await open(Self.attachCommand(binary: binary, place: place))
-        return TmuxSessionClient(session: place.session, binary: binary, run: run, stream: stream)
+        return TmuxSessionClient(
+          session: place.session, binary: binary, run: run, stream: stream, ids: ids)
       }
       starting[place.session] = task
       return task
@@ -142,6 +182,10 @@ final class TmuxAttacher: PaneAttacher, @unchecked Sendable {
         if clients[place.session] !== client {
           clients[place.session] = client
           client.onFinished = { [weak self] finished in self?.forget(finished) }
+          client.relocate = { [weak self] pane in
+            guard let self else { throw TerminalCloseReason.streamEnded }
+            return try await self.relocate(pane)
+          }
         }
       }
       return client
@@ -161,10 +205,23 @@ final class TmuxAttacher: PaneAttacher, @unchecked Sendable {
   var clientCount: Int { lock.withLock { clients.values.filter(\.isUsable).count } }
 }
 
+/// Viewer ids, unique across every client of one attacher.
+final class TmuxViewerIDs: @unchecked Sendable {
+  private let lock = NSLock()
+  private var last = 0
+
+  func next() -> Int {
+    lock.withLock {
+      last += 1
+      return last
+    }
+  }
+}
+
 /// Why a command came back without its answer.
 enum TmuxCommandFailure: Error, Equatable {
-  /// tmux answered `%error`, with these lines.
-  case refused(String)
+  /// tmux answered `%error`, with these lines, after the answers of the line's commands before.
+  case refused(String, answered: [[Data]] = [])
   /// The client went before the answer came.
   case ended
 }
@@ -180,13 +237,15 @@ final class TmuxSessionClient: @unchecked Sendable {
   private let binary: String
   private let run: CommandRunner
   private let stream: any HerdrStream
+  private let ids: TmuxViewerIDs
 
   private let lock = NSLock()
   private var queue: [Pending] = []
   private var attachments: [Int: TmuxAttachment] = [:]
-  private var nextID = 0
-  /// `false` once tmux refused a window size, which a tmux before 3.3 does.
+  /// `false` once tmux refused a window size as one before 3.3 does.
   private var sizesWindows = true
+  /// The windows this client sized, by window.
+  private var sizings: [String: Sizing] = [:]
   private var isEnded = false
   private var isClosing = false
   private let writes: AsyncStream<Data>.Continuation
@@ -199,17 +258,43 @@ final class TmuxSessionClient: @unchecked Sendable {
   }
   private var finished: (@Sendable (TmuxSessionClient) -> Void)?
 
+  /// Finds a pane that left this session: the client of the session it is in now, and its
+  /// window there.
+  var relocate: (@Sendable (String) async throws -> (TmuxSessionClient, String))? {
+    get { lock.withLock { relocating } }
+    set { lock.withLock { relocating = newValue } }
+  }
+  private var relocating: (@Sendable (String) async throws -> (TmuxSessionClient, String))?
+
   private struct Pending {
     let expected: Int
     var replies: [[Data]] = []
     let done: @Sendable (Result<[[Data]], TmuxCommandFailure>) -> Void
   }
 
-  init(session: String, binary: String, run: @escaping CommandRunner, stream: any HerdrStream) {
+  /// One window this client sized: who sized it, and the size to give back.
+  private struct Sizing {
+    /// The viewers holding it, oldest first, each with the size it set. The last one's is on.
+    var holders: [(id: Int, size: String)] = []
+    /// The size the window had before this client's first size, once tmux has said. `""` when
+    /// tmux answered with no size, which it does for a window that is gone.
+    var prior: String?
+    /// Hand-backs that wait for `prior`, because the last holder left before tmux said it.
+    var waiting: [@Sendable () -> Void] = []
+  }
+
+  init(
+    session: String,
+    binary: String,
+    run: @escaping CommandRunner,
+    stream: any HerdrStream,
+    ids: TmuxViewerIDs
+  ) {
     self.session = session
     self.binary = binary
     self.run = run
     self.stream = stream
+    self.ids = ids
     let (lines, writes) = AsyncStream.makeStream(of: Data.self)
     self.writes = writes
     let writer = Task { [stream] in
@@ -239,13 +324,20 @@ final class TmuxSessionClient: @unchecked Sendable {
     replies: Int = 1,
     done: @escaping @Sendable (Result<[[Data]], TmuxCommandFailure>) -> Void = { _ in }
   ) {
-    let accepted: Bool = lock.withLock {
-      guard !isEnded else { return false }
-      queue.append(Pending(expected: replies, done: done))
-      writes.yield(Data((line + "\n").utf8))
-      return true
-    }
+    let accepted = lock.withLock { enqueue(line, replies: replies, done: done) }
     if !accepted { done(.failure(.ended)) }
+  }
+
+  /// `send`'s write, with the lock held, so a caller can decide what to write under it too.
+  private func enqueue(
+    _ line: String,
+    replies: Int,
+    done: @escaping @Sendable (Result<[[Data]], TmuxCommandFailure>) -> Void
+  ) -> Bool {
+    guard !isEnded else { return false }
+    queue.append(Pending(expected: replies, done: done))
+    writes.yield(Data((line + "\n").utf8))
+    return true
   }
 
   func command(_ line: String, replies: Int = 1) async throws -> [[Data]] {
@@ -265,11 +357,10 @@ final class TmuxSessionClient: @unchecked Sendable {
   ) async throws -> TmuxAttachment {
     let attachment: TmuxAttachment? = lock.withLock {
       guard !isEnded, !isClosing else { return nil }
-      nextID += 1
       let attachment = TmuxAttachment(
-        id: nextID, client: self, pane: pane, window: window, size: size,
+        id: ids.next(), client: self, pane: pane, window: window, size: size,
         asController: asController, resizes: resizes)
-      attachments[nextID] = attachment
+      attachments[attachment.id] = attachment
       return attachment
     }
     guard let attachment else { throw TerminalCloseReason.streamEnded }
@@ -280,27 +371,148 @@ final class TmuxSessionClient: @unchecked Sendable {
     } catch {
       await attachment.release()
       if let error = error as? AppError { throw error }
-      if case .refused(let message)? = error as? TmuxCommandFailure {
+      if case .refused(let message, _)? = error as? TmuxCommandFailure {
         throw AppError.herdrCommandFailed(reason: message)
       }
       throw AppError.channelFailed(reason: "The pane could not be opened.")
     }
   }
 
-  /// Sizes `window` to `size`, unless tmux has said it cannot. Answers whether it was sized.
-  func size(_ window: String, to size: TerminalSize) async -> Bool {
-    guard lock.withLock({ sizesWindows }) else { return false }
+  /// Takes on a viewer whose pane moved here from another session's client: sizes its window and
+  /// paints it again, clearing what it showed.
+  func adopt(_ attachment: TmuxAttachment, window: String) async throws {
+    let accepted: Bool = lock.withLock {
+      guard !isEnded, !isClosing else { return false }
+      attachments[attachment.id] = attachment
+      return true
+    }
+    guard accepted else { throw TerminalCloseReason.streamEnded }
+    guard attachment.moved(to: self, window: window) else {
+      // Released on the way here.
+      await detach(attachment)
+      return
+    }
+    await attachment.sizeWindow()
+    try await attachment.paint(
+      history: attachment.paintsHistory ? TmuxPaint.historyLines : 0, clearing: true)
+  }
+
+  /// Sizes `window` to `size` for `attachment`, unless tmux has said it cannot, and waits for
+  /// tmux's answer.
+  ///
+  /// **The first size reads the window's own size in the same line**, so it is read before any
+  /// size from here lands, and the choice of line is made under the lock that orders the writes.
+  func size(_ window: String, to size: TerminalSize, for attachment: TmuxAttachment) async {
+    await withCheckedContinuation { (waiting: CheckedContinuation<Void, Never>) in
+      startSizing(window, to: size, for: attachment) { waiting.resume() }
+    }
+  }
+
+  /// `size`'s write, which calls `done` once tmux has answered or the size was not sent.
+  func startSizing(
+    _ window: String, to size: TerminalSize, for attachment: TmuxAttachment,
+    done: @escaping @Sendable () -> Void
+  ) {
     let columns = min(max(size.columns, 1), 10_000)
     let rows = min(max(size.rows, 1), 10_000)
-    do {
-      _ = try await command("refresh-client -C \(window):\(columns)x\(rows)")
-      return true
-    } catch TmuxCommandFailure.refused {
-      lock.withLock { sizesWindows = false }
-      return false
-    } catch {
-      return false
+    let target = "\(columns)x\(rows)"
+    let sent: Bool = lock.withLock {
+      guard sizesWindows, !isEnded, attachments[attachment.id] === attachment else { return false }
+      let first = sizings[window] == nil
+      var sizing = sizings[window] ?? Sizing()
+      sizing.holders.removeAll { $0.id == attachment.id }
+      sizing.holders.append((attachment.id, target))
+      sizings[window] = sizing
+      let sizeLine = "refresh-client -C \(window):\(target)"
+      let line =
+        first
+        ? "display-message -p -t \(window) '#{window_width}x#{window_height}' ; \(sizeLine)"
+        : sizeLine
+      let id = attachment.id
+      return enqueue(line, replies: first ? 2 : 1) { [weak self] result in
+        self?.sized(window, by: id, first: first, result)
+        done()
+      }
     }
+    if !sent { done() }
+  }
+
+  /// Called after a hand-back or a size going back on has been decided, for the tests that
+  /// order another write against it.
+  var afterSizingDecision: (@Sendable () -> Void)? {
+    get { lock.withLock { decided } }
+    set { lock.withLock { decided = newValue } }
+  }
+  private var decided: (@Sendable () -> Void)?
+
+  /// tmux answered a size for `window`. On the reader.
+  ///
+  /// A hand-back is written under the lock that changed `sizings`, as in `leave`.
+  private func sized(
+    _ window: String, by id: Int, first: Bool, _ result: Result<[[Data]], TmuxCommandFailure>
+  ) {
+    let resumes: [@Sendable () -> Void] = lock.withLock {
+      guard var sizing = sizings[window] else { return [] }
+      switch result {
+      case .success(let replies):
+        guard first else { return [] }
+        sizing.prior = Self.ownSize(in: replies)
+      case .failure(.refused(let message, let answered)):
+        if Self.refusesEveryWindowSize(message) {
+          // tmux before 3.3. Nothing here sized a window, so nothing goes back.
+          sizesWindows = false
+          defer { sizings = [:] }
+          return sizings.values.flatMap(\.waiting)
+        }
+        guard first else { return [] }
+        // Not sized, so this viewer holds nothing, and with nobody else nothing goes back. The
+        // `display-message` ahead of the refusal still read the window's own size.
+        sizing.holders.removeAll { $0.id == id }
+        sizing.prior = Self.ownSize(in: answered)
+        if sizing.holders.isEmpty {
+          sizings[window] = nil
+          return sizing.waiting
+        }
+      case .failure(.ended):
+        return sizing.waiting
+      }
+      guard sizing.holders.isEmpty else {
+        let waiting = sizing.waiting
+        sizing.waiting = []
+        sizings[window] = sizing
+        return waiting
+      }
+      // Everyone left before tmux answered.
+      sizings[window] = nil
+      let waiting = sizing.waiting
+      let (line, replies) = Self.handBack(window, prior: sizing.prior ?? "")
+      let sent = enqueue(line, replies: replies) { _ in
+        for resume in waiting { resume() }
+      }
+      return sent ? [] : waiting
+    }
+    afterSizingDecision?()
+    for resume in resumes { resume() }
+  }
+
+  /// The size a first sizing line's `display-message` printed, or `""` when it printed none,
+  /// as for a window that is gone.
+  private static func ownSize(in replies: [[Data]]) -> String {
+    let printed = replies.first?.first.map { String(decoding: $0, as: UTF8.self) } ?? ""
+    return TmuxAttacher.isSize(printed) ? printed : ""
+  }
+
+  /// Only tmux before 3.3 answers this to a window size; any other refusal is about one size.
+  static func refusesEveryWindowSize(_ message: String) -> Bool {
+    message.contains("bad size argument")
+  }
+
+  /// `@W:P ; @W:` when the window's own size is known, which gives a window the desk is not
+  /// viewing its size back. `@W:` alone otherwise. With the number of replies the line answers.
+  private static func handBack(_ window: String, prior: String) -> (line: String, replies: Int) {
+    prior.isEmpty
+      ? ("refresh-client -C \(window):", 1)
+      : ("refresh-client -C \(window):\(prior) ; refresh-client -C \(window):", 2)
   }
 
   /// Types `bytes` into `pane`, as hex keys so no byte is read as a key name or a flag.
@@ -327,41 +539,99 @@ final class TmuxSessionClient: @unchecked Sendable {
   /// How long the listing after a stream ends may take, over its own exec channel.
   static let listingDeadline: Duration = .seconds(5)
 
-  /// Takes `attachment` off this client, hands back the window it sized, and closes the client
+  /// Takes `attachment` off this client, hands back the windows it sized, and closes the client
   /// with the last one.
   ///
   /// **The last one asks for its window too.** A client leaving hands every window back, but
-  /// after the release has returned, measured on 3.7c. Asked first, the window is back when the
-  /// release returns, or `handBackDeadline` has passed.
-  func detach(_ attachment: TmuxAttachment, sizedWindow: String?) async {
-    let closes: Bool = lock.withLock {
-      attachments[attachment.id] = nil
-      let closes = attachments.isEmpty && !isEnded && !isClosing
-      if closes { isClosing = true }
-      return closes
-    }
-    if let sizedWindow { await handBack(sizedWindow) }
+  /// after the release has returned, measured on 3.7c, and with a desk attached a window it is
+  /// not viewing keeps the phone's size. Asked first, the window is back at its own size when
+  /// the release returns, or `handBackDeadline` has passed.
+  func detach(_ attachment: TmuxAttachment) async {
+    let (closes, windows) = takeOff(attachment)
+    for window in windows { await leave(window, by: attachment.id) }
     if closes { await close() }
   }
 
-  /// Gives `window` its own size back, unless another viewer still sizes it. Waits at most
-  /// `handBackDeadline` for tmux's answer.
-  func handBack(_ window: String) async {
-    let clears: Bool = lock.withLock {
-      sizesWindows && !isEnded && !attachments.values.contains { $0.sizes(window) }
-    }
-    guard clears else { return }
-    _ = await FirstAnswer.within(Self.handBackDeadline, otherwise: false) { answer in
-      self.send("refresh-client -C \(window):") { _ in answer.resume(true) }
+  /// Removes `attachment`, and answers whether that closes the client and which windows it held.
+  private func takeOff(_ attachment: TmuxAttachment) -> (closes: Bool, windows: [String]) {
+    lock.withLock {
+      guard attachments[attachment.id] === attachment else { return (false, []) }
+      attachments[attachment.id] = nil
+      let closes = attachments.isEmpty && !isEnded && !isClosing
+      if closes { isClosing = true }
+      let windows = sizings.filter { $0.value.holders.contains { $0.id == attachment.id } }.map(\.key)
+      return (closes, windows)
     }
   }
 
-  /// A pane moved to `window`: the window it sized goes back, and the new one takes its size.
+  /// Viewer `id` no longer holds `window`. The newest size still held goes back on, or, with none
+  /// left, the window's own size. Waits at most `handBackDeadline` for tmux's answer.
+  ///
+  /// **The line is written under the lock that changed `sizings`.** Written after it, a new
+  /// viewer's first size could go first: it would read the phone's size as the window's own,
+  /// and the hand-back's trailing `@W:` would drop the new size.
+  func leave(_ window: String, by id: Int) async {
+    _ = await FirstAnswer.within(Self.handBackDeadline, otherwise: false) { answer in
+      let answered: @Sendable (Result<[[Data]], TmuxCommandFailure>) -> Void = { _ in
+        answer.resume(true)
+      }
+      let resumesNow: Bool = self.lock.withLock {
+        guard self.sizesWindows, !self.isEnded, var sizing = self.sizings[window],
+          let index = sizing.holders.firstIndex(where: { $0.id == id })
+        else { return true }
+        let left = sizing.holders.remove(at: index)
+        if let newest = sizing.holders.last {
+          self.sizings[window] = sizing
+          // Only the newest holder's size is on screen.
+          let isOn = index == sizing.holders.count
+          guard isOn, newest.size != left.size else { return true }
+          let line = "refresh-client -C \(window):\(newest.size)"
+          return !self.enqueue(line, replies: 1, done: answered)
+        }
+        guard let prior = sizing.prior else {
+          // tmux has not said the window's own size yet; its answer hands the window back.
+          sizing.waiting.append { answer.resume(true) }
+          self.sizings[window] = sizing
+          return false
+        }
+        self.sizings[window] = nil
+        let (line, replies) = Self.handBack(window, prior: prior)
+        return !self.enqueue(line, replies: replies, done: answered)
+      }
+      self.afterSizingDecision?()
+      if resumesNow { answer.resume(true) }
+    }
+  }
+
+  /// A pane moved to `window` in this session: the window it held goes back, and the new one
+  /// takes its size.
   private func follow(_ attachment: TmuxAttachment, to window: String) {
-    guard let move = attachment.moved(to: window) else { return }
+    guard let left = attachment.moved(to: window) else { return }
     Task {
-      if let left = move.sizedWindow { await self.handBack(left) }
+      await self.leave(left, by: attachment.id)
       await attachment.sizeWindow()
+    }
+  }
+
+  /// A pane moved to another session, whose client never hears its output. The viewer leaves
+  /// this client at once, on the reader, so a `%exit` right behind the move does not end it.
+  /// Then the window it held goes back, and the other session's client takes it on.
+  private func moveAway(_ attachment: TmuxAttachment) {
+    attachment.startMove()
+    let (closes, windows) = takeOff(attachment)
+    let relocate = self.relocate
+    Task {
+      for window in windows { await self.leave(window, by: attachment.id) }
+      if closes { await self.close() }
+      do {
+        guard let relocate else { throw TerminalCloseReason.streamEnded }
+        let (client, window) = try await relocate(attachment.pane)
+        try await client.adopt(attachment, window: window)
+      } catch {
+        // `.streamEnded`, which the scene reattaches, and off whichever client took it on.
+        attachment.end(paneClosed: false)
+        await attachment.release()
+      }
     }
   }
 
@@ -391,7 +661,7 @@ final class TmuxSessionClient: @unchecked Sendable {
         if failed {
           queue.removeFirst()
           let message = lines.map { String(decoding: $0, as: UTF8.self) }.joined(separator: "\n")
-          return (first, .failure(.refused(message)))
+          return (first, .failure(.refused(message, answered: first.replies)))
         }
         first.replies.append(lines)
         guard first.replies.count == first.expected else {
@@ -424,22 +694,32 @@ final class TmuxSessionClient: @unchecked Sendable {
     lock.withLock { attachments.values.filter { $0.window == window } }
   }
 
-  /// Whether a pane that left its window's layout has closed or only moved. Asked of tmux,
-  /// because a pane broken out to a window of its own leaves a layout too.
+  /// Whether a pane that left its window's layout has closed or only moved, and where to. Asked
+  /// of tmux, because a pane broken out to a window of its own leaves a layout too.
   ///
   /// **The answer names the pane, because a missing one is not an error.** `display-message`'s
   /// target may fail, so for a pane that is gone tmux 3.7c answers an empty `%end`.
   private func check(_ pane: String) {
-    send("display-message -p -t \(pane) '#{pane_id} #{window_id}'") { [weak self] result in
+    send("display-message -p -t \(pane) '#{pane_id} #{window_id} #{session_id}'") {
+      [weak self] result in
       guard let self else { return }
       switch result {
       case .success(let replies):
         let words = replies.first?.first.map { String(decoding: $0, as: UTF8.self) }?
           .split(separator: " ").map(String.init) ?? []
-        if words.count == 2, words[0] == pane, TmuxID.validRaw(words[1], kind: .window) != nil {
-          for attachment in self.viewers(of: pane) { self.follow(attachment, to: words[1]) }
-        } else {
+        guard words.count == 3, words[0] == pane,
+          TmuxID.validRaw(words[1], kind: .window) != nil,
+          TmuxID.validRaw(words[2], kind: .session) != nil
+        else {
           for attachment in self.viewers(of: pane) { attachment.end(paneClosed: true) }
+          return
+        }
+        for attachment in self.viewers(of: pane) {
+          if words[2] == self.session {
+            self.follow(attachment, to: words[1])
+          } else {
+            self.moveAway(attachment)
+          }
         }
       case .failure(.refused):
         for attachment in self.viewers(of: pane) { attachment.end(paneClosed: true) }
@@ -501,8 +781,9 @@ final class TmuxAttachment: PaneBridge, PromotableObserver, RawTerminalStream, @
   let output: AsyncThrowingStream<Data, any Error>
 
   private let continuation: AsyncThrowingStream<Data, any Error>.Continuation
-  private let client: TmuxSessionClient
   private let lock = NSLock()
+  /// The session's client, which changes when the pane moves to another session.
+  private var owner: TmuxSessionClient
   private var currentWindow: String
   private var isController: Bool
   private let resizes: Bool
@@ -512,8 +793,6 @@ final class TmuxAttachment: PaneBridge, PromotableObserver, RawTerminalStream, @
   /// Drops output until a paint lands. True from the start, because a controller sizes its window
   /// before the first paint, and output meanwhile is in that paint.
   private var isPainting = true
-  /// The window this viewer last sized, which it hands back on release.
-  private var sizedWindow: String?
   private var isReleased = false
 
   init(
@@ -526,7 +805,7 @@ final class TmuxAttachment: PaneBridge, PromotableObserver, RawTerminalStream, @
     resizes: Bool
   ) {
     self.id = id
-    self.client = client
+    owner = client
     self.pane = pane
     currentWindow = window
     self.size = size
@@ -537,8 +816,11 @@ final class TmuxAttachment: PaneBridge, PromotableObserver, RawTerminalStream, @
 
   var window: String { lock.withLock { currentWindow } }
 
-  /// Whether this viewer holds `window` at its size.
-  func sizes(_ window: String) -> Bool { lock.withLock { sizedWindow == window } }
+  /// The client this viewer is open through now.
+  var client: TmuxSessionClient { lock.withLock { owner } }
+
+  /// Whether a paint carries history: a controller's does, an observer's does not.
+  var paintsHistory: Bool { lock.withLock { isController && !awaitsTouch } }
 
   // MARK: From the client
 
@@ -548,20 +830,26 @@ final class TmuxAttachment: PaneBridge, PromotableObserver, RawTerminalStream, @
   }
 
   /// Follows the pane to `window`. Answers `nil` when it was already there, and otherwise the
-  /// window this viewer had sized, which is no longer its to hold.
-  func moved(to window: String) -> Move? {
+  /// window it left, which this viewer no longer holds.
+  func moved(to window: String) -> String? {
     lock.withLock {
       guard currentWindow != window else { return nil }
-      currentWindow = window
-      defer { sizedWindow = nil }
-      return Move(sizedWindow: sizedWindow)
+      defer { currentWindow = window }
+      return currentWindow
     }
   }
 
-  /// A pane's move to another window, as this viewer saw it.
-  struct Move {
-    /// The window this viewer had sized before the move, if any.
-    let sizedWindow: String?
+  /// The pane is moving to another session. Its output stops until the new client's paint.
+  func startMove() { lock.withLock { isPainting = true } }
+
+  /// Follows the pane to `window` on `client`. Answers `false` when it was released meanwhile.
+  func moved(to client: TmuxSessionClient, window: String) -> Bool {
+    lock.withLock {
+      guard !isReleased else { return false }
+      owner = client
+      currentWindow = window
+      return true
+    }
   }
 
   /// `PaneBridge.output`'s contract: a clean finish for a pane that closed, `.streamEnded` for
@@ -603,14 +891,12 @@ final class TmuxAttachment: PaneBridge, PromotableObserver, RawTerminalStream, @
 
   /// Sizes the window to this viewer, if it is one that does.
   func sizeWindow() async {
-    let target: (window: String, size: TerminalSize)? = lock.withLock {
+    let target: (window: String, size: TerminalSize, client: TmuxSessionClient)? = lock.withLock {
       guard isController, resizes, !awaitsTouch, !isReleased else { return nil }
-      return (currentWindow, size)
+      return (currentWindow, size, owner)
     }
     guard let target else { return }
-    if await client.size(target.window, to: target.size) {
-      lock.withLock { sizedWindow = target.window }
-    }
+    await target.client.size(target.window, to: target.size, for: self)
   }
 
   // MARK: PaneBridge
@@ -639,15 +925,14 @@ final class TmuxAttachment: PaneBridge, PromotableObserver, RawTerminalStream, @
   func click(_ cell: TerminalCell) async throws {}
 
   func release() async {
-    let window: String?? = lock.withLock {
+    let client: TmuxSessionClient? = lock.withLock {
       guard !isReleased else { return nil }
       isReleased = true
-      defer { sizedWindow = nil }
-      return .some(sizedWindow)
+      return owner
     }
-    guard let window else { return }
+    guard let client else { return }
     continuation.finish()
-    await client.detach(self, sizedWindow: window)
+    await client.detach(self)
   }
 
   // MARK: PromotableObserver
@@ -699,30 +984,40 @@ final class TmuxAttachment: PaneBridge, PromotableObserver, RawTerminalStream, @
 final class FirstAnswer<Value: Sendable>: @unchecked Sendable {
   private let lock = NSLock()
   private var waiting: CheckedContinuation<Value, Never>?
+  private var sleeper: Task<Void, Never>?
 
   private init() {}
 
+  /// The first call answers the wait and cancels the deadline's sleeper; later ones do nothing.
   func resume(_ value: Value) {
-    lock.withLock {
-      defer { waiting = nil }
-      return waiting
-    }?.resume(returning: value)
+    let (waiting, sleeper) = lock.withLock {
+      defer {
+        self.waiting = nil
+        self.sleeper = nil
+      }
+      return (self.waiting, self.sleeper)
+    }
+    sleeper?.cancel()
+    waiting?.resume(returning: value)
   }
 
   /// Starts the work with `start`, which calls `resume` when it has an answer.
   static func within(
     _ limit: Duration,
     otherwise fallback: Value,
+    sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) },
     _ start: @escaping @Sendable (FirstAnswer<Value>) -> Void
   ) async -> Value {
     let answer = FirstAnswer<Value>()
     return await withCheckedContinuation { continuation in
       answer.lock.withLock { answer.waiting = continuation }
-      start(answer)
-      Task {
-        try? await Task.sleep(for: limit)
+      // In place before `start`, which can answer before it returns.
+      let sleeper = Task {
+        do { try await sleep(limit) } catch { return }
         answer.resume(fallback)
       }
+      answer.lock.withLock { answer.sleeper = sleeper }
+      start(answer)
     }
   }
 }

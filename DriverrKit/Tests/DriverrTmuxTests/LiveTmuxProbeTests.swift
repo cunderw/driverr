@@ -18,13 +18,25 @@
   /// semicolon rule that changed, passes there. This runs the same commands through a real `/bin/sh`
   /// into a real server. A wrapper script stands in for `tmux` and adds `-L <socket> -f /dev/null`,
   /// so it never touches the tmux you are using, and the server is killed at the end.
+  ///
+  /// `DRIVERR_LIVE_TMUX_BINARY` names another tmux to run it against. tmux 3.2a, built from its
+  /// release tarball, is how the pre-3.3 cases below were measured:
+  ///
+  /// ```sh
+  /// DRIVERR_LIVE_TMUX=1 DRIVERR_LIVE_TMUX_BINARY=/path/to/tmux-3.2a/tmux \
+  ///   swift test --package-path DriverrKit --filter LiveTmuxProbe
+  /// ```
   @Suite(
     "LiveTmuxProbe",
     .enabled(if: ProcessInfo.processInfo.environment["DRIVERR_LIVE_TMUX"] == "1"),
     .serialized
   )
   struct LiveTmuxProbeTests {
-    private static let realTmux = ["/opt/homebrew/bin/tmux", "/usr/local/bin/tmux", "/usr/bin/tmux"]
+    /// `DRIVERR_LIVE_TMUX_BINARY` runs the suite against another tmux, such as a 3.2a built from
+    /// its release tarball.
+    private static let realTmux =
+      ([ProcessInfo.processInfo.environment["DRIVERR_LIVE_TMUX_BINARY"]].compactMap { $0 }
+      + ["/opt/homebrew/bin/tmux", "/usr/local/bin/tmux", "/usr/bin/tmux"])
       .first { FileManager.default.isExecutableFile(atPath: $0) }
 
     /// Runs `body` against a control on a server of its own, and kills the server after, whether
@@ -124,6 +136,9 @@
 
     /// A throwaway server with a session `probe`, 150x44, holding two windows: `@0` current with
     /// `%0`, and `@1` with `%1`. No desk is attached.
+    ///
+    /// tmux 3.2a leaves a detached session's first window at 80x23 whatever `-x` and `-y` say,
+    /// so `newSession` sizes it by hand, and unsets the `manual` that `resize-window` leaves.
     private func withLiveServer(
       resizes: Bool = true,
       _ body: (TmuxControl, _ tmux: @escaping (String) async throws -> String) async throws -> Void
@@ -138,12 +153,28 @@
           #expect(result.exitStatus == 0, "tmux \(arguments): \(result.standardError)")
           return result.standardOutput.trimmingCharacters(in: .whitespacesAndNewlines)
         }
-        _ = try await tmux("new-session -d -s probe -x 150 -y 44")
+        try await newSession("probe", tmux)
         _ = try await tmux("new-window -d -t probe")
         let panes = try await tmux("list-panes -a -F '#{pane_id}'")
         #expect(panes == "%0\n%1")
         try await body(control, tmux)
       }
+    }
+
+    private func newSession(_ name: String, _ tmux: (String) async throws -> String) async throws {
+      _ = try await tmux("new-session -d -s \(name) -x 150 -y 44")
+      let window = try await tmux("display-message -p -t \(name): '#{window_id}'")
+      _ = try await tmux("resize-window -t \(window) -x 150 -y 44")
+      _ = try await tmux("set-option -w -u -t \(window) window-size")
+    }
+
+    /// Whether this tmux sizes one window for a control client, which 3.3 and later do.
+    private func sizesOneWindow(_ tmux: (String) async throws -> String) async throws -> Bool {
+      let version = try await tmux("-V")
+      let number = version.split(separator: " ").last.map { $0.prefix { $0.isNumber || $0 == "." } }
+      let parts = (number ?? "").split(separator: ".").compactMap { Int($0) }
+      let found = try #require(parts.count >= 2 ? (parts[0], parts[1]) : nil, "version: \(version)")
+      return found >= (3, 3)
     }
 
     private func sizes(_ tmux: (String) async throws -> String) async throws -> String {
@@ -193,29 +224,265 @@
     /// and `@W:` with no size hands it back to the client's own size. With a desk attached, a
     /// window the desk is not viewing keeps the phone's size instead, until the desk views it
     /// (measured by hand; a desk needs a terminal, which this suite does not start).
+    ///
+    /// On 3.2a nothing changes size: the first window size answers `bad size argument`.
     @Test("a controller sizes only its pane's window, and hands it back on release")
     func sizing() async throws {
       try await withLiveServer { control, tmux in
+        let sized = try await sizesOneWindow(tmux)
         let attacher = try attacher(control)
         let before = try await sizes(tmux)
         #expect(before == "@0:150x44 @1:150x44")
 
         let other = try await attacher.open(terminalID: "tmux:%1", size: Self.phone)
         let otherOpen = try await sizes(tmux)
-        #expect(otherOpen == "@0:150x44 @1:60x20", "the current window is left alone")
+        #expect(otherOpen == (sized ? "@0:150x44 @1:60x20" : before), "the current window is left alone")
         await other.release()
         let otherReleased = try await sizes(tmux)
         #expect(otherReleased == "@0:150x44 @1:150x44")
 
         let current = try await attacher.open(terminalID: "tmux:%0", size: Self.phone)
         let currentOpen = try await sizes(tmux)
-        #expect(currentOpen == "@0:60x20 @1:150x44")
+        #expect(currentOpen == (sized ? "@0:60x20 @1:150x44" : before))
         try await current.resize(to: TerminalSize(columns: 50, rows: 18, pixelWidth: 0, pixelHeight: 0))
         let resized = try await sizes(tmux)
-        #expect(resized == "@0:50x18 @1:150x44")
+        #expect(resized == (sized ? "@0:50x18 @1:150x44" : before))
         await current.release()
         let released = try await sizes(tmux)
         #expect(released == "@0:150x44 @1:150x44", "the current window comes back")
+      }
+    }
+
+    // MARK: Window sizes with a desk (#115, #116)
+
+    /// A real client on a terminal, as a person at the desk has: `tmux attach` on a pty from
+    /// Python's `pty`, sized with `TIOCSWINSZ`. Its stdin takes `size C R` and `keys HEX`.
+    private final class Desk: @unchecked Sendable {
+      private let process: LocalShellStream
+      private let tmux: (String) async throws -> String
+
+      static let script = """
+        import fcntl, os, pty, signal, struct, sys, termios, threading
+        pid, fd = pty.fork()
+        if pid == 0:
+            os.environ["TERM"] = "xterm-256color"
+            os.execv(sys.argv[1], [sys.argv[1], "attach", "-t", sys.argv[2]])
+        def size(columns, rows):
+            fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", int(rows), int(columns), 0, 0))
+            os.kill(pid, signal.SIGWINCH)
+        size(sys.argv[3], sys.argv[4])
+        def drain():
+            while True:
+                try:
+                    if not os.read(fd, 65536): break
+                except OSError:
+                    break
+        threading.Thread(target=drain, daemon=True).start()
+        for line in sys.stdin:
+            words = line.split()
+            if words[0] == "size": size(words[1], words[2])
+            elif words[0] == "keys": os.write(fd, bytes.fromhex(words[1]))
+        os.kill(pid, signal.SIGTERM)
+        """
+
+      /// Attaches to `target` at `columns` by `rows`, and returns once tmux has the client.
+      init(
+        binaryPath: String, target: String, columns: Int, rows: Int,
+        tmux: @escaping (String) async throws -> String
+      ) async throws {
+        self.tmux = tmux
+        process = try LocalShellStream(
+          command: "/usr/bin/python3 -c \(shellQuoted(Self.script)) \(shellQuoted(binaryPath)) "
+            + "\(shellQuoted(target)) \(columns) \(rows)")
+        try await settle(columns: columns, rows: rows)
+      }
+
+      func resize(columns: Int, rows: Int) async throws {
+        try await process.send(Data("size \(columns) \(rows)\n".utf8))
+        try await settle(columns: columns, rows: rows)
+      }
+
+      /// Types `hex` at the desk. `026e` is the prefix and `n`, the next window.
+      func keys(_ hex: String) async throws {
+        try await process.send(Data("keys \(hex)\n".utf8))
+      }
+
+      func close() async { await process.close() }
+
+      /// Waits for tmux to report the desk at this size, and throws if it never does. tmux
+      /// sizes the windows in the same pass as the client, so they are settled too.
+      private func settle(columns: Int, rows: Int) async throws {
+        var clients = ""
+        for _ in 0..<100 {
+          clients = try await tmux(
+            "list-clients -F '#{client_control_mode} #{client_width}x#{client_height}'")
+          if clients.split(separator: "\n").contains("0 \(columns)x\(rows)") { return }
+          try await Task.sleep(for: .milliseconds(50))
+        }
+        throw NotSized(clients: clients)
+      }
+
+      struct NotSized: Error {
+        let clients: String
+      }
+    }
+
+    /// Polls the window sizes until they read `expected`, then answers what they read.
+    private func sizes(
+      _ tmux: (String) async throws -> String, settlingAt expected: String
+    ) async throws -> String {
+      for _ in 0..<100 {
+        let now = try await sizes(tmux)
+        if now == expected { return now }
+        try await Task.sleep(for: .milliseconds(50))
+      }
+      return try await sizes(tmux)
+    }
+
+    /// Measured on 3.7c: `@W:` alone leaves a window the desk is not viewing at the phone's size,
+    /// and `@W:P ; @W:` gives it back at `P`. The desk still takes the window over
+    /// when it views it.
+    @Test("with a desk attached, a window it is not viewing comes back at its own size")
+    func handBackWithADesk() async throws {
+      try await withLiveServer { control, tmux in
+        let sized = try await sizesOneWindow(tmux)
+        let desk = try await Desk(
+          binaryPath: control.binaryPath, target: "probe", columns: 150, rows: 45, tmux: tmux)
+        defer { Task { await desk.close() } }
+        #expect(try await sizes(tmux) == "@0:150x44 @1:150x44")
+
+        let bridge = try await attacher(control).open(terminalID: "tmux:%1", size: Self.phone)
+        #expect(try await sizes(tmux) == (sized ? "@0:150x44 @1:60x20" : "@0:150x44 @1:150x44"))
+        await bridge.release()
+        #expect(try await sizes(tmux) == "@0:150x44 @1:150x44", "back with the desk on @0")
+
+        try await desk.resize(columns: 170, rows: 41)
+        try await desk.keys("026e")
+        let viewed = try await sizes(tmux, settlingAt: "@0:170x40 @1:170x40")
+        #expect(viewed == "@0:170x40 @1:170x40", "the desk takes the window over")
+      }
+    }
+
+    /// Two controllers on one window, as two iPad scenes on one pane.
+    @Test("two controllers on one window: the newest size holds, and the first comes back")
+    func twoControllers() async throws {
+      try await withLiveServer { control, tmux in
+        let sized = try await sizesOneWindow(tmux)
+        let desk = try await Desk(
+          binaryPath: control.binaryPath, target: "probe", columns: 150, rows: 45, tmux: tmux)
+        defer { Task { await desk.close() } }
+        let attacher = try attacher(control)
+        let first = try await attacher.open(terminalID: "tmux:%1", size: Self.phone)
+        let second = try await attacher.open(
+          terminalID: "tmux:%1", size: TerminalSize(columns: 50, rows: 18, pixelWidth: 0, pixelHeight: 0))
+        #expect(try await sizes(tmux) == (sized ? "@0:150x44 @1:50x18" : "@0:150x44 @1:150x44"))
+        await second.release()
+        #expect(try await sizes(tmux) == (sized ? "@0:150x44 @1:60x20" : "@0:150x44 @1:150x44"))
+        await first.release()
+        #expect(try await sizes(tmux) == "@0:150x44 @1:150x44")
+      }
+    }
+
+    /// A desk that grows to 200x51 and then shrinks to 120x31, viewing `@0`, while the phone
+    /// sizes `@1`, under each `window-size`.
+    ///
+    /// Before 3.3 the attach line's client size would hold every window in the session, so 3.2a
+    /// gets `@W:` first and skips it, and the desk is in charge in every mode. On 3.3 and later the
+    /// client size is the current window's, which holds `@0` when the desk grows past it under
+    /// `smallest` and shrinks past it under `largest`: the limit `TmuxAttacher`'s comment records.
+    /// `latest` follows the desk.
+    @Test(
+      "a desk that grows and shrinks keeps its window, except where the client size holds it",
+      arguments: ["latest", "smallest", "largest"])
+    func deskResizesUnderEachWindowSize(mode: String) async throws {
+      try await withLiveServer { control, tmux in
+        let sized = try await sizesOneWindow(tmux)
+        _ = try await tmux("set-option -g window-size \(mode)")
+        let desk = try await Desk(
+          binaryPath: control.binaryPath, target: "probe", columns: 150, rows: 45, tmux: tmux)
+        defer { Task { await desk.close() } }
+        let bridge = try await attacher(control).open(terminalID: "tmux:%1", size: Self.phone)
+        let collected = Collector(bridge.output)
+        #expect(await collected.eventually { $0.text.contains("\u{1B}[") }, "the pane opened")
+        let phone = sized ? "@1:60x20" : "@1:150x44"
+
+        try await desk.resize(columns: 200, rows: 51)
+        let grownDesk = sized && mode == "smallest" ? "@0:150x44" : "@0:200x50"
+        let grown = try await sizes(tmux, settlingAt: "\(grownDesk) \(phone)")
+        #expect(grown == "\(grownDesk) \(phone)", "grown under \(mode)")
+
+        try await desk.resize(columns: 120, rows: 31)
+        let shrunkDesk = sized && mode == "largest" ? "@0:150x44" : "@0:120x30"
+        let shrunk = try await sizes(tmux, settlingAt: "\(shrunkDesk) \(phone)")
+        #expect(shrunk == "\(shrunkDesk) \(phone)", "shrunk under \(mode)")
+        await bridge.release()
+      }
+    }
+
+    // MARK: Sessions (#117)
+
+    /// Measured on 3.2a and 3.7c: the old session's client hears `%layout-change` after
+    /// `join-pane`, and `%unlinked-window-close` after `move-window`, and none of the pane's
+    /// output after either.
+    @Test(
+      "a pane moved to another session keeps its output, and its window comes back on release",
+      arguments: ["join-pane -d -s %1 -t %2", "move-window -d -s @1 -t other:"])
+    func movedToAnotherSession(move: String) async throws {
+      try await withLiveServer { control, tmux in
+        let sized = try await sizesOneWindow(tmux)
+        try await newSession("other", tmux)
+        _ = try await tmux("respawn-pane -k -t %1 cat")
+        let bridge = try await attacher(control).open(terminalID: "tmux:%1", size: Self.phone)
+        let collected = Collector(bridge.output)
+        #expect(await collected.eventually { $0.text.contains("\u{1B}[") }, "the first paint")
+
+        _ = try await tmux(move)
+        #expect(
+          await collected.eventually { $0.text.contains("\u{1B}[2J\u{1B}[3J") },
+          "painted again, from the other session's client")
+        #expect(try await tmux("display-message -p -t %1 '#{session_name}'") == "other")
+        let window = try await tmux("display-message -p -t %1 '#{window_width}x#{window_height}'")
+        #expect(window == (sized ? "60x20" : "150x44"))
+
+        _ = try await tmux("send-keys -t %1 -l moved-and-heard")
+        #expect(await collected.eventually { $0.text.contains("moved-and-heard") })
+        #expect(collected.end == nil)
+
+        await bridge.release()
+        let released = try await tmux("display-message -p -t %1 '#{window_width}x#{window_height}'")
+        #expect(released == "150x44")
+      }
+    }
+
+    /// Measured on 3.2a and 3.7c: moving a session's last pane away sends that session's client
+    /// `%layout-change` and then `%exit`, before the check written between them is answered. So
+    /// the viewer ends `.streamEnded`, which the scene reattaches, in six runs of six. One that
+    /// followed the pane would be right too. It must never end as a closed pane.
+    @Test("a session's last pane moved to another session is followed or reattached, never closed")
+    func lastPaneMoved() async throws {
+      try await withLiveServer { control, tmux in
+        try await newSession("solo", tmux)
+        try await newSession("other", tmux)
+        let solo = try await tmux("list-panes -t solo -F '#{pane_id}'")
+        let target = try await tmux("list-panes -t other -F '#{pane_id}'")
+        _ = try await tmux("respawn-pane -k -t \(solo) cat")
+        let bridge = try await attacher(control).open(terminalID: "tmux:\(solo)", size: Self.phone)
+        let collected = Collector(bridge.output)
+        #expect(await collected.eventually { $0.text.contains("\u{1B}[") }, "the first paint")
+
+        _ = try await tmux("join-pane -d -s \(solo) -t \(target)")
+        #expect(
+          await collected.eventually {
+            $0.end != nil || $0.text.contains("\u{1B}[2J\u{1B}[3J")
+          })
+        #expect(collected.end != "finished", "the pane is alive, in the other session")
+        if collected.end == nil {
+          _ = try await tmux("send-keys -t \(solo) -l moved-and-heard")
+          #expect(await collected.eventually { $0.text.contains("moved-and-heard") })
+        } else {
+          #expect(collected.end == "\(TerminalCloseReason.streamEnded)")
+        }
+        await bridge.release()
       }
     }
 
