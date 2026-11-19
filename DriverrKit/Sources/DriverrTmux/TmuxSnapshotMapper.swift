@@ -182,9 +182,10 @@ enum TmuxSnapshotMapper {
       workspaceID: workspaceID,
       title: title(of: row, agent: agent, index: index),
       agent: agent,
-      // Nil on purpose. tmux's `%3` is reused after the server restarts, and a pane that
-      // witnessed itself by it would read as resumed. The directory tells more.
-      terminalID: nil,
+      // The pane's own id, which is what `TmuxAttacher` opens. `Pane.sessionWitness` passes over
+      // a terminal id equal to the pane's, because tmux reuses `%3` after a server restart and a
+      // pane that witnessed itself by it would read as resumed. The directory tells more.
+      terminalID: TmuxID.pane(row.paneID),
       directory: nonEmpty(row.path),
       isFocused: isFocused,
       viewportRows: row.height

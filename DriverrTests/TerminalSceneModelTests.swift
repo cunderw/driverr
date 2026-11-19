@@ -2795,6 +2795,39 @@ struct TerminalSceneModelTests {
     #expect(scene.visibleLines(for: .pane(id: "core:t7"), last: 6) == nil)
   }
 
+  /// #102 S3. A tmux pane opens through its control's attacher, like a core's, and its tile is
+  /// always tmux's own screen: a controller sizes the window only when the setting allows it and
+  /// the host's tmux can, so even a controller's grid may be at the desk's width.
+  @Test("a tmux pane opens through the attacher, and even its controller has no rows to read here")
+  func aTmuxPaneIsNeverReadForAThumbnail() async throws {
+    let attacher = FakeCoreAttacher()
+    let pane = Pane(
+      id: "tmux:%7", tabID: "tmux:@1", workspaceID: "tmux:$0", title: "zsh",
+      terminalID: "tmux:%7", directory: "~")
+    let tab = DriverrCore.Tab(
+      id: "tmux:@1", workspaceID: "tmux:$0", number: 0, label: "zsh", panes: [pane])
+    let tree = SessionTree(
+      workspaces: FakeControl.seededTree.workspaces + [
+        Workspace(id: "tmux:$0", number: 1, label: "work", tabs: [tab])
+      ])
+    let (scene, transport) = await makeScene(
+      initialTarget: .pane(id: "tmux:%7"),
+      surface: .terminal,
+      herdr: FakeControl(tree: tree, attacher: attacher),
+      openSettlingWindow: .zero,
+      responder: Self.everythingPaints
+    )
+    _ = try await opened(scene, attacher)
+    try #require(scene.currentRole == .controller)
+    #expect(attacher.log == ["open tmux:%7"])
+    #expect(await transport.lastPTYSize == nil, "no shell")
+    #expect(await transport.streamLog.isEmpty, "no herdr bridge")
+
+    let controlled = try #require(scene.session(for: .pane(id: "tmux:%7")))
+    controlled.attach({ _ in }, visibleText: { "$ ls" })
+    #expect(scene.visibleLines(for: .pane(id: "tmux:%7"), last: 6) == nil)
+  }
+
   /// The visible half of the rule above. An ended former core observer's frame is as garbled
   /// as the live observer's, so a controller replaces it at once, as `aCoreObserverPromotesAtOnce`
   /// has a live one replaced, rather than keeping it up until the first frame.

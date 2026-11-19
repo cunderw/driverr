@@ -2,6 +2,7 @@ import DriverrCore
 import DriverrHC
 import DriverrHerdr
 import DriverrSSH
+import DriverrTmux
 import DriverrTranscript
 
 /// Joins two modules that do not import each other: `DriverrHerdr` runs herdr through a
@@ -20,6 +21,20 @@ extension CoreControl {
     await discovering(
       run: { try await transport.execChannel(command: $0) },
       open: { ExecStreamBridge(stream: try await transport.execStream(command: $0)) }
+    )
+  }
+}
+
+/// The same join for `DriverrTmux`, whose live terminal is a long-lived control client.
+extension TmuxControl {
+  static func discovering(
+    transport: any SSHTransport,
+    resizesWindow: @escaping @Sendable () async -> Bool
+  ) async -> TmuxControl? {
+    await discovering(
+      run: { try await transport.execChannel(command: $0) },
+      open: { ExecStreamBridge(stream: try await transport.execStream(command: $0)) },
+      resizesWindow: resizesWindow
     )
   }
 }

@@ -1,7 +1,7 @@
 import Foundation
 
 /// The complete set of global settings: theme, font, font size, whether the captured screen
-/// wraps, and whether Driverr draws Live Activities.
+/// wraps, whether Driverr draws Live Activities, and whether a tmux window takes the phone's size.
 ///
 /// The list is closed. A new setting has to argue its case (see `CLAUDE.md`), and this type
 /// has nowhere to put one without changing it on purpose.
@@ -18,6 +18,9 @@ public struct TerminalSettings: Hashable, Sendable, Codable {
   /// Whether Driverr may draw a Live Activity at all. Off ends any card showing and requests
   /// none; the rule is the first one in `BlockedPaneActivityPlan.reconcile`.
   public var liveActivities: Bool
+  /// Whether an open tmux pane's window takes this screen's size, and gives it back on leaving.
+  /// Off leaves the desk's size alone, and the pane draws at the desk's width.
+  public var resizesTmuxWindows: Bool
 
   /// Small enough to fit a wide terminal on a phone, large enough to read. Enforced here
   /// rather than left to a stepper.
@@ -29,13 +32,15 @@ public struct TerminalSettings: Hashable, Sendable, Codable {
     fontID: String = TerminalFont.default.id,
     fontSize: Double = TerminalSettings.defaultFontSize,
     wrapsScreenLines: Bool = true,
-    liveActivities: Bool = true
+    liveActivities: Bool = true,
+    resizesTmuxWindows: Bool = true
   ) {
     self.themeID = themeID
     self.fontID = fontID
     self.fontSize = Self.clamp(fontSize)
     self.wrapsScreenLines = wrapsScreenLines
     self.liveActivities = liveActivities
+    self.resizesTmuxWindows = resizesTmuxWindows
   }
 
   public init(from decoder: any Decoder) throws {
@@ -49,6 +54,8 @@ public struct TerminalSettings: Hashable, Sendable, Codable {
     let wraps = try container.decodeIfPresent(Bool.self, forKey: .wrapsScreenLines)
     // `?? true`: blobs written before this key existed draw Live Activities.
     let activities = try container.decodeIfPresent(Bool.self, forKey: .liveActivities)
+    // `?? true`: the default, because a pane at the desk's width is unusable on a phone.
+    let resizes = try container.decodeIfPresent(Bool.self, forKey: .resizesTmuxWindows)
     self.init(
       themeID: theme ?? Theme.default.id,
       // The resolved id, so an id this build no longer ships shows the face it draws as
@@ -56,7 +63,8 @@ public struct TerminalSettings: Hashable, Sendable, Codable {
       fontID: TerminalFont.bundled(id: font ?? TerminalFont.default.id).id,
       fontSize: size ?? Self.defaultFontSize,
       wrapsScreenLines: wraps ?? true,
-      liveActivities: activities ?? true
+      liveActivities: activities ?? true,
+      resizesTmuxWindows: resizes ?? true
     )
   }
 

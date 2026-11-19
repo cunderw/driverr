@@ -48,15 +48,24 @@ struct TmuxWiringTests {
     #expect(error?.isRetryable == false)
   }
 
-  @Test("no tmux pane opens a terminal until the live terminal lands")
-  func noTerminalYet() async throws {
-    let control = TmuxControl(binaryPath: "/opt/homebrew/bin/tmux", run: FakeTmuxHost.seeded().runner)
+  @Test("a tmux pane opens through control mode, never through a command")
+  func terminalThroughControlMode() async throws {
+    let runner = FakeTmuxHost.seeded().runner
+    let control = TmuxControl(
+      binaryPath: "/opt/homebrew/bin/tmux", run: runner,
+      open: { _ in throw AppError.channelFailed(reason: "unused") })
     let pane = try #require(try await control.snapshot().pane(id: "tmux:%3"))
     // `attach-session` shows the session's current pane, not this one, so there is no command.
     #expect(control.attachCommand(for: pane) == nil)
-    #expect(control.paneAttacher(for: pane.id) == nil)
-    // A started window could not be shown either.
-    #expect(!control.canStartTerminal)
+    #expect(pane.terminalID == "tmux:%3")
+    #expect(control.paneAttacher(for: pane.id) != nil)
+    #expect(control.paneAttacher(for: "w1:p1") == nil, "a herdr pane is not tmux's")
+    #expect(control.canStartTerminal)
+
+    // With nothing to open a long-lived command on, there is no terminal and no new window.
+    let bare = TmuxControl(binaryPath: "/opt/homebrew/bin/tmux", run: runner)
+    #expect(bare.paneAttacher(for: pane.id) == nil)
+    #expect(!bare.canStartTerminal)
   }
 
   @Test("a tmux with no server costs one command, and is asked less and less often")
