@@ -146,6 +146,9 @@ struct FolderRoute: Hashable {
 /// CLAUDE.md, "Never present from inside a presentation".
 struct NewAgentSheet: View {
   @State var model: NewAgentModel
+  /// Resolved at the root from the window, because an iPad form sheet reports compact from
+  /// inside itself. See `PaneSheetView.isRegularWidth`.
+  var isRegularWidth = false
   @State private var browsePath: [FolderRoute] = []
 
   @Environment(\.dismiss) private var dismiss
@@ -182,6 +185,10 @@ struct NewAgentSheet: View {
     }
     // A start cannot be taken back, so the sheet stays until it answers.
     .interactiveDismissDisabled(model.isStarting)
+    // Page-sized on iPad. The default form sheet put Start below the fold, under five recent
+    // folders, and a folder listing wants the height too. Not `fittedSheetHeight`, which
+    // measures one scroll view and would size the pushed browser to the form.
+    .presentationSizing(isRegularWidth ? .page : .automatic)
   }
 
   private var agentSection: some View {

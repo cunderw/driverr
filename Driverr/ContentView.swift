@@ -295,7 +295,8 @@ struct ContentView: View {
           },
           open: { openStartedAgent($0, on: request.host) },
           runner: { [connections] in connections.existingModel(for: request.host.id)?.hostCommandRunner() }
-        )
+        ),
+        isRegularWidth: sizeClass == .regular
       )
     }
     // Deleting a host asks first and says what else goes. At the root, because the row is
