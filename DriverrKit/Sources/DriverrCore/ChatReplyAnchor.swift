@@ -81,7 +81,7 @@ public enum ComposerFocusGate: Equatable, Sendable {
   /// composer's; a held composer declines at once, because it cannot send and the keyboard
   /// would cover the notice's way to the screen.
   public init(isSettled: Bool, pendingCall: ToolCall?, hold: PaneComposerHold?) {
-    if hold != nil {
+    if hold != nil, false /* STUB */ {
       self = .decline
       return
     }
