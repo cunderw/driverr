@@ -29,10 +29,15 @@ struct TmuxProcessDetails: Equatable, Sendable {
 
 /// One command that reads the command line and four environment variables of many processes.
 ///
-/// **Only `HERDR_PANE_ID`, `HERDR_SESSION`, `HERDR_SOCKET_PATH` and `TMUX` leave the host.** A
-/// process's environment can hold tokens and keys, so the filter runs on the host, in the
-/// command, and Driverr never sees the rest. `LiveTmuxProbeTests` checks that a variable outside
-/// the four stays behind.
+/// **Only lines that start with `HERDR_PANE_ID=`, `HERDR_SESSION=`, `HERDR_SOCKET_PATH=` or
+/// `TMUX=` leave the host.** A process's environment can hold tokens and keys, so the filter runs
+/// on the host, in the command, and Driverr never sees the rest. `LiveTmuxProbeTests` checks that
+/// a variable outside the four stays behind.
+///
+/// The filter reads lines, not variables. A value's tail after a space (macOS `ps -E`) or after a
+/// newline (Linux `/proc` through `tr`) starts a line of its own, and a tail that starts with one
+/// of the four names passes. Only the user's own environment can hold such a value, because only
+/// the user's own processes are read.
 ///
 /// Linux keeps a process's environment in `/proc/<pid>/environ`, NUL-separated. macOS has no
 /// `/proc`, and `ps -wwE` prints the environment after the command line, separated by spaces. A
@@ -136,7 +141,10 @@ enum TmuxMirrors {
   ) -> Set<MirrorClaim> {
     var claims: Set<MirrorClaim> = []
     for (paneID, pid) in herdrLeaders {
-      guard let process = details[pid],
+      // Every process in a tmux pane carries `TMUX`, so a leader without it is one whose
+      // environment could not be read: a hardened binary, or a `/proc` the user cannot read.
+      // Read as empty, a plain `herdr` would claim the standard session whatever it shows.
+      guard let process = details[pid], process.environment["TMUX"] != nil,
         let session = herdrClientSession(
           arguments: process.arguments, environment: process.environment)
       else { continue }
