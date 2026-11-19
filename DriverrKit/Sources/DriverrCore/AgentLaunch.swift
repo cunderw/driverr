@@ -50,11 +50,22 @@ public struct AgentLaunch: Hashable, Sendable {
   ///
   /// `--` keeps a message that starts with `-` from reading as a flag. The message is one word
   /// that bash, zsh, dash and fish all read back as typed. See
-  /// `HookInstallCommands.loginShellQuoted`. A control character other than a line break is a
-  /// space, because a typed tab starts completion in an interactive shell.
+  /// `HookInstallCommands.loginShellQuoted`.
   public var typedLine: String {
-    guard let prompt else { return kind.command }
-    return "\(kind.command) -- \(HookInstallCommands.loginShellQuoted(Self.typeable(prompt)))"
+    guard let typedPrompt else { return kind.command }
+    return "\(kind.command) -- \(HookInstallCommands.loginShellQuoted(typedPrompt))"
+  }
+
+  /// The message as every backend sends it: one line, with each control character and line
+  /// break a space.
+  ///
+  /// A typed tab starts completion in an interactive shell, and a typed line break ends a
+  /// canonical line and puts the shell at a continuation prompt. herdr's TUI types the message
+  /// too, so it gets the same text.
+  public var typedPrompt: String? {
+    prompt.map { prompt in
+      String(prompt.map { $0.unicodeScalars.contains { $0.value < 0x20 || $0.value == 0x7F } ? " " : $0 })
+    }
   }
 
   /// Whether `typedLine` is too long for a new shell to read. A start refuses it before it
@@ -66,17 +77,6 @@ public struct AgentLaunch: Hashable, Sendable {
   /// - Throws: `AppError.agentPromptTooLong` when `isTooLong`.
   public func checkLength() throws {
     if isTooLong { throw AppError.agentPromptTooLong }
-  }
-
-  private static func typeable(_ text: String) -> String {
-    let lines = text.replacingOccurrences(of: "\r\n", with: "\n")
-      .replacingOccurrences(of: "\r", with: "\n")
-    return String(
-      lines.map { character in
-        character == "\n"
-          || !character.unicodeScalars.contains { $0.value < 0x20 || $0.value == 0x7F }
-          ? character : " "
-      })
   }
 
   // MARK: The folder

@@ -30,10 +30,11 @@ struct AgentLaunchTests {
     #expect(launch.typedLine == #"claude -- 'it'\''s a "probe" '\\' test'"#)
   }
 
-  @Test("a tab in the message is a space, and a line break stays")
+  @Test("a tab or a line break in the message is a space, so the line stays one line")
   func controlCharacters() {
-    let launch = AgentLaunch(kind: .claude, directory: "/srv", prompt: "a\tb\r\nc")
-    #expect(launch.typedLine == "claude -- 'a b\nc'")
+    let launch = AgentLaunch(kind: .claude, directory: "/srv", prompt: "a\tb\r\nc\nd")
+    #expect(launch.typedPrompt == "a b c d")
+    #expect(launch.typedLine == "claude -- 'a b c d'")
   }
 
   @Test("a line over 1023 bytes is too long, and the check says so")

@@ -89,6 +89,14 @@ struct CLIControlAgentLaunchTests {
     #expect(host.commands.last == "herdr agent start my-app-w2p1 --kind codex --pane 'w2:p1'")
   }
 
+  @Test("the message herdr types is the one tmux and a core type: one line, no tabs")
+  func sameMessageEverywhere() async throws {
+    let host = LaunchHost()
+    _ = try await CLIControl(run: host.runner).startAgent(
+      AgentLaunch(kind: .claude, directory: "/srv", prompt: "fix\tthe\nbuild"))
+    #expect(host.commands.last?.hasSuffix(" -- -- 'fix the build'") == true)
+  }
+
   /// A herdr call without the socket path reaches the default session, silently.
   @Test("every herdr call carries the host's socket path, and the folder check does not need it")
   func socketPath() async throws {
@@ -174,6 +182,7 @@ struct CLIControlAgentLaunchTests {
       ("/", "w2:p1", .claude, "claude-w2p1"),
       ("über", "wJ:pK", .claude, "ber-wjpk"),
       (String(repeating: "a", count: 40), "w2:p1", .claude, String(repeating: "a", count: 27) + "-w2p1"),
+      ("app", String(repeating: "p", count: 40), .claude, "app-" + String(repeating: "p", count: 16)),
     ])
   func agentName(folder: String, paneID: String, kind: AgentLaunch.Kind, expected: String) {
     let name = CLIControl.agentName(folder: folder, paneID: paneID, kind: kind)

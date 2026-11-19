@@ -577,7 +577,7 @@ public struct CLIControl: HerdrControl {
     var arguments =
       "agent start \(Self.agentName(folder: folder, paneID: paneID, kind: launch.kind))"
       + " --kind \(launch.kind.command) --pane \(shellQuoted(paneID))"
-    if let prompt = launch.prompt { arguments += " -- -- \(shellQuoted(prompt))" }
+    if let prompt = launch.typedPrompt { arguments += " -- -- \(shellQuoted(prompt))" }
 
     let result: CommandResult
     do {
@@ -619,7 +619,9 @@ public struct CLIControl: HerdrControl {
     func allowed(_ character: Character) -> Bool {
       character.isASCII && (character.isLowercase || character.isNumber || character == "_")
     }
-    let tag = String(paneID.lowercased().filter { $0.isASCII && ($0.isLetter || $0.isNumber) })
+    // At most 16, so the folder keeps 15 of the 32 whatever herdr's ids become.
+    let tag = String(
+      paneID.lowercased().filter { $0.isASCII && ($0.isLetter || $0.isNumber) }.prefix(16))
     var slug = ""
     for character in folder.lowercased() {
       if allowed(character) {
