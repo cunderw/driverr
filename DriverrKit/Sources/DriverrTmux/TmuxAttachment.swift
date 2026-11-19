@@ -39,9 +39,10 @@ import Foundation
 ///
 /// **A pane moved to another session**, measured on 3.2a and 3.7c: after `move-pane`,
 /// `join-pane`, `break-pane -t B:` or `move-window -t B:`, the old session's client hears
-/// `%layout-change` or `%unlinked-window-close` and then none of the pane's output. Moving a
-/// session's last pane ends that client with `%exit`. So the viewer moves to the new session's
-/// client and is painted again there.
+/// `%layout-change` or `%unlinked-window-close` and then none of the pane's output. So the viewer
+/// moves to the new session's client and is painted again there. Moving a session's last pane
+/// ends that client with `%exit` before tmux answers where the pane went, so that viewer ends
+/// `.streamEnded` instead, and the scene reattaches it.
 final class TmuxAttacher: PaneAttacher, @unchecked Sendable {
   private let binary: String
   private let run: CommandRunner
@@ -112,8 +113,13 @@ final class TmuxAttacher: PaneAttacher, @unchecked Sendable {
       let window = TmuxID.validRaw(String(words[1]), kind: .window)
     else { return nil }
     let size = words.count > 2 ? String(words[2]) : nil
-    let isSize = size.map { $0.split(separator: "x").count == 2 && $0.allSatisfy { $0 == "x" || $0.isNumber } } ?? false
-    return Place(session: session, window: window, currentWindowSize: isSize ? size : nil)
+    return Place(session: session, window: window, currentWindowSize: size.flatMap { isSize($0) ? $0 : nil })
+  }
+
+  /// Whether `text` is a size as tmux prints one, `150x43`.
+  static func isSize(_ text: String) -> Bool {
+    let parts = text.split(separator: "x", omittingEmptySubsequences: false)
+    return parts.count == 2 && parts.allSatisfy { !$0.isEmpty && $0.allSatisfy(\.isNumber) }
   }
 
   private func locate(_ pane: String) async throws -> Place {
@@ -214,8 +220,8 @@ final class TmuxViewerIDs: @unchecked Sendable {
 
 /// Why a command came back without its answer.
 enum TmuxCommandFailure: Error, Equatable {
-  /// tmux answered `%error`, with these lines.
-  case refused(String)
+  /// tmux answered `%error`, with these lines, after the answers of the line's commands before.
+  case refused(String, answered: [[Data]] = [])
   /// The client went before the answer came.
   case ended
 }
@@ -365,7 +371,7 @@ final class TmuxSessionClient: @unchecked Sendable {
     } catch {
       await attachment.release()
       if let error = error as? AppError { throw error }
-      if case .refused(let message)? = error as? TmuxCommandFailure {
+      if case .refused(let message, _)? = error as? TmuxCommandFailure {
         throw AppError.herdrCommandFailed(reason: message)
       }
       throw AppError.channelFailed(reason: "The pane could not be opened.")
@@ -443,54 +449,60 @@ final class TmuxSessionClient: @unchecked Sendable {
   private var decided: (@Sendable () -> Void)?
 
   /// tmux answered a size for `window`. On the reader.
+  ///
+  /// A hand-back is written under the lock that changed `sizings`, as in `leave`.
   private func sized(
     _ window: String, by id: Int, first: Bool, _ result: Result<[[Data]], TmuxCommandFailure>
   ) {
-    let handBack: (line: String, replies: Int, waiting: [@Sendable () -> Void])? = lock.withLock {
-      guard var sizing = sizings[window] else { return nil }
+    let resumes: [@Sendable () -> Void] = lock.withLock {
+      guard var sizing = sizings[window] else { return [] }
       switch result {
       case .success(let replies):
-        guard first else { return nil }
-        let reported = replies.first?.first.map { String(decoding: $0, as: UTF8.self) } ?? ""
-        sizing.prior = Self.isSize(reported) ? reported : ""
-      case .failure(.refused(let message)):
+        guard first else { return [] }
+        sizing.prior = Self.ownSize(in: replies)
+      case .failure(.refused(let message, let answered)):
         if Self.refusesEveryWindowSize(message) {
           // tmux before 3.3. Nothing here sized a window, so nothing goes back.
           sizesWindows = false
           defer { sizings = [:] }
-          return ("", 0, sizings.values.flatMap(\.waiting))
+          return sizings.values.flatMap(\.waiting)
         }
-        guard first else { return nil }
-        // Not sized, so this viewer holds nothing, and with nobody else nothing goes back.
+        guard first else { return [] }
+        // Not sized, so this viewer holds nothing, and with nobody else nothing goes back. The
+        // `display-message` ahead of the refusal still read the window's own size.
         sizing.holders.removeAll { $0.id == id }
-        sizing.prior = ""
+        sizing.prior = Self.ownSize(in: answered)
         if sizing.holders.isEmpty {
           sizings[window] = nil
-          return ("", 0, sizing.waiting)
+          return sizing.waiting
         }
       case .failure(.ended):
-        return ("", 0, sizing.waiting)
+        return sizing.waiting
       }
       guard sizing.holders.isEmpty else {
         let waiting = sizing.waiting
         sizing.waiting = []
         sizings[window] = sizing
-        return ("", 0, waiting)
+        return waiting
       }
       // Everyone left before tmux answered.
       sizings[window] = nil
-      return (Self.handBackLine(window, prior: sizing.prior ?? ""), 0, sizing.waiting)
-    }
-    guard let handBack else { return }
-    afterSizingDecision?()
-    if handBack.line.isEmpty {
-      for resume in handBack.waiting { resume() }
-    } else {
-      let waiting = handBack.waiting
-      send(handBack.line, replies: Self.handBackReplies(handBack.line)) { _ in
+      let waiting = sizing.waiting
+      let (line, replies) = Self.handBack(window, prior: sizing.prior ?? "")
+      let sent = enqueue(line, replies: replies) { _ in
         for resume in waiting { resume() }
       }
+      return sent ? [] : waiting
     }
+    afterSizingDecision?()
+    for resume in resumes { resume() }
+  }
+
+  /// The size a first sizing line's `display-message` printed, or `""` when it printed none,
+  /// as for a window that is gone.
+  private static func ownSize(in replies: [[Data]]) -> String {
+    let printed = replies.first?.first.map { String(decoding: $0, as: UTF8.self) } ?? ""
+    return TmuxAttacher.isSize(printed) ? printed : ""
   }
 
   /// Only tmux before 3.3 answers this to a window size; any other refusal is about one size.
@@ -498,21 +510,12 @@ final class TmuxSessionClient: @unchecked Sendable {
     message.contains("bad size argument")
   }
 
-  private static func isSize(_ text: String) -> Bool {
-    let parts = text.split(separator: "x", omittingEmptySubsequences: false)
-    return parts.count == 2 && parts.allSatisfy { !$0.isEmpty && $0.allSatisfy(\.isNumber) }
-  }
-
   /// `@W:P ; @W:` when the window's own size is known, which gives a window the desk is not
-  /// viewing its size back. `@W:` alone otherwise.
-  private static func handBackLine(_ window: String, prior: String) -> String {
+  /// viewing its size back. `@W:` alone otherwise. With the number of replies the line answers.
+  private static func handBack(_ window: String, prior: String) -> (line: String, replies: Int) {
     prior.isEmpty
-      ? "refresh-client -C \(window):"
-      : "refresh-client -C \(window):\(prior) ; refresh-client -C \(window):"
-  }
-
-  private static func handBackReplies(_ line: String) -> Int {
-    line.contains(" ; ") ? 2 : 1
+      ? ("refresh-client -C \(window):", 1)
+      : ("refresh-client -C \(window):\(prior) ; refresh-client -C \(window):", 2)
   }
 
   /// Types `bytes` into `pane`, as hex keys so no byte is read as a key name or a flag.
@@ -566,34 +569,40 @@ final class TmuxSessionClient: @unchecked Sendable {
 
   /// Viewer `id` no longer holds `window`. The newest size still held goes back on, or, with none
   /// left, the window's own size. Waits at most `handBackDeadline` for tmux's answer.
+  ///
+  /// **The line is written under the lock that changed `sizings`.** Written after it, a new
+  /// viewer's first size could go first: it would read the phone's size as the window's own,
+  /// and the hand-back's trailing `@W:` would drop the new size.
   func leave(_ window: String, by id: Int) async {
     _ = await FirstAnswer.within(Self.handBackDeadline, otherwise: false) { answer in
-      let next: String? = self.lock.withLock {
+      let answered: @Sendable (Result<[[Data]], TmuxCommandFailure>) -> Void = { _ in
+        answer.resume(true)
+      }
+      let resumesNow: Bool = self.lock.withLock {
         guard self.sizesWindows, !self.isEnded, var sizing = self.sizings[window],
           let index = sizing.holders.firstIndex(where: { $0.id == id })
-        else { return nil }
+        else { return true }
         let left = sizing.holders.remove(at: index)
         if let newest = sizing.holders.last {
           self.sizings[window] = sizing
           // Only the newest holder's size is on screen.
           let isOn = index == sizing.holders.count
-          return isOn && newest.size != left.size ? "refresh-client -C \(window):\(newest.size)" : nil
+          guard isOn, newest.size != left.size else { return true }
+          let line = "refresh-client -C \(window):\(newest.size)"
+          return !self.enqueue(line, replies: 1, done: answered)
         }
         guard let prior = sizing.prior else {
           // tmux has not said the window's own size yet; its answer hands the window back.
           sizing.waiting.append { answer.resume(true) }
           self.sizings[window] = sizing
-          return ""
+          return false
         }
         self.sizings[window] = nil
-        return Self.handBackLine(window, prior: prior)
+        let (line, replies) = Self.handBack(window, prior: prior)
+        return !self.enqueue(line, replies: replies, done: answered)
       }
       self.afterSizingDecision?()
-      switch next {
-      case nil: answer.resume(true)
-      case ""?: break
-      case let line?: self.send(line, replies: Self.handBackReplies(line)) { _ in answer.resume(true) }
-      }
+      if resumesNow { answer.resume(true) }
     }
   }
 
@@ -655,7 +664,7 @@ final class TmuxSessionClient: @unchecked Sendable {
         if failed {
           queue.removeFirst()
           let message = lines.map { String(decoding: $0, as: UTF8.self) }.joined(separator: "\n")
-          return (first, .failure(.refused(message)))
+          return (first, .failure(.refused(message, answered: first.replies)))
         }
         first.replies.append(lines)
         guard first.replies.count == first.expected else {
