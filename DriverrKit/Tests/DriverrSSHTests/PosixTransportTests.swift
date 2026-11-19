@@ -15,7 +15,7 @@ struct PosixTransportTests {
   private func connected() async throws -> FakeSSHTransport {
     let transport = FakeSSHTransport()
     try await transport.connect(
-      to: DriverrCore.Host(name: "workbox", hostname: "10.1.0.9", username: "carson"),
+      to: DriverrCore.Host(name: "workbox", hostname: "10.1.0.9", username: "dev"),
       hostKeyValidator: Trusting())
     try await transport.authenticate(.password("hunter2"))
     return transport

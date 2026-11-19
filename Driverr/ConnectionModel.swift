@@ -584,7 +584,9 @@ final class ConnectionModel {
             guard let machine = CorePaneID.machine(of: pane.id),
               let run = control.commandRunner(forPane: pane.id)
             else { return nil }
-            return TranscriptReader(run: run, machine: machine)
+            // `machine.exec` hands the line to the machine's `sh -c` already. The wrap costs
+            // nothing there and keeps one rule for every scripted command. See `LoginShell`.
+            return TranscriptReader(run: { try await run(LoginShell.posix($0)) }, machine: machine)
           },
           // A new turn is evidence for the composer's `Sent` notice. See
           // `PaneTranscriptModel.onAdvanced`.
