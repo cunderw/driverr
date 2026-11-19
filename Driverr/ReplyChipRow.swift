@@ -293,13 +293,22 @@ struct FlowLayout: Layout {
     var size: CGSize
   }
 
-  /// Lays chips out within `limit`. STUB: natural sizes, no clamp.
+  /// Lays chips out within `limit`, by `rows(of:spacing:within:)`.
+  ///
+  /// A chip that fits is measured and placed at its own size. A chip wider than `limit` is
+  /// offered `limit` as its width, so its label wraps inside the capsule. Overflowing its row
+  /// instead reported a width past the offer, and a centred notice above the chips grew past
+  /// the screen at accessibility text sizes. So the size reported never passes `limit`.
   static func arrange(
     count: Int, spacing: CGFloat, within limit: CGFloat,
     measure: (Int, ProposedViewSize) -> CGSize
   ) -> Arrangement {
-    let proposals = Array(repeating: ProposedViewSize.unspecified, count: count)
-    let sizes = (0..<count).map { measure($0, proposals[$0]) }
+    var proposals = Array(repeating: ProposedViewSize.unspecified, count: count)
+    var sizes = (0..<count).map { measure($0, .unspecified) }
+    for index in sizes.indices where sizes[index].width > limit {
+      proposals[index] = ProposedViewSize(width: limit, height: nil)
+      sizes[index] = measure(index, proposals[index])
+    }
     let rows = rows(of: sizes.map(\.width), spacing: spacing, within: limit)
     var frames = Array(repeating: CGRect.zero, count: count)
     var y: CGFloat = 0
@@ -315,7 +324,7 @@ struct FlowLayout: Layout {
     }
     return Arrangement(
       frames: frames, proposals: proposals,
-      size: CGSize(width: width, height: rows.isEmpty ? 0 : y - spacing))
+      size: CGSize(width: min(width, limit), height: rows.isEmpty ? 0 : y - spacing))
   }
 
   func sizeThatFits(
