@@ -9,7 +9,8 @@ struct BackendNeutralCopyTests {
   @Test("a tmux agent nothing recognised does not blame herdr")
   func unknownAgentNamesNoBackend() {
     let agent = Agent(name: "Claude", kind: "claude", status: .unknown)
-    let pane = Pane(id: "tmux:%3", tabID: "tmux:@1", workspaceID: "tmux:$0", title: "t", agent: agent)
+    let pane = Pane(
+      id: "tmux:%3", tabID: "tmux:@1", workspaceID: "tmux:$0", title: "t", agent: agent)
     #expect(PaneComposerHeader(pane: pane).state == "Driverr can't tell what Claude is doing.")
   }
 
