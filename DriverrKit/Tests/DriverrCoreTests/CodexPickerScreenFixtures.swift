@@ -56,7 +56,7 @@ enum CodexPickerScreenFixture {
   [
     "",
     "  \u{1B}[38;2;99;168;248m>_ \u{1B}[1m\u{1B}[39mOpenAI Codex\u{1B}[0;2m (v0.170.0)\u{1B}[0m",
-    "     \u{1B}[2m/private/tmp/claude-501/…/scratchpad/codex109\u{1B}[0m",
+    "     \u{1B}[2m~/scratch/codex109\u{1B}[0m",
     "",
     "",
     "",

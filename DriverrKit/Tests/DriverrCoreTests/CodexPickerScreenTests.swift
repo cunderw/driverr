@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 
 @testable import DriverrCore
@@ -22,6 +23,18 @@ struct CodexPickerScreenTests {
 
   private func call(_ ansi: String) throws -> ToolCall {
     try #require(transcript.questionCall(screen: screen(ansi), agentStatus: .idle))
+  }
+
+  /// Guards the fixtures, so the failures above are about the parse and not the capture. The
+  /// narrow one is tmux's `capture-pane -e`, not herdr's.
+  @Test("the captures hold the picker's rows once sanitised")
+  func capturesHoldThePicker() {
+    for ansi in [CodexPickerScreenFixture.permissions, CodexPickerScreenFixture.permissionsNarrow] {
+      let rows = screen(ansi).lines.map { $0.text.trimmingCharacters(in: .whitespaces) }
+      #expect(rows.contains("enter select · esc back"))
+      #expect(rows.contains("Update Model Permissions"))
+      #expect(rows.contains { $0.hasPrefix("› 2. Approve for me (current)") })
+    }
   }
 
   @Test("an open Codex picker offers its options while herdr calls the pane idle")
