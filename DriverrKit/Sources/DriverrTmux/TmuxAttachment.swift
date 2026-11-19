@@ -397,10 +397,21 @@ final class TmuxSessionClient: @unchecked Sendable {
   /// **The first size reads the window's own size in the same line**, so it is read before any
   /// size from here lands, and the choice of line is made under the lock that orders the writes.
   func size(_ window: String, to size: TerminalSize, for attachment: TmuxAttachment) async {
+    await withCheckedContinuation { (waiting: CheckedContinuation<Void, Never>) in
+      startSizing(window, to: size, for: attachment) { waiting.resume() }
+    }
+  }
+
+  /// `size`'s write, which calls `done` once tmux has answered or the size was not sent.
+  func startSizing(
+    _ window: String, to size: TerminalSize, for attachment: TmuxAttachment,
+    done: @escaping @Sendable () -> Void
+  ) {
     let columns = min(max(size.columns, 1), 10_000)
     let rows = min(max(size.rows, 1), 10_000)
     let target = "\(columns)x\(rows)"
-    await withCheckedContinuation { (waiting: CheckedContinuation<Void, Never>) in
+    do {
+      let waiting = done
       let sent: Bool = lock.withLock {
         guard sizesWindows, !isEnded, attachments[attachment.id] === attachment else { return false }
         let first = sizings[window] == nil
@@ -416,12 +427,20 @@ final class TmuxSessionClient: @unchecked Sendable {
         let id = attachment.id
         return enqueue(line, replies: first ? 2 : 1) { [weak self] result in
           self?.sized(window, by: id, first: first, result)
-          waiting.resume()
+          waiting()
         }
       }
-      if !sent { waiting.resume() }
+      if !sent { waiting() }
     }
   }
+
+  /// Called after a hand-back or a size going back on has been decided, for the tests that
+  /// order another write against it.
+  var afterSizingDecision: (@Sendable () -> Void)? {
+    get { lock.withLock { decided } }
+    set { lock.withLock { decided = newValue } }
+  }
+  private var decided: (@Sendable () -> Void)?
 
   /// tmux answered a size for `window`. On the reader.
   private func sized(
@@ -463,6 +482,7 @@ final class TmuxSessionClient: @unchecked Sendable {
       return (Self.handBackLine(window, prior: sizing.prior ?? ""), 0, sizing.waiting)
     }
     guard let handBack else { return }
+    afterSizingDecision?()
     if handBack.line.isEmpty {
       for resume in handBack.waiting { resume() }
     } else {
@@ -568,6 +588,7 @@ final class TmuxSessionClient: @unchecked Sendable {
         self.sizings[window] = nil
         return Self.handBackLine(window, prior: prior)
       }
+      self.afterSizingDecision?()
       switch next {
       case nil: answer.resume(true)
       case ""?: break
@@ -789,7 +810,8 @@ final class TmuxAttachment: PaneBridge, PromotableObserver, RawTerminalStream, @
 
   var window: String { lock.withLock { currentWindow } }
 
-  private var client: TmuxSessionClient { lock.withLock { owner } }
+  /// The client this viewer is open through now.
+  var client: TmuxSessionClient { lock.withLock { owner } }
 
   /// Whether a paint carries history: a controller's does, an observer's does not.
   var paintsHistory: Bool { lock.withLock { isController && !awaitsTouch } }

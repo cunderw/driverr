@@ -486,6 +486,65 @@ struct TmuxAttachmentTests {
     #expect(host.stream.size(of: "@1") == "150x43")
   }
 
+  /// The last holder's hand-back and a new viewer's first size, decided one after the other.
+  /// Written in the other order, the new viewer would read the phone's size as the window's own,
+  /// and the hand-back's trailing `@W:` would drop the new size.
+  @Test("a new first size decided after the last hand-back is written after it")
+  func handBackThenFirstSize() async throws {
+    let host = Host(["%3": Host.shell(), "%4": Host.shell()])
+    let attacher = host.attacher
+    let leaving = try #require(
+      try await attacher.open(terminalID: "tmux:%3", size: Self.phone) as? TmuxAttachment)
+    let arriving = try #require(
+      try await attacher.observe(terminalID: "tmux:%4", size: Self.phone) as? TmuxAttachment)
+    let client = leaving.client
+    let size = TerminalSize(columns: 40, rows: 30, pixelWidth: 0, pixelHeight: 0)
+    final class Once: @unchecked Sendable {
+      let lock = NSLock()
+      var fired = false
+    }
+    let once = Once()
+    client.afterSizingDecision = {
+      guard once.lock.withLock({ defer { once.fired = true }; return !once.fired }) else { return }
+      client.startSizing("@1", to: size, for: arriving) {}
+    }
+    await leaving.release()
+    try await poll { host.stream.lines.contains { $0.hasSuffix("refresh-client -C @1:40x30") } }
+    // A command after both proves the fake has run them.
+    try await arriving.resize(to: Self.phone)
+    let first = try #require(host.stream.lines.firstIndex(of: Self.firstSizing("@1", "40x30")))
+    let handBack = try #require(host.stream.lines.firstIndex(of: Self.handBack("@1")))
+    #expect(handBack < first)
+    #expect(host.stream.size(of: "@1") == "40x30")
+    client.afterSizingDecision = nil
+    await arriving.release()
+    #expect(host.stream.size(of: "@1") == "150x43")
+  }
+
+  /// A refusal that is not `bad size argument` still ran the line's `display-message`, so the
+  /// window's own size is known, and another viewer holding it gives it back at that size.
+  @Test("a first size refused while another viewer holds the window keeps the window's own size")
+  func refusedFirstSizeKeepsTheOwnSize() async throws {
+    let host = Host(["%3": Host.shell(), "%4": Host.shell()])
+    let attacher = host.attacher
+    host.stream.hold(linesContaining: "refresh-client -C @1:")
+    host.stream.refuseWindowSizes(with: "size too small or too big", times: 1)
+    async let refused = attacher.open(terminalID: "tmux:%3", size: Self.phone)
+    try await poll { host.stream.lines.contains(Self.firstSizing("@1", "60x20")) }
+    async let holding = attacher.open(
+      terminalID: "tmux:%4", size: TerminalSize(columns: 40, rows: 30, pixelWidth: 0, pixelHeight: 0))
+    try await poll { host.stream.lines.contains("refresh-client -C @1:40x30") }
+    let inFlight = host.stream.lines.contains("refresh-client -C @1:40x30")
+    host.stream.resumeHeld()
+    #expect(inFlight, "the second size was written before tmux answered the first")
+    let (first, second) = try await (refused, holding)
+    #expect(host.stream.size(of: "@1") == "40x30")
+    await second.release()
+    #expect(host.stream.lines.last == Self.handBack("@1"))
+    #expect(host.stream.size(of: "@1") == "150x43")
+    await first.release()
+  }
+
   /// The size a window had is read once, ahead of every size, even when two controllers size it
   /// before tmux has answered either.
   @Test("two first sizings in flight at once still give the window back at its own size")
@@ -616,5 +675,7 @@ struct TmuxAttachmentTests {
       TmuxAttacher.place(from: "$2 @5 \n")
         == TmuxAttacher.Place(session: "$2", window: "@5", currentWindowSize: nil))
     #expect(TmuxAttacher.place(from: "nonsense") == nil)
+    #expect(TmuxAttacher.place(from: "$2 @5 5xx5\n")?.currentWindowSize == nil)
+    #expect(TmuxAttacher.place(from: "$2 @5 x5\n")?.currentWindowSize == nil)
   }
 }
