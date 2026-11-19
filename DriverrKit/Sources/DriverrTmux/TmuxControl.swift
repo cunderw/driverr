@@ -6,7 +6,9 @@ import Foundation
 ///
 /// One exec channel per request, over the same `CommandRunner`. tmux has no `-F` listing for
 /// an agent, so the snapshot joins three reads: the panes, the host's process table and
-/// Claude Code's own record of each foreground process. See `TmuxProcessTable`.
+/// Claude Code's own record of each foreground process. Codex keeps no record, so a Codex pane
+/// comes from its process's name and its state from the pane's title. See `TmuxProcessTable`
+/// and `CodexTitle`.
 ///
 /// Ids are `TmuxID`'s: `tmux:%3` for a pane, `tmux:@2` for a window and `tmux:$1` for a
 /// session. They map to `Pane`, `Tab` and `Workspace` ids, so a tmux pane is told apart by its
@@ -129,7 +131,8 @@ public struct TmuxControl: HerdrControl {
     return TmuxSnapshotMapper.tree(from: rows, agents: agents)
   }
 
-  /// The agent in each pane, by raw pane id. A failure at any step leaves a pane a shell.
+  /// The agent in each pane, by raw pane id. A failed process table leaves every pane a shell.
+  /// A failed read of Claude's records leaves Claude's panes shells and still finds Codex.
   private func agents(
     forRows rows: [TmuxPaneRow],
     processTable: CommandResult?
@@ -166,7 +169,7 @@ public struct TmuxControl: HerdrControl {
     // for the pane's directory, as it does for a herdr-core Codex. A Claude record wins.
     for row in rows where agents[row.paneID] == nil {
       let group = TmuxProcessTable.foregroundGroup(forPaneTTY: row.tty, in: processes)
-      guard group.contains(where: TmuxProcessTable.isCodex) else { continue }
+      guard TmuxProcessTable.runsCodex(group) else { continue }
       agents[row.paneID] = Agent(
         name: TranscriptAgent.codex.displayName,
         kind: TranscriptAgent.codex.rawValue,

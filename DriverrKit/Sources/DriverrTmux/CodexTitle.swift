@@ -43,7 +43,8 @@ enum CodexTitle {
     if let first = title.unicodeScalars.first, spinner.contains(first) {
       return String(title.unicodeScalars.dropFirst()).trimmingCharacters(in: .whitespaces)
     }
-    return title
+    // An idle title can carry the dot too, and the label must not change when it comes and goes.
+    return title.hasPrefix(attentionDot) ? String(title.dropFirst(attentionDot.count)) : title
   }
 
   /// What follows `Action Required`, or `nil` when the title is not a blocked one.

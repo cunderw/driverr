@@ -228,7 +228,7 @@ enum TmuxSnapshotMapper {
   }
 
   /// `2.1.325` or `3.7c`: digits and dots, and at most one trailing letter.
-  private static func looksLikeVersion(_ command: String) -> Bool {
+  static func looksLikeVersion(_ command: String) -> Bool {
     let body = command.last?.isLetter == true ? command.dropLast() : Substring(command)
     return body.first?.isNumber == true && body.allSatisfy { $0.isNumber || $0 == "." }
   }

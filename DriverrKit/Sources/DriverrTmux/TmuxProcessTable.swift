@@ -84,7 +84,25 @@ enum TmuxProcessTable {
   /// foreground group and another was only a member of it, so every member is checked. A `node`
   /// wrapper from an npm install is not measured, and does not match.
   static func isCodex(_ process: TmuxProcess) -> Bool {
-    process.command.split(separator: "/").last == "codex"
+    name(of: process) == "codex"
+  }
+
+  /// Whether a pane's foreground group, from `foregroundGroup(forPaneTTY:in:)`, is Codex.
+  ///
+  /// **Not when Claude leads the group.** Claude can start `codex mcp-server` as an MCP child in
+  /// its own group, and with Claude's record missing or unreadable that child would make a
+  /// Claude pane a Codex one. Claude's `comm` is `claude`, or its version string, `2.1.325`.
+  static func runsCodex(_ group: [TmuxProcess]) -> Bool {
+    if let leader = group.first, leader.pid == leader.groupID, !isCodex(leader) {
+      let leaderName = name(of: leader)
+      if leaderName == "claude" || TmuxSnapshotMapper.looksLikeVersion(leaderName) { return false }
+    }
+    return group.contains(where: isCodex)
+  }
+
+  /// A command's last path component.
+  private static func name(of process: TmuxProcess) -> String {
+    process.command.split(separator: "/").last.map(String.init) ?? ""
   }
 }
 
