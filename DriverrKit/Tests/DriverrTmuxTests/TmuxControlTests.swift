@@ -66,8 +66,8 @@ struct TmuxControlSnapshotTests {
     #expect(commands.count == 3)
     #expect(commands.contains { $0.hasPrefix("tmux -u list-panes -a -F ") })
     #expect(commands.contains("ps -A -o pid=,pgid=,tpgid=,tty=,comm="))
-    let reads = commands.filter { $0.contains(".claude/sessions/") }
-    #expect(reads.count == 1)
+    let reads = commands.filter { $0.contains(ClaudeRecordFiles.marker) }
+    try #require(reads.count == 1)
     // Every foreground pid is tried: 5001 5002 5003 5004 5005, and the zsh shells too.
     for pid in [5001, 5002, 5003, 5004, 5005] {
       #expect(reads[0].contains("/sessions/\(pid).json"))
@@ -208,7 +208,7 @@ struct TmuxControlSnapshotTests {
   func recordsFail() async throws {
     let host = FakeTmuxHost.seeded()
     let control = TmuxControl(run: { command in
-      command.contains(".claude/sessions")
+      command.contains(ClaudeRecordFiles.marker)
         ? CommandResult(standardOutput: "", standardError: "denied", exitStatus: 1)
         : try await host.runner(command)
     })

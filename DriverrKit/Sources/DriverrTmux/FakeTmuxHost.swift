@@ -7,8 +7,8 @@ import Foundation
 /// It is a `CommandRunner`, not a `HerdrControl`: it answers the shell commands `TmuxControl`
 /// sends, so every command string and every parse runs. It reads each command the way the
 /// remote side would, which is two readings. A small shell splits the line into words and runs
-/// `tmux`, `ps`, `printf` and `cat`, honouring quotes, `&&`, `;` and `\;`. Then `tmux` splits
-/// its own argument list at `;`, with its rule for an argument that ends in one.
+/// `tmux`, `ps`, `printf`, `cat` and `sh -c`, honouring quotes, `&&`, `;` and `\;`. Then `tmux`
+/// splits its own argument list at `;`, with its rule for an argument that ends in one.
 ///
 /// So a command that only looks right fails here: an unquoted `$1`, or typed text that ends in
 /// `;`, comes out as something other than what was typed. Real tmux 3.7c is what the rule was
@@ -117,9 +117,13 @@ public actor FakeTmuxHost {
 
   public static let hostName = "fake-host.local"
 
+  /// Claude Code's configuration directory, as a POSIX shell spells it.
+  static let recordDirectory = "${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+
   public private(set) var sessions: [Session]
   public private(set) var processes: [Process]
-  /// `~/.claude/sessions/<pid>.json`, by pid. A pid with no entry has no file.
+  /// `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/sessions/<pid>.json`, by pid. A pid with no entry has
+  /// no file.
   public private(set) var records: [Int: String]
   /// What `tmux -V` prints. `nil` is a host with no tmux, and every command says so.
   public var version: String?
@@ -227,6 +231,12 @@ public actor FakeTmuxHost {
 
   private func handle(_ line: String) -> CommandResult {
     commands.append(line)
+    return execute(line, insideShell: false)
+  }
+
+  /// One line, run. `insideShell` is a script `sh -c` was given, where POSIX syntax is safe. The
+  /// line itself goes to the login shell, which may be fish.
+  private func execute(_ line: String, insideShell: Bool) -> CommandResult {
     var stdout = ""
     var stderr = ""
     var status = 0
@@ -238,7 +248,7 @@ public actor FakeTmuxHost {
       defer { pending = [] }
       guard !pending.isEmpty else { return }
       if skipping, operatorBefore == "&&" { return }
-      let result = simpleCommand(pending)
+      let result = simpleCommand(pending, insideShell: insideShell)
       stdout += result.standardOutput
       stderr += result.standardError
       status = result.exitStatus
@@ -307,7 +317,7 @@ public actor FakeTmuxHost {
     return tokens
   }
 
-  private func simpleCommand(_ words: [String]) -> CommandResult {
+  private func simpleCommand(_ words: [String], insideShell: Bool) -> CommandResult {
     let name = words[0].split(separator: "/").last.map(String.init) ?? words[0]
     switch name {
     case "tmux":
@@ -324,20 +334,30 @@ public actor FakeTmuxHost {
         .replacingOccurrences(of: "%s", with: words[2])
       return Self.success(text)
     case "cat":
-      return cat(words)
+      return cat(words, insideShell: insideShell)
+    case "sh":
+      guard words.count == 3, words[1] == "-c" else { return Self.failure("sh: usage", status: 2) }
+      return execute(words[2], insideShell: true)
     default:
       return Self.failure("sh: \(name): command not found", status: 127)
     }
   }
 
-  /// Only `cat "$HOME/.claude/sessions/<pid>.json"`. The quoted `$HOME` reaches here unexpanded,
-  /// which is fine: the fake knows whose home it is.
-  private func cat(_ words: [String]) -> CommandResult {
+  /// Only `cat` of a record in Claude Code's configuration directory,
+  /// `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/sessions/<pid>.json`, as `sh -c` reads it. The
+  /// expression reaches here unexpanded, which is fine: the fake knows whose directory it is.
+  ///
+  /// A path under `$HOME/.claude` alone reads nothing, because it ignores `CLAUDE_CONFIG_DIR`.
+  /// The expression outside `sh -c` fails, because a login shell that is fish cannot read it.
+  private func cat(_ words: [String], insideShell: Bool) -> CommandResult {
     guard let path = words.dropFirst().first(where: { $0.hasSuffix(".json") }),
       let file = path.split(separator: "/").last,
       let pid = Int(file.dropLast(".json".count)),
-      path.contains("/.claude/sessions/")
+      path == Self.recordDirectory + "/sessions/\(pid).json"
     else { return Self.failure("cat: not a file this host has", status: 1) }
+    guard insideShell else {
+      return Self.failure("fish: ${ is not a valid variable in fish", status: 127)
+    }
     guard let text = records[pid] else {
       return Self.failure("cat: \(path): No such file or directory", status: 1)
     }

@@ -31,6 +31,18 @@ struct NotificationTapRouterTests {
     #expect(presenter.pendingOpen == .init(hostID: hostID, paneID: "w1:p2"))
   }
 
+  @Test("a tap on a tmux pane's card asks for that pane")
+  func aTapRequestsATmuxPane() {
+    let presenter = TerminalPresenter()
+
+    router(presenter).route(userInfo: [
+      NotificationTapRouter.hostIDKey: hostID.uuidString,
+      NotificationTapRouter.paneIDKey: "tmux:%3",
+    ])
+
+    #expect(presenter.pendingOpen == .init(hostID: hostID, paneID: "tmux:%3"))
+  }
+
   @Test("a card with no ids in it is a no-op")
   func anEmptyUserInfoDoesNothing() {
     let presenter = TerminalPresenter()

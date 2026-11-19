@@ -314,5 +314,77 @@
         }
       }
     }
+
+    // MARK: Needs You (#102 S4)
+
+    /// A pane running `sleep`, with Claude Code's record for that pid written by hand. S0
+    /// measured what Claude writes; this measures that a real `sh`, `ps` and tmux carry it to the
+    /// pane. `HOME` is a scratch directory in both cases, so the real `~/.claude` is never read
+    /// or written, and the unset case proves the `:-` default.
+    @Test(
+      "a waiting record for a pane's own pid blocks it on permission, and busy makes it work",
+      arguments: [true, false])
+    func needsYou(configDirectorySet: Bool) async throws {
+      try await withThrowaway { plain in
+        let scratch = try LocalShell.temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: scratch) }
+        let home = scratch.appendingPathComponent("home")
+        let config = scratch.appendingPathComponent("config")
+        let sessions =
+          configDirectorySet
+          ? config.appendingPathComponent("sessions")
+          : home.appendingPathComponent(".claude/sessions")
+        try FileManager.default.createDirectory(at: sessions, withIntermediateDirectories: true)
+        var environment = "HOME=\(shellQuoted(home.path)); export HOME; "
+        if configDirectorySet {
+          environment += "CLAUDE_CONFIG_DIR=\(shellQuoted(config.path)); export CLAUDE_CONFIG_DIR; "
+        }
+        let run: CommandRunner = { try await LocalShell.runner(environment + $0) }
+        let control = TmuxControl(binaryPath: plain.binaryPath, run: run)
+        let tmux = shellQuoted(plain.binaryPath)
+
+        let pane = try await control.startTerminal()
+        let raw = try #require(TmuxID.raw(of: pane))
+        let respawned = try await run(
+          "\(tmux) respawn-pane -k -t \(shellQuoted(raw)) 'exec sleep 600'")
+        #expect(respawned.exitStatus == 0, "\(respawned.standardError)")
+        let shown = try await run("\(tmux) -u display-message -p -t \(shellQuoted(raw)) '#{pane_pid}'")
+        let pid = try #require(
+          Int(shown.standardOutput.trimmingCharacters(in: .whitespacesAndNewlines)),
+          "pane_pid: \(shown.standardOutput) \(shown.standardError)")
+
+        let session = UUID().uuidString.lowercased()
+        let file = sessions.appendingPathComponent("\(pid).json")
+        func write(_ status: String, waitingFor: String? = nil) throws {
+          try FakeTmuxHost.claudeRecord(
+            pid: pid, sessionID: session, status: status, waitingFor: waitingFor,
+            directory: scratch.path
+          ).write(to: file, atomically: true, encoding: .utf8)
+        }
+        /// `respawn-pane` returns before `ps` shows the new process, so poll, then assert.
+        func settled(_ status: AgentStatus) async throws -> SessionTree {
+          var tree = try await control.snapshot()
+          for _ in 0..<40 where tree.pane(id: pane)?.agent?.status != status {
+            try await Task.sleep(for: .milliseconds(100))
+            tree = try await control.snapshot()
+          }
+          return tree
+        }
+
+        try write("waiting", waitingFor: "permission prompt")
+        let waiting = try await settled(.blocked)
+        let agent = waiting.pane(id: pane)?.agent
+        #expect(agent?.status == .blocked)
+        #expect(agent?.blockedKind == .permission)
+        #expect(agent?.session?.identifier == session)
+        #expect(waiting.blockedPanes.map(\.id) == [pane])
+
+        try write("busy")
+        let working = try await settled(.working)
+        #expect(working.pane(id: pane)?.agent?.status == .working)
+        #expect(working.pane(id: pane)?.agent?.blockedKind == nil)
+        #expect(working.blockedPanes.isEmpty)
+      }
+    }
   }
 #endif
