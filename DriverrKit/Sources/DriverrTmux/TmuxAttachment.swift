@@ -416,28 +416,25 @@ final class TmuxSessionClient: @unchecked Sendable {
     let columns = min(max(size.columns, 1), 10_000)
     let rows = min(max(size.rows, 1), 10_000)
     let target = "\(columns)x\(rows)"
-    do {
-      let waiting = done
-      let sent: Bool = lock.withLock {
-        guard sizesWindows, !isEnded, attachments[attachment.id] === attachment else { return false }
-        let first = sizings[window] == nil
-        var sizing = sizings[window] ?? Sizing()
-        sizing.holders.removeAll { $0.id == attachment.id }
-        sizing.holders.append((attachment.id, target))
-        sizings[window] = sizing
-        let sizeLine = "refresh-client -C \(window):\(target)"
-        let line =
-          first
-          ? "display-message -p -t \(window) '#{window_width}x#{window_height}' ; \(sizeLine)"
-          : sizeLine
-        let id = attachment.id
-        return enqueue(line, replies: first ? 2 : 1) { [weak self] result in
-          self?.sized(window, by: id, first: first, result)
-          waiting()
-        }
+    let sent: Bool = lock.withLock {
+      guard sizesWindows, !isEnded, attachments[attachment.id] === attachment else { return false }
+      let first = sizings[window] == nil
+      var sizing = sizings[window] ?? Sizing()
+      sizing.holders.removeAll { $0.id == attachment.id }
+      sizing.holders.append((attachment.id, target))
+      sizings[window] = sizing
+      let sizeLine = "refresh-client -C \(window):\(target)"
+      let line =
+        first
+        ? "display-message -p -t \(window) '#{window_width}x#{window_height}' ; \(sizeLine)"
+        : sizeLine
+      let id = attachment.id
+      return enqueue(line, replies: first ? 2 : 1) { [weak self] result in
+        self?.sized(window, by: id, first: first, result)
+        done()
       }
-      if !sent { waiting() }
     }
+    if !sent { done() }
   }
 
   /// Called after a hand-back or a size going back on has been decided, for the tests that
