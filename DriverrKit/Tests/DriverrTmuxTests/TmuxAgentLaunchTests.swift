@@ -62,12 +62,13 @@ struct TmuxAgentLaunchTests {
     #expect(id == "tmux:%4")
     #expect(host.checks == [AgentLaunch.resolveCommand(for: "~/my app")])
     let commands = await host.tmux.commands
+    #expect(commands.count == 2)
+    #expect(commands.first == "tmux -u new-window -d -P -F '#{pane_id}' -n 'my app' -c '/srv/my app'")
     #expect(
-      commands.prefix(2) == [
-        "tmux -u new-window -d -P -F '#{pane_id}' -n 'my app' -c '/srv/my app'",
-        "tmux -u copy-mode -q -t '%4'",
-      ])
-    #expect(commands[2].contains("send-keys -t '%4' -l"), "the mode is left before the typing")
+      commands.last?.hasPrefix(
+        "tmux -u if-shell -F -t '%4' '#{pane_in_mode}' 'copy-mode -q -t %4' \\; send-keys -t '%4' -l")
+        == true,
+      "the mode is left before the typing, in the same command")
     #expect(await host.tmux.input["%4"] == [.text("claude -- 'fix it'"), .key("Enter")])
 
     let tree = try await control.snapshot()
@@ -83,8 +84,8 @@ struct TmuxAgentLaunchTests {
       AgentLaunch(kind: .codex, directory: "/srv/my app"))
     #expect(id == "tmux:%0")
     let commands = await host.tmux.commands
-    #expect(commands.count == 4, "new-window refused, new-session, leaving a mode, then the typing")
-    #expect(commands[2] == "tmux -u copy-mode -q -t '%0'")
+    #expect(commands.count == 3, "new-window refused, new-session, then the typing")
+    #expect(commands[2].hasPrefix("tmux -u if-shell -F -t '%0' '#{pane_in_mode}' 'copy-mode -q -t %0'"))
     #expect(commands[1] == "tmux -u new-session -d -P -F '#{pane_id}' -n 'my app' -c '/srv/my app'")
     #expect(await host.tmux.input["%0"] == [.text("codex"), .key("Enter")])
   }

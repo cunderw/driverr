@@ -603,6 +603,38 @@ struct TmuxControlInputTests {
       ])
   }
 
+  /// Measured on 3.7c and 3.2a: text sent to a pane in copy mode or view mode never reaches
+  /// the program, and a desk scrolling in copy mode leaves the pane there.
+  @Test("a pane in a mode leaves it before text, a submit or keys, in the same command")
+  func leavesAMode() async throws {
+    let host = FakeTmuxHost.seeded()
+    let control = TmuxControl(run: host.runner)
+    await host.setInMode(1, true)
+    try await control.sendText(paneID: "tmux:%1", text: "typed")
+    await host.setInMode(1, true)
+    try await control.submitText(paneID: "tmux:%1", text: "yes")
+    await host.setInMode(1, true)
+    try await control.sendKeys(paneID: "tmux:%1", keys: [.down, .enter])
+    #expect(
+      await host.input["%1"] == [
+        .text("typed"), .text("yes"), .key("Enter"), .key("Down"), .key("Enter"),
+      ])
+    #expect(await host.modeQuits == ["%1", "%1", "%1"])
+    #expect(await host.commands.count == 3, "one exec each, with no read first")
+  }
+
+  @Test("a pane in no mode runs nothing but the send")
+  func noModeNoQuit() async throws {
+    let host = FakeTmuxHost.seeded()
+    let control = TmuxControl(run: host.runner)
+    try await control.sendText(paneID: "tmux:%1", text: "typed")
+    try await control.submitText(paneID: "tmux:%1", text: "yes")
+    try await control.sendKeys(paneID: "tmux:%1", keys: [.down])
+    #expect(await host.input["%1"] == [.text("typed"), .text("yes"), .key("Enter"), .key("Down")])
+    #expect(await host.modeQuits.isEmpty, "copy-mode never ran")
+    #expect(await host.commands.count == 3)
+  }
+
   @Test("no keys is no command")
   func noKeys() async throws {
     let host = FakeTmuxHost.seeded()

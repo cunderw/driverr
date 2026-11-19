@@ -132,6 +132,50 @@
       }
     }
 
+    /// A pane the desk left in a mode (#128). Measured on 3.7c and 3.2a: text sent there without
+    /// leaving the mode never reaches the program. `run-shell` shows its output in view mode.
+    @Test(
+      "text, a submit and keys sent to a pane in copy mode or view mode arrive, and leave the mode",
+      arguments: ["copy-mode -t %P", "run-shell -t %P 'echo viewed'"])
+    func leavesAMode(enter: String) async throws {
+      try await withThrowaway { control in
+        let id = try await control.startTerminal()
+        let raw = try #require(TmuxID.raw(of: id))
+        let pane = try #require(try await control.snapshot().pane(id: id))
+        let tmux: (String) async throws -> String = { arguments in
+          let result = try await LocalShell.runner(
+            "\(shellQuoted(control.binaryPath)) -u \(arguments)")
+          #expect(result.exitStatus == 0, "tmux \(arguments): \(result.standardError)")
+          return result.standardOutput.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        _ = try await tmux("respawn-pane -k -t \(raw) cat")
+        func inMode() async throws -> String {
+          try await tmux("display-message -p -t \(raw) '#{pane_in_mode}'")
+        }
+        func enterMode() async throws {
+          _ = try await tmux(enter.replacingOccurrences(of: "%P", with: raw))
+          for _ in 0..<40 {
+            if try await inMode() == "1" { break }
+            try await Task.sleep(for: .milliseconds(50))
+          }
+          try #require(try await inMode() == "1", "the pane never entered the mode")
+        }
+
+        try await enterMode()
+        try await control.sendText(paneID: id, text: "sent-")
+        try await enterMode()
+        try await control.submitText(paneID: id, text: "submitted")
+        try await enterMode()
+        try await control.sendKeys(paneID: id, keys: [.yes, .enter])
+
+        // `cat` echoes the line as typed and then prints it, so each shows twice.
+        let screen = try await waitForScreen(control, pane: pane, containing: "y\ny")
+        #expect(screen.components(separatedBy: "sent-submitted").count == 3, "screen: \(screen)")
+        #expect(screen.contains("y\ny"), "screen: \(screen)")
+        #expect(try await inMode() == "0")
+      }
+    }
+
     // MARK: The live terminal (#102 S3)
 
     /// A throwaway server with a session `probe`, 150x44, holding two windows: `@0` current with
@@ -168,8 +212,9 @@
       _ = try await tmux("set-option -w -u -t \(window) window-size")
     }
 
-    /// Whether this tmux sizes one window for a control client, which 3.3 and later do.
-    private func sizesOneWindow(_ tmux: (String) async throws -> String) async throws -> Bool {
+    /// Whether this tmux takes a window size from a control client, `refresh-client -C @W:WxH`,
+    /// which 3.3 and later do. Before 3.3 a window is sized with `resize-window`.
+    private func takesWindowSizes(_ tmux: (String) async throws -> String) async throws -> Bool {
       let version = try await tmux("-V")
       let number = version.split(separator: " ").last.map { $0.prefix { $0.isNumber || $0 == "." } }
       let parts = (number ?? "").split(separator: ".").compactMap { Int($0) }
@@ -219,37 +264,49 @@
       try #require(control.paneAttacher(for: "tmux:%0"))
     }
 
+    /// The window-local `window-size` of every window, `-` where it is not set.
+    private func windowSizeOptions(_ tmux: (String) async throws -> String) async throws -> String {
+      var options: [String] = []
+      for window in try await tmux("list-windows -a -F '#{window_id}'").split(separator: "\n") {
+        let value = try await tmux("show-options -w -v -t \(window) window-size")
+        options.append("\(window):\(value.isEmpty ? "-" : value)")
+      }
+      return options.joined(separator: " ")
+    }
+
     /// Measured on 3.7c with no desk attached. The attach line sets the client's own size to the
     /// current window's, so the attach changes nothing; `@W:` then sizes only the pane's window,
     /// and `@W:` with no size hands it back to the client's own size. With a desk attached, a
     /// window the desk is not viewing keeps the phone's size instead, until the desk views it
     /// (measured by hand; a desk needs a terminal, which this suite does not start).
     ///
-    /// On 3.2a nothing changes size: the first window size answers `bad size argument`.
+    /// On 3.2a the first window size answers `bad size argument`, so `resize-window` sizes the
+    /// window and sets its `window-size` to `manual`, and the hand-back unsets it.
     @Test("a controller sizes only its pane's window, and hands it back on release")
     func sizing() async throws {
       try await withLiveServer { control, tmux in
-        let sized = try await sizesOneWindow(tmux)
         let attacher = try attacher(control)
         let before = try await sizes(tmux)
         #expect(before == "@0:150x44 @1:150x44")
 
         let other = try await attacher.open(terminalID: "tmux:%1", size: Self.phone)
         let otherOpen = try await sizes(tmux)
-        #expect(otherOpen == (sized ? "@0:150x44 @1:60x20" : before), "the current window is left alone")
+        #expect(otherOpen == "@0:150x44 @1:60x20", "the current window is left alone")
         await other.release()
         let otherReleased = try await sizes(tmux)
         #expect(otherReleased == "@0:150x44 @1:150x44")
 
         let current = try await attacher.open(terminalID: "tmux:%0", size: Self.phone)
         let currentOpen = try await sizes(tmux)
-        #expect(currentOpen == (sized ? "@0:60x20 @1:150x44" : before))
+        #expect(currentOpen == "@0:60x20 @1:150x44")
         try await current.resize(to: TerminalSize(columns: 50, rows: 18, pixelWidth: 0, pixelHeight: 0))
         let resized = try await sizes(tmux)
-        #expect(resized == (sized ? "@0:50x18 @1:150x44" : before))
+        #expect(resized == "@0:50x18 @1:150x44")
         await current.release()
         let released = try await sizes(tmux)
         #expect(released == "@0:150x44 @1:150x44", "the current window comes back")
+        let options = try await windowSizeOptions(tmux)
+        #expect(options == "@0:- @1:-", "tmux sizes both windows again")
       }
     }
 
@@ -345,16 +402,16 @@
     @Test("with a desk attached, a window it is not viewing comes back at its own size")
     func handBackWithADesk() async throws {
       try await withLiveServer { control, tmux in
-        let sized = try await sizesOneWindow(tmux)
         let desk = try await Desk(
           binaryPath: control.binaryPath, target: "probe", columns: 150, rows: 45, tmux: tmux)
         defer { Task { await desk.close() } }
         #expect(try await sizes(tmux) == "@0:150x44 @1:150x44")
 
         let bridge = try await attacher(control).open(terminalID: "tmux:%1", size: Self.phone)
-        #expect(try await sizes(tmux) == (sized ? "@0:150x44 @1:60x20" : "@0:150x44 @1:150x44"))
+        #expect(try await sizes(tmux) == "@0:150x44 @1:60x20")
         await bridge.release()
         #expect(try await sizes(tmux) == "@0:150x44 @1:150x44", "back with the desk on @0")
+        #expect(try await windowSizeOptions(tmux) == "@0:- @1:-")
 
         try await desk.resize(columns: 170, rows: 41)
         try await desk.keys("026e")
@@ -367,7 +424,6 @@
     @Test("two controllers on one window: the newest size holds, and the first comes back")
     func twoControllers() async throws {
       try await withLiveServer { control, tmux in
-        let sized = try await sizesOneWindow(tmux)
         let desk = try await Desk(
           binaryPath: control.binaryPath, target: "probe", columns: 150, rows: 45, tmux: tmux)
         defer { Task { await desk.close() } }
@@ -375,11 +431,45 @@
         let first = try await attacher.open(terminalID: "tmux:%1", size: Self.phone)
         let second = try await attacher.open(
           terminalID: "tmux:%1", size: TerminalSize(columns: 50, rows: 18, pixelWidth: 0, pixelHeight: 0))
-        #expect(try await sizes(tmux) == (sized ? "@0:150x44 @1:50x18" : "@0:150x44 @1:150x44"))
+        #expect(try await sizes(tmux) == "@0:150x44 @1:50x18")
         await second.release()
-        #expect(try await sizes(tmux) == (sized ? "@0:150x44 @1:60x20" : "@0:150x44 @1:150x44"))
+        #expect(try await sizes(tmux) == "@0:150x44 @1:60x20")
         await first.release()
         #expect(try await sizes(tmux) == "@0:150x44 @1:150x44")
+        #expect(try await windowSizeOptions(tmux) == "@0:- @1:-")
+      }
+    }
+
+    /// The cost the owner accepted for sizing on 3.2 (#115). A client that goes before its
+    /// hand-back, as on a dropped link, leaves the window at the phone's size. On 3.3 and later
+    /// the desk takes it over when it views it. Before 3.3 `resize-window` left it `manual`, so
+    /// it stays at the phone's size until `window-size` is unset. Measured on 3.7c and 3.2a.
+    @Test("a client gone before its hand-back leaves the window to the desk, or manual before 3.3")
+    func droppedLink() async throws {
+      try await withLiveServer { control, tmux in
+        let takes = try await takesWindowSizes(tmux)
+        let desk = try await Desk(
+          binaryPath: control.binaryPath, target: "probe", columns: 150, rows: 45, tmux: tmux)
+        defer { Task { await desk.close() } }
+        let bridge = try await attacher(control).open(terminalID: "tmux:%1", size: Self.phone)
+        let collected = Collector(bridge.output)
+        #expect(try await sizes(tmux) == "@0:150x44 @1:60x20")
+
+        let clients = try await tmux("list-clients -F '#{client_control_mode} #{client_name}'")
+        let name = try #require(
+          clients.split(separator: "\n").first { $0.hasPrefix("1 ") }?.dropFirst(2))
+        _ = try await tmux("detach-client -t \(shellQuoted(String(name)))")
+        #expect(await collected.eventually { $0.end != nil }, "the client went")
+        await bridge.release()
+
+        try await desk.keys("026e")
+        let viewed = takes ? "@0:150x44 @1:150x44" : "@0:150x44 @1:60x20"
+        #expect(try await sizes(tmux, settlingAt: viewed) == viewed)
+        #expect(try await windowSizeOptions(tmux) == (takes ? "@0:- @1:-" : "@0:- @1:manual"))
+        if !takes {
+          _ = try await tmux("set-option -w -u -t @1 window-size")
+          #expect(try await sizes(tmux, settlingAt: "@0:150x44 @1:150x44") == "@0:150x44 @1:150x44")
+        }
       }
     }
 
@@ -387,16 +477,16 @@
     /// sizes `@1`, under each `window-size`.
     ///
     /// Before 3.3 the attach line's client size would hold every window in the session, so 3.2a
-    /// gets `@W:` first and skips it, and the desk is in charge in every mode. On 3.3 and later the
-    /// client size is the current window's, which holds `@0` when the desk grows past it under
-    /// `smallest` and shrinks past it under `largest`: the limit `TmuxAttacher`'s comment records.
-    /// `latest` follows the desk.
+    /// gets `@W:` first and skips it, and the desk is in charge of `@0` in every mode, while
+    /// `resize-window` holds `@1`. On 3.3 and later the client size is the current window's, which
+    /// holds `@0` when the desk grows past it under `smallest` and shrinks past it under
+    /// `largest`: the limit `TmuxAttacher`'s comment records. `latest` follows the desk.
     @Test(
       "a desk that grows and shrinks keeps its window, except where the client size holds it",
       arguments: ["latest", "smallest", "largest"])
     func deskResizesUnderEachWindowSize(mode: String) async throws {
       try await withLiveServer { control, tmux in
-        let sized = try await sizesOneWindow(tmux)
+        let takes = try await takesWindowSizes(tmux)
         _ = try await tmux("set-option -g window-size \(mode)")
         let desk = try await Desk(
           binaryPath: control.binaryPath, target: "probe", columns: 150, rows: 45, tmux: tmux)
@@ -404,15 +494,15 @@
         let bridge = try await attacher(control).open(terminalID: "tmux:%1", size: Self.phone)
         let collected = Collector(bridge.output)
         #expect(await collected.eventually { $0.text.contains("\u{1B}[") }, "the pane opened")
-        let phone = sized ? "@1:60x20" : "@1:150x44"
+        let phone = "@1:60x20"
 
         try await desk.resize(columns: 200, rows: 51)
-        let grownDesk = sized && mode == "smallest" ? "@0:150x44" : "@0:200x50"
+        let grownDesk = takes && mode == "smallest" ? "@0:150x44" : "@0:200x50"
         let grown = try await sizes(tmux, settlingAt: "\(grownDesk) \(phone)")
         #expect(grown == "\(grownDesk) \(phone)", "grown under \(mode)")
 
         try await desk.resize(columns: 120, rows: 31)
-        let shrunkDesk = sized && mode == "largest" ? "@0:150x44" : "@0:120x30"
+        let shrunkDesk = takes && mode == "largest" ? "@0:150x44" : "@0:120x30"
         let shrunk = try await sizes(tmux, settlingAt: "\(shrunkDesk) \(phone)")
         #expect(shrunk == "\(shrunkDesk) \(phone)", "shrunk under \(mode)")
         await bridge.release()
@@ -429,7 +519,6 @@
       arguments: ["join-pane -d -s %1 -t %2", "move-window -d -s @1 -t other:"])
     func movedToAnotherSession(move: String) async throws {
       try await withLiveServer { control, tmux in
-        let sized = try await sizesOneWindow(tmux)
         try await newSession("other", tmux)
         _ = try await tmux("respawn-pane -k -t %1 cat")
         let bridge = try await attacher(control).open(terminalID: "tmux:%1", size: Self.phone)
@@ -442,7 +531,7 @@
           "painted again, from the other session's client")
         #expect(try await tmux("display-message -p -t %1 '#{session_name}'") == "other")
         let window = try await tmux("display-message -p -t %1 '#{window_width}x#{window_height}'")
-        #expect(window == (sized ? "60x20" : "150x44"))
+        #expect(window == "60x20")
 
         _ = try await tmux("send-keys -t %1 -l moved-and-heard")
         #expect(await collected.eventually { $0.text.contains("moved-and-heard") })

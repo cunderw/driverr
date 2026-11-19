@@ -8,9 +8,11 @@ import Foundation
 ///
 /// Like tmux, it runs a line's commands in order and skips the rest after one fails.
 ///
-/// **Window sizes are modelled as tmux 3.7c keeps them with a desk attached that views none of
-/// the windows**: `refresh-client -C @W:CxR` sizes `@W`, and `@W:` alone hands it back without
-/// changing its size. Every window starts at `150x43`.
+/// **Window sizes are modelled as tmux keeps them with a desk attached that views none of the
+/// windows**: `refresh-client -C @W:CxR` sizes `@W`, and `@W:` alone hands it back without
+/// changing its size, as on 3.7c. `resize-window -x C -y R -t @W` sizes `@W` and sets its
+/// `window-size` to `manual`, and `set-option -w -u -t @W window-size` unsets it without changing
+/// its size, as on 3.2a. Every window starts at `150x43`.
 ///
 /// In `Sources` under `#if DEBUG`, as `FakeTmuxHost` is, so `DriverrTests` can drive the real
 /// `TmuxAttacher` through a scene with it.
@@ -36,6 +38,8 @@ final class FakeTmuxControlStream: HerdrStream, @unchecked Sendable {
   /// What tmux answers a window size with, while it refuses them, and how many more it refuses.
   private var windowSizeRefusal: (message: String, remaining: Int)?
   private var windowSizes: [String: String] = [:]
+  /// The windows `resize-window` left at `window-size manual`.
+  private var manualWindows: Set<String> = []
   /// Lines that wait for `resumeHeld()`: the first one holding `heldText`, and every line after.
   private var heldText: String?
   private var held: [String] = []
@@ -66,8 +70,8 @@ final class FakeTmuxControlStream: HerdrStream, @unchecked Sendable {
   var closeCount: Int { lock.withLock { closes } }
   func keys(for pane: String) -> Data { lock.withLock { typed[pane] ?? Data() } }
 
-  /// Window sizes are refused with `message`, as tmux before 3.3 refuses every one, `times`
-  /// times.
+  /// `refresh-client -C @W:…` is refused with `message`, `times` times. The default is how tmux
+  /// before 3.3 refuses every one.
   func refuseWindowSizes(with message: String = "bad size argument", times: Int = .max) {
     lock.withLock { windowSizeRefusal = (message, times) }
   }
@@ -75,6 +79,11 @@ final class FakeTmuxControlStream: HerdrStream, @unchecked Sendable {
   /// The size tmux would report for `window`.
   func size(of window: String) -> String? {
     lock.withLock { windowSizes[window] ?? (isWindow(window) ? Self.windowSize : nil) }
+  }
+
+  /// Whether `resize-window` left `window` at `window-size manual`, and nothing unset it since.
+  func isSizedByHand(_ window: String) -> Bool {
+    lock.withLock { manualWindows.contains(window) }
   }
 
   /// The size every window has until someone sizes it.
@@ -206,6 +215,29 @@ final class FakeTmuxControlStream: HerdrStream, @unchecked Sendable {
         if parts.count == 2, !parts[1].isEmpty, isWindow(String(parts[0])) {
           windowSizes[String(parts[0])] = String(parts[1])
         }
+        return ([], false)
+      }
+    case "resize-window":
+      // `resize-window -x C -y R -t @W`, and nothing else.
+      guard words.count == 7, words[1] == "-x", words[3] == "-y", words[5] == "-t",
+        Int(words[2]) != nil, Int(words[4]) != nil
+      else { return (["usage: resize-window"], true) }
+      let window = words[6]
+      return lock.withLock {
+        guard isWindow(window) else { return (["can't find window: \(window)"], true) }
+        windowSizes[window] = "\(words[2])x\(words[4])"
+        manualWindows.insert(window)
+        return ([], false)
+      }
+    case "set-option":
+      // `set-option -w -u -t @W window-size`, and nothing else. No desk views the window, so it
+      // keeps its size.
+      guard words.count == 6, words[1] == "-w", words[2] == "-u", words[3] == "-t",
+        words[5] == "window-size"
+      else { return (["usage: set-option"], true) }
+      return lock.withLock {
+        guard isWindow(words[4]) else { return (["can't find window: \(words[4])"], true) }
+        manualWindows.remove(words[4])
         return ([], false)
       }
     case "send-keys":

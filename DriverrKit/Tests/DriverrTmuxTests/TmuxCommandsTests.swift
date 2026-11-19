@@ -67,6 +67,12 @@ struct TmuxLabelTests {
 struct TmuxCommandsTests {
   private let tmux = "tmux"
   private let pane = "'%3'"
+  /// What `input` and `keys` take: the raw id, which also goes inside a tmux command.
+  private let rawPane = "%3"
+  /// What every send starts with: leaving any mode the pane is in. See `leaveModes`.
+  private var leave: String {
+    "if-shell -F -t '%3' '#{pane_in_mode}' 'copy-mode -q -t %3' " + backslash + "; "
+  }
 
   @Test("the listing is one list-panes -a with the format quoted, then list-clients")
   func listPanes() {
@@ -77,26 +83,26 @@ struct TmuxCommandsTests {
     #expect(command.contains(TmuxPaneFormat.delimiter))
   }
 
-  @Test("typed text is literal, after --, and sends no Enter")
+  @Test("typed text leaves any mode, then is literal, after --, and sends no Enter")
   func typed() {
     #expect(
-      TmuxCommands.input(binary: tmux, pane: pane, text: "hello world", submit: false)
-        == "tmux send-keys -t '%3' -l -- 'hello world'")
+      TmuxCommands.input(binary: tmux, pane: rawPane, text: "hello world", submit: false)
+        == "tmux " + leave + "send-keys -t '%3' -l -- 'hello world'")
   }
 
-  @Test("a submit is send-keys -l then send-keys Enter, in one invocation")
+  @Test("a submit leaves any mode, then is send-keys -l and send-keys Enter, in one invocation")
   func submitted() {
     #expect(
-      TmuxCommands.input(binary: tmux, pane: pane, text: "yes", submit: true)
-        == "tmux send-keys -t '%3' -l -- yes " + backslash + "; send-keys -t '%3' Enter")
+      TmuxCommands.input(binary: tmux, pane: rawPane, text: "yes", submit: true)
+        == "tmux " + leave + "send-keys -t '%3' -l -- yes " + backslash + "; send-keys -t '%3' Enter")
   }
 
   @Test("an empty submit is only Enter, and empty text with no submit is nothing")
   func empty() {
     #expect(
-      TmuxCommands.input(binary: tmux, pane: pane, text: "", submit: true)
-        == "tmux send-keys -t '%3' Enter")
-    #expect(TmuxCommands.input(binary: tmux, pane: pane, text: "", submit: false) == nil)
+      TmuxCommands.input(binary: tmux, pane: rawPane, text: "", submit: true)
+        == "tmux " + leave + "send-keys -t '%3' Enter")
+    #expect(TmuxCommands.input(binary: tmux, pane: rawPane, text: "", submit: false) == nil)
   }
 
   @Test("a reply's trailing newlines and spaces are trimmed, and its inside is left")
@@ -110,9 +116,10 @@ struct TmuxCommandsTests {
   @Test("each key is its own tmux call, chained so the first refusal stops the rest")
   func keys() {
     #expect(
-      TmuxCommands.keys(binary: tmux, pane: pane, keys: [.up, .enter])
-        == "tmux send-keys -t '%3' Up && tmux send-keys -t '%3' Enter")
-    #expect(TmuxCommands.keys(binary: tmux, pane: pane, keys: []) == nil)
+      TmuxCommands.keys(binary: tmux, pane: rawPane, keys: [.up, .enter])
+        == "tmux " + leave + "send-keys -t '%3' Up && tmux send-keys -t '%3' Enter",
+      "the first call leaves any mode")
+    #expect(TmuxCommands.keys(binary: tmux, pane: rawPane, keys: []) == nil)
   }
 
   @Test("every key has a tmux name, and a character is typed, not named")
@@ -129,8 +136,8 @@ struct TmuxCommandsTests {
       #expect(!TmuxCommands.key(key).name.isEmpty)
     }
     #expect(
-      TmuxCommands.keys(binary: tmux, pane: pane, keys: [.yes])
-        == "tmux send-keys -t '%3' -l -- y")
+      TmuxCommands.keys(binary: tmux, pane: rawPane, keys: [.yes])
+        == "tmux " + leave + "send-keys -t '%3' -l -- y")
   }
 
   /// DriverrHerdr spells the tmux prefix itself, because it cannot import this module. A real
@@ -233,8 +240,8 @@ struct TmuxCommandsTests {
   @Test("typed text is not format-escaped, because send-keys -l expands nothing")
   func typedHash() {
     #expect(
-      TmuxCommands.input(binary: tmux, pane: pane, text: "#S ##", submit: false)
-        == "tmux send-keys -t '%3' -l -- '#S ##'")
+      TmuxCommands.input(binary: tmux, pane: rawPane, text: "#S ##", submit: false)
+        == "tmux " + leave + "send-keys -t '%3' -l -- '#S ##'")
   }
 
   @Test("a new window and a new session print the id of the pane they make")
@@ -279,9 +286,12 @@ struct TmuxCommandsTests {
       for text in Self.hostile {
         for submit in [false, true] {
           let command = try #require(
-            TmuxCommands.input(binary: shellQuoted(stub), pane: shellQuoted("%3"), text: text, submit: submit))
+            TmuxCommands.input(binary: shellQuoted(stub), pane: "%3", text: text, submit: submit))
           let commands = try await read(command)
-          var expected = [["send-keys", "-t", "%3", "-l", "--", text]]
+          var expected = [
+            ["if-shell", "-F", "-t", "%3", "#{pane_in_mode}", "copy-mode -q -t %3"],
+            ["send-keys", "-t", "%3", "-l", "--", text],
+          ]
           if submit { expected.append(["send-keys", "-t", "%3", "Enter"]) }
           #expect(commands == expected, "text: \(text.debugDescription), submit: \(submit)")
         }
@@ -349,11 +359,16 @@ struct TmuxCommandsTests {
       let stub = try LocalShell.argumentPrinter(in: directory)
 
       let command = try #require(
-        TmuxCommands.keys(binary: shellQuoted(stub), pane: shellQuoted("%3"), keys: [.down, .enter, .yes]))
+        TmuxCommands.keys(binary: shellQuoted(stub), pane: "%3", keys: [.down, .enter, .yes]))
       let result = try await LocalShell.runner(command)
       #expect(result.exitStatus == 0)
       let calls = result.standardOutput.split(separator: "\0").map(String.init)
-      #expect(calls == ["send-keys", "-t", "%3", "Down", "send-keys", "-t", "%3", "Enter", "send-keys", "-t", "%3", "-l", "--", "y"])
+      #expect(
+        calls == [
+          "if-shell", "-F", "-t", "%3", "#{pane_in_mode}", "copy-mode -q -t %3", ";",
+          "send-keys", "-t", "%3", "Down", "send-keys", "-t", "%3", "Enter",
+          "send-keys", "-t", "%3", "-l", "--", "y",
+        ])
     }
   }
 #endif
