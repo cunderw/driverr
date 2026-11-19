@@ -170,6 +170,17 @@ public actor FakeTmuxHost {
     }
   }
 
+  /// What `#{pane_title}` prints for a pane, by its number, as a program's OSC title sets it.
+  public func setTitle(of paneID: Int, _ title: String) {
+    for s in sessions.indices {
+      for w in sessions[s].windows.indices {
+        for p in sessions[s].windows[w].panes.indices where sessions[s].windows[w].panes[p].id == paneID {
+          sessions[s].windows[w].panes[p].title = title
+        }
+      }
+    }
+  }
+
   /// Claude Code's record, as the file holds it.
   public static func claudeRecord(
     pid: Int, sessionID: String, status: String, waitingFor: String? = nil,

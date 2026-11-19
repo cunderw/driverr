@@ -59,13 +59,31 @@ enum TmuxProcessTable {
   /// The pids that may be this pane's agent, most likely first: the foreground group's leader,
   /// then its other members by pid.
   static func candidates(forPaneTTY paneTTY: String, in processes: [TmuxProcess]) -> [Int] {
+    foregroundGroup(forPaneTTY: paneTTY, in: processes).map(\.pid)
+  }
+
+  /// The processes behind `candidates(forPaneTTY:in:)`, in the same order, with their commands.
+  static func foregroundGroup(
+    forPaneTTY paneTTY: String, in processes: [TmuxProcess]
+  ) -> [TmuxProcess] {
     let tty = ttyName(ofPaneTTY: paneTTY)
     guard !tty.isEmpty else { return [] }
     let onTTY = processes.filter { $0.tty == tty && $0.foregroundGroupID > 0 }
     guard let foreground = onTTY.first?.foregroundGroupID else { return [] }
-    let group = onTTY.filter { $0.groupID == foreground }.map(\.pid).sorted()
-    let ordered = group.filter { $0 == foreground } + group.filter { $0 != foreground }
+    let group = onTTY.filter { $0.groupID == foreground }.sorted { $0.pid < $1.pid }
+    let ordered = group.filter { $0.pid == foreground } + group.filter { $0.pid != foreground }
     return Array(ordered.prefix(candidateLimit))
+  }
+
+  /// Whether a process is Codex, by its command's last path component.
+  ///
+  /// Codex keeps no record that names its process, so its name is the only signal. macOS `ps`
+  /// prints `comm` as the path it was started by, which for a symlinked install is the link,
+  /// such as `/home/dev/.local/bin/codex`. Linux prints the bare name. Measured on codex
+  /// 0.164.0 on macOS, where Codex was a member of the foreground group and not its leader.
+  /// A `node` wrapper from an npm install is not measured, and does not match.
+  static func isCodex(_ process: TmuxProcess) -> Bool {
+    false
   }
 }
 

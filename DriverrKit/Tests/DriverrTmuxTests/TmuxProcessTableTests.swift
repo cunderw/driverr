@@ -106,6 +106,45 @@ struct TmuxProcessTableTests {
   }
 }
 
+@Suite("TmuxProcessTable Codex")
+struct TmuxProcessTableCodexTests {
+  private func process(_ command: String) -> TmuxProcess {
+    TmuxProcess(pid: 1, groupID: 1, foregroundGroupID: 1, tty: "ttys001", command: command)
+  }
+
+  @Test("macOS prints the path Codex was started by, and its last component is codex")
+  func macOSPath() {
+    #expect(TmuxProcessTable.isCodex(process("/home/dev/.local/bin/codex")))
+    #expect(TmuxProcessTable.isCodex(process("/opt/homebrew/bin/codex")))
+  }
+
+  @Test("Linux prints the bare name")
+  func linuxName() {
+    #expect(TmuxProcessTable.isCodex(process("codex")))
+  }
+
+  @Test("a name that only contains codex, or a wrapper, is not Codex")
+  func notCodex() {
+    for command in ["codex-helper", "/usr/bin/xcodex", "/opt/codex/bin/node", "node", "claude", ""] {
+      #expect(!TmuxProcessTable.isCodex(process(command)), "\(command)")
+    }
+  }
+
+  @Test("Codex as a member of the foreground group, not its leader, is still in it")
+  func nonLeader() {
+    let rows = TmuxProcessTable.parse(
+      """
+      100 100 200 ttys004 -zsh
+      200 200 200 ttys004 sh
+      201 200 200 ttys004 /home/dev/.local/bin/codex
+      """)
+    let group = TmuxProcessTable.foregroundGroup(forPaneTTY: "/dev/ttys004", in: rows)
+    #expect(group.map(\.pid) == [200, 201])
+    #expect(group.contains(where: TmuxProcessTable.isCodex))
+    #expect(!TmuxProcessTable.isCodex(group[0]), "the leader is not Codex")
+  }
+}
+
 @Suite("ClaudeRecordFiles")
 struct ClaudeRecordFilesTests {
   @Test("the command prints a boundary and each pid's file from Claude Code's directory, under sh -c")

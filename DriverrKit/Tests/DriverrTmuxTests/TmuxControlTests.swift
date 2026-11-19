@@ -305,6 +305,91 @@ struct TmuxControlSnapshotTests {
   }
 }
 
+@Suite("TmuxControl Codex")
+struct TmuxControlCodexTests {
+  /// One session: `%0` a shell, and `%1` with Codex in its foreground group behind a leader that
+  /// is not Codex, as measured on macOS. No Claude record anywhere.
+  private func host(
+    title: String, codex: String = "/home/dev/.local/bin/codex"
+  ) -> FakeTmuxHost {
+    FakeTmuxHost(
+      sessions: [
+        .init(
+          id: 0, name: "work", attached: 1,
+          windows: [
+            .init(
+              id: 0, index: 0, name: "codex", isActive: true,
+              panes: [
+                .init(id: 0, isActive: true),
+                .init(id: 1, title: title, command: "codex", path: "/home/dev/app"),
+              ])
+          ])
+      ],
+      processes: [
+        .init(pid: 5001, tty: "ttys100", command: "zsh"),
+        .init(pid: 6000, groupID: 6000, foregroundGroupID: 6000, tty: "ttys101", command: "sh"),
+        .init(pid: 6001, groupID: 6000, foregroundGroupID: 6000, tty: "ttys101", command: codex),
+      ]
+    )
+  }
+
+  @Test(
+    "a Codex in the pane's foreground group is Codex, with its state from the title",
+    arguments: [
+      ("[ ! ] Action Required | app", AgentStatus.blocked),
+      ("[ . ] Action Required | app", .blocked),
+      ("⠋ app", .working),
+      ("app", .idle),
+    ])
+  func codex(title: String, status: AgentStatus) async throws {
+    let tree = try await TmuxControl(run: host(title: title).runner).snapshot()
+    let pane = try #require(tree.pane(id: "tmux:%1"))
+    let agent = try #require(pane.agent)
+    #expect(agent.name == "Codex")
+    #expect(agent.kind == TranscriptAgent.codex.rawValue)
+    #expect(agent.status == status)
+    #expect(agent.session == nil, "the reader matches Codex's rollout by directory")
+    #expect(agent.blockedKind == nil, "Codex's title does not say what it waits for")
+    #expect(pane.directory == "/home/dev/app")
+    #expect(pane.title == "app", "the label does not change with the state")
+    #expect(tree.pane(id: "tmux:%0")?.agent == nil)
+  }
+
+  @Test("a Codex title with nothing after the marker names the pane Codex")
+  func bareTitle() async throws {
+    let tree = try await TmuxControl(run: host(title: "[ ! ] Action Required").runner).snapshot()
+    #expect(tree.pane(id: "tmux:%1")?.title == "Codex")
+  }
+
+  @Test("Linux's bare name is Codex too")
+  func linux() async throws {
+    let tree = try await TmuxControl(run: host(title: "⠋ app", codex: "codex").runner).snapshot()
+    #expect(tree.pane(id: "tmux:%1")?.agent?.kind == TranscriptAgent.codex.rawValue)
+  }
+
+  @Test("a Claude record in the same group wins over Codex")
+  func claudeWins() async throws {
+    let host = host(title: "[ ! ] Action Required | app")
+    await host.setRecord(
+      pid: 6000, FakeTmuxHost.claudeRecord(pid: 6000, sessionID: "s-1", status: "busy"))
+    let agent = try await TmuxControl(run: host.runner).snapshot().pane(id: "tmux:%1")?.agent
+    #expect(agent?.kind == TranscriptAgent.claude.rawValue)
+    #expect(agent?.status == .working)
+  }
+
+  @Test("Codex is still found when the read of Claude's records throws")
+  func recordsFail() async throws {
+    let host = host(title: "[ ! ] Action Required | app")
+    let control = TmuxControl(run: { command in
+      if command.contains(ClaudeRecordFiles.marker) {
+        throw AppError.channelFailed(reason: "dropped")
+      }
+      return try await host.runner(command)
+    })
+    #expect(try await control.snapshot().blockedPanes.map(\.id) == ["tmux:%1"])
+  }
+}
+
 @Suite("TmuxControl input")
 struct TmuxControlInputTests {
   @Test("typed text arrives as typed, whatever it holds")
