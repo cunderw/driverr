@@ -174,6 +174,7 @@ struct NewAgentSheet: View {
         folderSection
         if !model.recentFolders.isEmpty { recentSection }
         promptSection
+        if case .failed(let error) = model.phase { failureSection(error) }
         startSection
       }
       .navigationTitle("New Agent")
@@ -283,6 +284,26 @@ struct NewAgentSheet: View {
     .disabled(model.isStarting)
   }
 
+  /// What the last start said, above the button. In its own section: a row under the clear
+  /// button row drew its card flush against the button.
+  private func failureSection(_ error: AppError) -> some View {
+    Section {
+      RowProblemLabel(
+        error.errorDescription ?? "The agent could not be started.",
+        systemImage: "xmark.octagon"
+      )
+      .accessibilityIdentifier("newAgent.error")
+      if let pane = model.paneLeftOpen {
+        Button {
+          model.openPaneLeftOpen()
+        } label: {
+          Label("Open \(pane.place)", systemImage: "terminal")
+        }
+        .accessibilityIdentifier("newAgent.openPane")
+      }
+    }
+  }
+
   private var startSection: some View {
     Section {
       Button {
@@ -306,21 +327,6 @@ struct NewAgentSheet: View {
       .listRowBackground(Color.clear)
       .accessibilityIdentifier("newAgent.start")
 
-      if case .failed(let error) = model.phase {
-        RowProblemLabel(
-          error.errorDescription ?? "The agent could not be started.",
-          systemImage: "xmark.octagon"
-        )
-        .accessibilityIdentifier("newAgent.error")
-        if let pane = model.paneLeftOpen {
-          Button {
-            model.openPaneLeftOpen()
-          } label: {
-            Label("Open \(pane.place)", systemImage: "terminal")
-          }
-          .accessibilityIdentifier("newAgent.openPane")
-        }
-      }
     } footer: {
       Text(
         "Starting can take several seconds. If \(model.form.kind.displayName) is not installed on \(model.hostName), the new pane shows the shell’s error."
