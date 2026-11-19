@@ -53,8 +53,9 @@ final class NewAgentModel {
 
   var isStarting: Bool { phase == .starting }
 
-  /// Whether Start can be tapped now.
-  var canStart: Bool { form.canStart && !isStarting }
+  /// Whether Start can be tapped now. Not while a pane a start left open is on offer: a second
+  /// tap would open a second pane. A change to the form clears that failure and allows it.
+  var canStart: Bool { form.canStart && !isStarting && paneLeftOpen == nil }
 
   /// Starts the agent the form describes, then opens its pane. A failure stays on the sheet.
   func startAgent() async {
@@ -230,7 +231,8 @@ struct NewAgentSheet: View {
     } header: {
       Text("Folder")
     } footer: {
-      Text("The agent starts in a new workspace named after the folder.")
+      // Backend-neutral: herdr opens a workspace, a core a space and tmux a window.
+      Text("The agent starts in a new terminal named after the folder.")
     }
     .disabled(model.isStarting)
   }
@@ -312,20 +314,28 @@ struct NewAgentSheet: View {
         HStack {
           Spacer()
           if model.isStarting {
+            // Words beside the spinner, because a start can take about 13 s and a bare
+            // spinner says nothing to VoiceOver. `Color.secondary`, not `.secondary`, which
+            // blends with the button's tint.
             ProgressView()
-              .accessibilityIdentifier("newAgent.starting")
+            Text("Starting \(model.form.kind.displayName)…")
+              .foregroundStyle(Color.secondary)
           } else {
             ProminentButtonLabel("Start \(model.form.kind.displayName)")
           }
           Spacer()
         }
+        // One element, read as its words.
+        .accessibilityElement(children: .combine)
       }
       .buttonStyle(.borderedProminent)
       .controlSize(.large)
       .disabled(!model.canStart)
       .listRowInsets(EdgeInsets())
       .listRowBackground(Color.clear)
-      .accessibilityIdentifier("newAgent.start")
+      // On the button, never inside it: a container's identifier overwrites its children's
+      // (CLAUDE.md, "Test traps"). The name follows the state, so a test can wait for either.
+      .accessibilityIdentifier(model.isStarting ? "newAgent.starting" : "newAgent.start")
 
     } footer: {
       Text(

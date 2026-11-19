@@ -382,7 +382,8 @@ struct AppEnvironment {
   static var agentStartBehaviour: FakeControl.AgentStartBehaviour {
     let arguments = ProcessInfo.processInfo.arguments
     if arguments.contains("-uiTestingAgentDidNotStart") {
-      return .leavesPaneOpen(reason: "timed out waiting for agent startup")
+      // Worded as `CLIControl` words herdr's own answer.
+      return .leavesPaneOpen(reason: "herdr said: timed out waiting for agent startup.")
     }
     if arguments.contains("-uiTestingAgentFolderRefused") { return .refusesFolder }
     if arguments.contains("-uiTestingSlowAgentStart") { return .starts(after: .seconds(4)) }

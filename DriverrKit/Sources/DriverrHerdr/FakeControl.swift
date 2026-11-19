@@ -159,8 +159,8 @@ public actor FakeControl: HerdrControl {
   public enum AgentStartBehaviour: Sendable {
     /// Lists the pane after `after`, as a TUI that waits for the agent does.
     case starts(after: Duration)
-    /// Lists the pane and then reports that the agent did not start in it, with `reason`, as
-    /// herdr's TUI does for a missing program.
+    /// Lists the pane with no agent in it, then reports that the agent did not start there,
+    /// with `reason`, as herdr's TUI does for a missing program.
     case leavesPaneOpen(reason: String)
     /// Refuses the folder, as every backend does when the folder does not resolve.
     case refusesFolder
@@ -443,6 +443,8 @@ public actor FakeControl: HerdrControl {
     case .refusesFolder: throw AppError.directoryUnavailable(path: launch.directory)
     case .starts, .leavesPaneOpen: break
     }
+    let isLeftOpen: Bool
+    if case .leavesPaneOpen = agentStart { isLeftOpen = true } else { isLeftOpen = false }
     let workspaceID = "agent\(agentLaunches.count)"
     let tabID = workspaceID + ":t1"
     let paneID = workspaceID + ":p1"
@@ -451,7 +453,9 @@ public actor FakeControl: HerdrControl {
       tabID: tabID,
       workspaceID: workspaceID,
       title: launch.kind.command,
-      agent: Agent(name: launch.kind.command, kind: launch.kind.command, status: .idle),
+      // A missing program leaves a shell, so a pane left open has no agent.
+      agent: isLeftOpen
+        ? nil : Agent(name: launch.kind.command, kind: launch.kind.command, status: .idle),
       terminalID: "term_" + workspaceID,
       directory: launch.directory
     )

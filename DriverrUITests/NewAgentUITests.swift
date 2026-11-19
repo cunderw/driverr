@@ -19,8 +19,9 @@ final class NewAgentUITests: XCTestCase {
     continueAfterFailure = false
   }
 
+  /// Slow, so the start's own state is on screen long enough to read, as on herdr's TUI.
   func testTheBrowserPicksAFolderAndStartOpensThePane() {
-    let app = connectedHostApp()
+    let app = connectedHostApp(["-uiTestingSlowAgentStart"])
     openSheet(app)
 
     waitFor(app, "newAgent.browse", "Expected Browse Folders").tap()
@@ -39,7 +40,11 @@ final class NewAgentUITests: XCTestCase {
     XCTAssertTrue(start.label.contains("Claude Code"), "Unexpected Start label: \(start.label)")
     start.tap()
 
-    requireGone(app, "newAgent.start", "A start did not take the sheet down", timeout: 15)
+    let starting = waitFor(app, "newAgent.starting", "Expected the start's progress")
+    XCTAssertTrue(starting.label.contains("Starting Claude Code"), "Unexpected progress: \(starting.label)")
+    XCTAssertFalse(element(app, "newAgent.cancel").isEnabled, "Cancel was offered while a start was out")
+
+    requireGone(app, "newAgent.starting", "A start did not take the sheet down", timeout: 15)
     waitForPaneScene(app, "Expected the started agent's pane to open")
     leavePaneScene(app)
   }
@@ -100,11 +105,24 @@ final class NewAgentUITests: XCTestCase {
     XCTAssertTrue(error.label.contains("did not start"), "Unexpected failure: \(error.label)")
     let open = scrollIntoReach(app, "newAgent.openPane")
     XCTAssertTrue(open.label.contains("Open driverr"), "Unexpected button: \(open.label)")
+    // A second start would open a second pane.
+    XCTAssertFalse(
+      scrollIntoReach(app, "newAgent.start").isEnabled, "Start was offered beside the pane left open")
     open.tap()
 
     requireGone(app, "newAgent.openPane", "Open did not take the sheet down", timeout: 15)
     waitForPaneScene(app, "Expected the pane the start left open")
     leavePaneScene(app)
+  }
+
+  /// A host with nothing open offers New Agent in its empty state too.
+  func testTheEmptySessionRowOpensTheSheet() {
+    let app = connectedHostApp(["-uiTestingEmptyCore"])
+    waitFor(app, "session.newAgent", "Expected New Agent in the empty session", timeout: 15).tap()
+    waitFor(app, "newAgent.folder", "Expected the New Agent sheet")
+    XCTAssertFalse(element(app, "newAgent.recent").exists, "An empty session offered recent folders")
+    waitFor(app, "newAgent.cancel", "Expected Cancel").tap()
+    requireGone(app, "newAgent.folder", "Cancel did not close the sheet")
   }
 
   // MARK: - Helpers
