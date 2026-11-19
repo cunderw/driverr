@@ -6,9 +6,10 @@ import Foundation
 ///
 /// One exec channel per request, over the same `CommandRunner`. tmux has no `-F` listing for
 /// an agent, so the snapshot joins three reads: the panes, the host's process table and
-/// Claude Code's own record of each foreground process. Codex keeps no record, so a Codex pane
-/// comes from its process's name and its state from the pane's title. See `TmuxProcessTable`
-/// and `CodexTitle`.
+/// Claude Code's own record of each foreground process. Claude's folder-trust dialog writes no
+/// record, so a fourth read, of the screen, runs only for a pane that Claude leads with no
+/// record. Codex keeps no record, so a Codex pane comes from its process's name and its state
+/// from the pane's title. See `TmuxProcessTable`, `ClaudeTrustDialog` and `CodexTitle`.
 ///
 /// Ids are `TmuxID`'s: `tmux:%3` for a pane, `tmux:@2` for a window and `tmux:$1` for a
 /// session. They map to `Pane`, `Tab` and `Workspace` ids, so a tmux pane is told apart by its
@@ -132,7 +133,7 @@ public struct TmuxControl: HerdrControl {
     // has a tree.
     let table = try? await run(TmuxProcessTable.command)
     let processes = table.flatMap { $0.succeeded ? TmuxProcessTable.parse($0.standardOutput) : nil }
-    let agents = try await agents(forRows: rows, processes: processes)
+    let agents = await agents(forRows: rows, processes: processes)
     let claims = await mirrorClaims(
       forRows: rows, clientPIDs: TmuxClientFormat.pids(from: output), processes: processes)
     try Task.checkCancellation()
@@ -161,10 +162,14 @@ public struct TmuxControl: HerdrControl {
 
   /// The agent in each pane, by raw pane id. A failed process table leaves every pane a shell.
   /// A failed read of Claude's records leaves Claude's panes shells and still finds Codex.
+  ///
+  /// A pane that Claude leads, whose every pid came back with no record, has its screen read
+  /// for the folder-trust dialog, in one command for all of them. A failed read leaves those
+  /// panes shells.
   private func agents(
     forRows rows: [TmuxPaneRow],
     processes: [TmuxProcess]?
-  ) async throws -> [String: Agent] {
+  ) async -> [String: Agent] {
     guard let processes else { return [:] }
 
     var candidates: [String: [Int]] = [:]
@@ -191,13 +196,25 @@ public struct TmuxControl: HerdrControl {
       }
     }
 
-    // NAIVE (#122 red run): every pane's screen, and the dialog overrides anything.
-    let naive = rows.map { (id: $0.paneID, quoted: shellQuoted($0.paneID)) }
-    let result = try await run(TmuxCommands.readPanes(binary: binary, panes: naive))
-    let screens = TmuxCommands.panes(
-      from: result.standardOutput, ids: naive.map(\.id), lines: Int.max)
-    for (id, lines) in screens where ClaudeTrustDialog.isShowing(lines) {
-      agents[id] = Agent(name: "Claude", kind: TranscriptAgent.claude.rawValue, status: .blocked)
+    // The trust dialog writes no record. "No record" has to be what the read said, so a read
+    // that failed, or a file that would not parse, never sends a pane's screen to the matcher.
+    let unrecorded = rows.filter { row in
+      guard agents[row.paneID] == nil, let pids = candidates[row.paneID], let contents
+      else { return false }
+      let group = TmuxProcessTable.foregroundGroup(forPaneTTY: row.tty, in: processes)
+      return TmuxProcessTable.isClaudeLed(group)
+        && pids.allSatisfy { ClaudeRecordFiles.isMissing(contents[$0]) }
+    }
+    .map { (id: $0.paneID, quoted: shellQuoted($0.paneID)) }
+    if !unrecorded.isEmpty,
+      let screens = try? await run(TmuxCommands.readPanes(binary: binary, panes: unrecorded))
+    {
+      let read = TmuxCommands.panes(
+        from: screens.standardOutput, ids: unrecorded.map(\.id), lines: Int.max)
+      for (paneID, lines) in read where ClaudeTrustDialog.isShowing(lines) {
+        agents[paneID] = Agent(
+          name: "Claude", kind: TranscriptAgent.claude.rawValue, status: .blocked)
+      }
     }
 
     // Codex keeps no record of its process, so its name in the foreground group makes the agent

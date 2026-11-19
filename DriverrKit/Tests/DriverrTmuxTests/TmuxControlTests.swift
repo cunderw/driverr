@@ -238,7 +238,7 @@ struct TmuxControlSnapshotTests {
     #expect(try await TmuxControl(run: host.runner).snapshot().blockedPanes.count == 1)
   }
 
-  @Test("a pane with no record has no agent, even if claude runs in it")
+  @Test("a pane with no record and no trust dialog has no agent, even if claude runs in it")
   func missingRecord() async throws {
     let host = FakeTmuxHost.seeded()
     await host.setRecord(pid: 5002, nil)
