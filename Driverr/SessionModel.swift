@@ -311,7 +311,8 @@ final class SessionModel {
   /// `created` event. `terminalArrivalLimit` bounds it. A terminal later than that opens nothing:
   /// the row it gets is the answer, and a scene that opened by itself would take over the screen.
   func startTerminal() async -> String? {
-    guard terminalStart != .starting else { return nil }
+    // An agent start's wait holds the one slot. See `startAgent(_:)`.
+    guard terminalStart != .starting, !isStartingAgent else { return nil }
     terminalStart = .starting
     do {
       let id = try await control.startTerminal()
@@ -329,6 +330,51 @@ final class SessionModel {
       terminalStart = .failed(.herdrCommandFailed(reason: "The host could not be reached."))
     }
     return nil
+  }
+
+  // MARK: - Starting an agent
+
+  /// Whether this host can start a coding agent. See `HerdrControl.canStartAgent`.
+  var canStartAgent: Bool { control.canStartAgent }
+
+  /// Whether an agent start is out, from the call to the end of its wait.
+  @ObservationIgnored private var isStartingAgent = false
+
+  /// Starts an agent and answers with its pane id once a scene can open it.
+  ///
+  /// The same wait as `startTerminal()`, for the same reason, and the same bound. Unlike it, the
+  /// answer is thrown rather than kept here: the New Agent sheet shows it, and the host screen
+  /// behind the sheet must not.
+  ///
+  /// - Throws: whatever the control threw. `AppError.agentDidNotStart` is thrown after a wait
+  ///   for the pane it names, so the caller can open that pane. A start whose pane is not
+  ///   listed in time throws a failure that says the agent started, so nobody starts a second.
+  ///   A start while another start is out throws without asking the host, because the wait
+  ///   holds one pane at a time.
+  func startAgent(_ launch: AgentLaunch) async throws -> String {
+    guard !isStartingAgent, terminalStart != .starting else {
+      throw AppError.herdrCommandFailed(reason: "Another start is still running on this host.")
+    }
+    isStartingAgent = true
+    defer { isStartingAgent = false }
+
+    let id: String
+    do {
+      id = try await control.startAgent(launch)
+    } catch AppError.agentDidNotStart(let paneID, let place, let reason) {
+      await arrival(of: paneID)
+      throw AppError.agentDidNotStart(paneID: paneID, place: place, reason: reason)
+    } catch let error as AppError {
+      throw error
+    } catch {
+      throw AppError.herdrCommandFailed(reason: "The host could not be reached.")
+    }
+    await arrival(of: id)
+    guard reportedTree.pane(id: id) != nil else {
+      throw AppError.herdrCommandFailed(
+        reason: "The agent started, but the session has not listed its pane yet. It will show on the host screen.")
+    }
+    return id
   }
 
   /// Returns when `id` is in `reportedTree` or the limit has passed. `load` does the waking.

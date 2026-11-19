@@ -68,6 +68,18 @@ public struct DirectoryListing: Hashable, Sendable {
     return shellQuoted(path)
   }
 
+  /// Lists `path` through `run`: `command(for:)`, sent once, then `parse(_:requestedPath:)`.
+  ///
+  /// `run` must hand the command to the login shell as it is. The command already carries its
+  /// own `sh -c`, so a runner that wraps again, such as `SSHTransport.posixRunner`, sends it
+  /// twice.
+  ///
+  /// - Throws: `AppError.directoryUnavailable` for a folder that cannot be entered, and
+  ///   whatever `run` throws.
+  public static func read(_ path: String, run: CommandRunner) async throws -> DirectoryListing {
+    try parse(try await run(command(for: path)), requestedPath: path)
+  }
+
   /// Reads the output of `command(for:)`.
   ///
   /// - Throws: `AppError.directoryUnavailable` when the output holds no marker and path: the

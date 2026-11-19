@@ -504,6 +504,13 @@ public struct CLIControl: HerdrControl {
     return max(1, min(requested, viewportRows))
   }
 
+  /// herdr's own message as the end of a sentence of Driverr's. It is lower case and has no
+  /// full stop, so it is named as herdr's: "herdr said: timed out waiting for agent startup."
+  static func attributed(_ message: String) -> String {
+    let trimmed = message.trimmingCharacters(in: .whitespacesAndNewlines)
+    return "herdr said: \(trimmed)" + (trimmed.hasSuffix(".") ? "" : ".")
+  }
+
   /// What herdr said when it refused, or `nil` when it did not.
   ///
   /// Checks both streams: herdr 0.8.0 wrote the envelope to stdout, later versions to
@@ -608,7 +615,7 @@ public struct CLIControl: HerdrControl {
     if await hasAgent(launch.kind, inPane: paneID) { return paneID }
     throw AppError.agentDidNotStart(
       paneID: paneID, place: folder,
-      reason: Self.refusal(in: result)
+      reason: Self.refusal(in: result).map(Self.attributed)
         ?? Self.failure(exitStatus: result.exitStatus, standardError: result.standardError)
         .localizedDescription)
   }

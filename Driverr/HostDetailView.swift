@@ -40,6 +40,10 @@ struct HostDetailView: View {
   /// row.
   private let onInstallKey: ((DriverrCore.Host) -> Void)?
 
+  /// Asks the root to put the New Agent sheet up, for `onEdit`'s reason. `nil` hides the
+  /// toolbar button and the empty session's row.
+  private let onNewAgent: ((DriverrCore.Host) -> Void)?
+
   /// Whether this screen is up because the user tapped the host's row. Only then did the
   /// user start the connect, and only then may it offer the hooks. A restored launch, a Live
   /// Activity, a notification and a URL connect with nobody having asked.
@@ -51,6 +55,7 @@ struct HostDetailView: View {
     onEdit: ((DriverrCore.Host) -> Void)? = nil,
     onInstallHooks: ((DriverrCore.Host) -> Void)? = nil,
     onInstallKey: ((DriverrCore.Host) -> Void)? = nil,
+    onNewAgent: ((DriverrCore.Host) -> Void)? = nil,
     offersHooksOnConnect: Bool = false
   ) {
     seed = host
@@ -58,6 +63,7 @@ struct HostDetailView: View {
     self.onEdit = onEdit
     self.onInstallHooks = onInstallHooks
     self.onInstallKey = onInstallKey
+    self.onNewAgent = onNewAgent
     self.offersHooksOnConnect = offersHooksOnConnect
   }
 
@@ -129,6 +135,7 @@ struct HostDetailView: View {
               // root, which shows the pane scene.
               onReply: { pane in presenter.reply(host: host, model: model, pane: pane) },
               onStartTerminal: terminalStart(model, session),
+              onNewAgent: newAgent(model),
               servesOnlyTmux: model.herdrAvailability?.servesOnlyTmux == true
             )
             .task {
@@ -215,6 +222,14 @@ struct HostDetailView: View {
           .accessibilityIdentifier("connect.terminal")
         }
       }
+      if let model, let newAgent = newAgent(model) {
+        ToolbarItem(placement: .topBarTrailing) {
+          Button(action: newAgent) {
+            Label("New Agent", systemImage: "plus.bubble")
+          }
+          .accessibilityIdentifier("host.newAgent")
+        }
+      }
     }
     // Keyed on the host value. An edit from this screen changes `host` without a rebuild, and
     // the registry returns a new `ConnectionModel` for it, so a one-shot `.task` would keep
@@ -289,6 +304,16 @@ struct HostDetailView: View {
         presenter.present(host: host, model: model, target: .pane(id: id))
       }
     }
+  }
+
+  /// What New Agent does, or `nil` where it would not be offered: a host that is not
+  /// connected, has no session to show, or has no way to start an agent. See
+  /// `HerdrControl.canStartAgent`.
+  private func newAgent(_ model: ConnectionModel) -> (() -> Void)? {
+    guard let onNewAgent, model.phase == .connected, model.herdrAvailability?.isReady == true,
+      let session = model.session, session.canStartAgent, !session.pollingPaused
+    else { return nil }
+    return { onNewAgent(host) }
   }
 
   /// The old key's fingerprint, grouped like the trust prompt's so it can be compared with

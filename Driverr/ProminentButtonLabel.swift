@@ -8,8 +8,14 @@ import SwiftUI
 ///
 /// A `View`, not a `ViewModifier`, because a modifier's `@Environment` resolves above its
 /// attachment point (CLAUDE.md, "Two environment rules").
+///
+/// **Only while enabled.** A disabled prominent button draws a grey fill, and the accent's black
+/// or white on it read at 1.68:1 in dark. The style's own disabled label measured 1.78:1 on the
+/// same fill, so a disabled label is `Color.secondary`, which measured 3.31:1 there. Not
+/// `.secondary`, which blends with the button's tint.
 struct ProminentButtonLabel<Content: View>: View {
   @Environment(\.themeAccentForeground) private var themeAccentForeground
+  @Environment(\.isEnabled) private var isEnabled
 
   private let content: Content
 
@@ -17,8 +23,13 @@ struct ProminentButtonLabel<Content: View>: View {
     self.content = content()
   }
 
+  @ViewBuilder
   var body: some View {
-    content.foregroundStyle(themeAccentForeground)
+    if isEnabled {
+      content.foregroundStyle(themeAccentForeground)
+    } else {
+      content.foregroundStyle(Color.secondary)
+    }
   }
 }
 

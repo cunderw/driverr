@@ -154,7 +154,7 @@ struct CLIControlAgentLaunchTests {
     host.agentStart = LaunchHost.refusal("timeout", "timed out waiting for agent startup")
     await #expect(
       throws: AppError.agentDidNotStart(
-        paneID: "w2:p1", place: "my app", reason: "timed out waiting for agent startup")
+        paneID: "w2:p1", place: "my app", reason: "herdr said: timed out waiting for agent startup.")
     ) {
       try await CLIControl(run: host.runner).startAgent(launch)
     }

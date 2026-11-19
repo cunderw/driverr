@@ -34,6 +34,9 @@ struct SessionTreeView: View {
   /// what a TUI host gets. A callback, for `onReply`'s reason: the start ends in a presentation.
   var onStartTerminal: (() -> Void)?
 
+  /// Open the New Agent sheet. `nil` offers nothing. A callback, for `onReply`'s reason.
+  var onNewAgent: (() -> Void)?
+
   /// Whether tmux is the only thing serving this host, so an empty tree names tmux and not
   /// herdr.
   var servesOnlyTmux = false
@@ -257,6 +260,12 @@ struct SessionTreeView: View {
           // Under both sentences, because a start lands on this host either way.
           if let onStartTerminal, model.offersTerminalStart {
             startTerminalRows(onStartTerminal)
+          }
+          if let onNewAgent {
+            Button(action: onNewAgent) {
+              Label("New Agent", systemImage: "plus.bubble")
+            }
+            .accessibilityIdentifier("session.newAgent")
           }
         } else {
           ForEach(model.tree.workspaces) { workspace in

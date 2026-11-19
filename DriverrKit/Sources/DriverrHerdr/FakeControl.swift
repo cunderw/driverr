@@ -83,7 +83,15 @@ public actor FakeControl: HerdrControl {
   }
 
   /// A session that changes as it is polled, for exercising live updates.
-  public init(script: [SessionTree]) {
+  ///
+  /// - Parameters:
+  ///   - canStartAgent: whether the New Agent sheet is offered. A start stops the script, as
+  ///     any change the fake makes to its own tree does.
+  ///   - agentStart: how a start answers. See `AgentStartBehaviour`.
+  public init(
+    script: [SessionTree], canStartAgent: Bool = false,
+    agentStart: AgentStartBehaviour = .starts(after: .zero)
+  ) {
     self.script = script
     tree = script.first ?? .empty
     failure = nil
@@ -92,7 +100,8 @@ public actor FakeControl: HerdrControl {
     attacher = nil
     unsupported = []
     canStartTerminal = false
-    canStartAgent = false
+    self.canStartAgent = canStartAgent
+    self.agentStart = agentStart
     startFailure = nil
     imageUploads = nil
   }
@@ -145,6 +154,19 @@ public actor FakeControl: HerdrControl {
   public nonisolated let canStartTerminal: Bool
 
   public nonisolated let canStartAgent: Bool
+
+  /// How an agent start answers, for the states a real host takes time or fails to reach.
+  public enum AgentStartBehaviour: Sendable {
+    /// Lists the pane after `after`, as a TUI that waits for the agent does.
+    case starts(after: Duration)
+    /// Lists the pane with no agent in it, then reports that the agent did not start there,
+    /// with `reason`, as herdr's TUI does for a missing program.
+    case leavesPaneOpen(reason: String)
+    /// Refuses the folder, as every backend does when the folder does not resolve.
+    case refusesFolder
+  }
+
+  private var agentStart: AgentStartBehaviour = .starts(after: .zero)
 
   public nonisolated func attachCommand(for pane: Pane) -> String? {
     // The same command and branch `CLIControl` produces. Every seeded pane has a terminal
@@ -409,12 +431,51 @@ public actor FakeControl: HerdrControl {
   /// Every agent this fake was asked to start, refused ones included.
   public private(set) var agentLaunches: [AgentLaunch] = []
 
-  /// Records the launch and answers with a pane id, or with `startFailure`. The tree does not
-  /// change: a test that needs the new pane listed sets it with `update(to:)`.
+  /// Records the launch and answers with a pane id, or with `startFailure`.
+  ///
+  /// Lists the new pane in the fake's own tree, as herdr's TUI does: a new workspace named
+  /// after the folder, with the agent in its one pane. So a UI run can open what it started.
   public func startAgent(_ launch: AgentLaunch) async throws -> String {
     agentLaunches.append(launch)
     if let startFailure { throw startFailure }
-    return "agent:\(agentLaunches.count)"
+    switch agentStart {
+    case .starts(let delay) where delay > .zero: try? await Task.sleep(for: delay)
+    case .refusesFolder: throw AppError.directoryUnavailable(path: launch.directory)
+    case .starts, .leavesPaneOpen: break
+    }
+    let isLeftOpen: Bool
+    if case .leavesPaneOpen = agentStart { isLeftOpen = true } else { isLeftOpen = false }
+    let workspaceID = "agent\(agentLaunches.count)"
+    let tabID = workspaceID + ":t1"
+    let paneID = workspaceID + ":p1"
+    let pane = Pane(
+      id: paneID,
+      tabID: tabID,
+      workspaceID: workspaceID,
+      title: launch.kind.command,
+      // A missing program leaves a shell, so a pane left open has no agent.
+      agent: isLeftOpen
+        ? nil : Agent(name: launch.kind.command, kind: launch.kind.command, status: .idle),
+      terminalID: "term_" + workspaceID,
+      directory: launch.directory
+    )
+    let workspace = Workspace(
+      id: workspaceID,
+      number: tree.workspaces.count + 1,
+      label: AgentLaunch.folderName(of: launch.directory),
+      tabs: [
+        Tab(
+          id: tabID, workspaceID: workspaceID, number: 1, label: launch.kind.command,
+          isAutoNamed: true, panes: [pane])
+      ]
+    )
+    tree = SessionTree(workspaces: tree.workspaces + [workspace], focusedPaneID: tree.focusedPaneID)
+    // Stop the script, as in `perform`.
+    scriptOverridden = true
+    if case .leavesPaneOpen(let reason) = agentStart {
+      throw AppError.agentDidNotStart(paneID: paneID, place: workspace.label, reason: reason)
+    }
+    return paneID
   }
 
   /// How many terminals this fake was asked to start.
