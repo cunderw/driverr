@@ -31,11 +31,24 @@ import Foundation
 ///   but with no desk attached every window takes that size.
 ///
 /// **tmux before 3.3, measured on 3.2a:** `refresh-client -C` takes only `WxH`, and anything
-/// else answers `bad size argument`, so a window cannot be sized. A client size there is not
-/// one window's: it holds every window in the session, under `smallest` and `largest` with a
-/// desk, and under those and `latest` without one. So the attach line puts `@W:` first, which 3.2
-/// refuses, and tmux skips the rest of the line. The desk stays in charge, as with the setting
-/// off. 3.3 and later run all three, and `@W:` on a window nobody sized changes nothing.
+/// else answers `bad size argument`. A client size there is not one window's: it holds every
+/// window in the session, under `smallest` and `largest` with a desk, and under those and
+/// `latest` without one. So the attach line puts `@W:` first, which 3.2 refuses, and tmux skips
+/// the rest of the line. 3.3 and later run all three, and `@W:` on a window nobody sized changes
+/// nothing.
+///
+/// So on 3.2 a window is sized with `resize-window -x C -y R -t @W` instead, the first time tmux
+/// answers a size with `bad size argument`. It sizes that one window, current or not, and sets the
+/// window's `window-size` to `manual`. The hand-back is `resize-window` to the window's own size,
+/// then `set-option -w -u -t @W window-size`. `-u` alone leaves a window nobody views at the
+/// phone's size, as `@W:` alone does on 3.3, and a desk viewing the window takes it at once.
+///
+/// **The cost on 3.2, which the owner accepted on #115:** a client that goes before its hand-back,
+/// as on a dropped link, leaves the window `manual` at the phone's size, even while the desk
+/// views it, until `window-size` is unset. Opening and leaving a pane in that window from Driverr
+/// unsets it. On 3.3 the desk takes such a window over when it views it. Both measured, and pinned
+/// by `LiveTmuxProbeTests.droppedLink`. The hand-back also drops a `window-size` the user had set
+/// on that one window.
 ///
 /// **A pane moved to another session**, measured on 3.2a and 3.7c: after `move-pane`,
 /// `join-pane`, `break-pane -t B:` or `move-window -t B:`, the old session's client hears
@@ -242,8 +255,9 @@ final class TmuxSessionClient: @unchecked Sendable {
   private let lock = NSLock()
   private var queue: [Pending] = []
   private var attachments: [Int: TmuxAttachment] = [:]
-  /// `false` once tmux refused a window size as one before 3.3 does.
-  private var sizesWindows = true
+  /// `true` once tmux refused a window size as one before 3.3 does. Every size after that is a
+  /// `resize-window`, and every hand-back unsets `window-size`.
+  private var sizesByResizeWindow = false
   /// The windows this client sized, by window.
   private var sizings: [String: Sizing] = [:]
   private var isEnded = false
@@ -417,24 +431,32 @@ final class TmuxSessionClient: @unchecked Sendable {
     let rows = min(max(size.rows, 1), 10_000)
     let target = "\(columns)x\(rows)"
     let sent: Bool = lock.withLock {
-      guard sizesWindows, !isEnded, attachments[attachment.id] === attachment else { return false }
+      guard !isEnded, attachments[attachment.id] === attachment else { return false }
       let first = sizings[window] == nil
       var sizing = sizings[window] ?? Sizing()
       sizing.holders.removeAll { $0.id == attachment.id }
       sizing.holders.append((attachment.id, target))
       sizings[window] = sizing
-      let sizeLine = "refresh-client -C \(window):\(target)"
+      let sizeLine = sizeLine(window, target)
       let line =
         first
         ? "display-message -p -t \(window) '#{window_width}x#{window_height}' ; \(sizeLine)"
         : sizeLine
       let id = attachment.id
+      let byRefresh = !sizesByResizeWindow
       return enqueue(line, replies: first ? 2 : 1) { [weak self] result in
-        self?.sized(window, by: id, first: first, result)
-        done()
+        guard let self else { return done() }
+        self.sized(window, by: id, first: first, byRefresh: byRefresh, result, done: done)
       }
     }
     if !sent { done() }
+  }
+
+  /// The line that sizes `window` to `size`, `CxR`, as this tmux takes it. With the lock held.
+  private func sizeLine(_ window: String, _ size: String) -> String {
+    guard sizesByResizeWindow else { return "refresh-client -C \(window):\(size)" }
+    let parts = size.split(separator: "x")
+    return "resize-window -x \(parts.first ?? "") -y \(parts.last ?? "") -t \(window)"
   }
 
   /// Called after a hand-back or a size going back on has been decided, for the tests that
@@ -445,25 +467,39 @@ final class TmuxSessionClient: @unchecked Sendable {
   }
   private var decided: (@Sendable () -> Void)?
 
-  /// tmux answered a size for `window`. On the reader.
+  /// tmux answered a size for `window`, written with `refresh-client` when `byRefresh`. On the
+  /// reader. Calls `done` once the size is settled, which for a size tmux before 3.3 refused is
+  /// after the `resize-window` that replaces it, so the paint behind it is at the new size.
   ///
   /// A hand-back is written under the lock that changed `sizings`, as in `leave`.
   private func sized(
-    _ window: String, by id: Int, first: Bool, _ result: Result<[[Data]], TmuxCommandFailure>
+    _ window: String, by id: Int, first: Bool, byRefresh: Bool,
+    _ result: Result<[[Data]], TmuxCommandFailure>, done: @escaping @Sendable () -> Void
   ) {
+    var waitsForResize = false
     let resumes: [@Sendable () -> Void] = lock.withLock {
       guard var sizing = sizings[window] else { return [] }
       switch result {
       case .success(let replies):
         guard first else { return [] }
         sizing.prior = Self.ownSize(in: replies)
-      case .failure(.refused(let message, let answered)):
-        if Self.refusesEveryWindowSize(message) {
-          // tmux before 3.3. Nothing here sized a window, so nothing goes back.
-          sizesWindows = false
-          defer { sizings = [:] }
-          return sizings.values.flatMap(\.waiting)
+      case .failure(.refused(let message, let answered)) where byRefresh
+        && Self.refusesEveryWindowSize(message):
+        // tmux before 3.3, so nothing here sized this window. From here on every size is a
+        // `resize-window`. Another line already on its way is refused too, and lands here.
+        sizesByResizeWindow = true
+        if first { sizing.prior = Self.ownSize(in: answered) }
+        let waiting = sizing.waiting
+        sizing.waiting = []
+        guard let newest = sizing.holders.last else {
+          // Everyone left before tmux answered, and nothing was sized, so nothing goes back.
+          sizings[window] = nil
+          return waiting
         }
+        sizings[window] = sizing
+        waitsForResize = enqueue(sizeLine(window, newest.size), replies: 1) { _ in done() }
+        return waiting
+      case .failure(.refused(_, let answered)):
         guard first else { return [] }
         // Not sized, so this viewer holds nothing, and with nobody else nothing goes back. The
         // `display-message` ahead of the refusal still read the window's own size.
@@ -485,7 +521,7 @@ final class TmuxSessionClient: @unchecked Sendable {
       // Everyone left before tmux answered.
       sizings[window] = nil
       let waiting = sizing.waiting
-      let (line, replies) = Self.handBack(window, prior: sizing.prior ?? "")
+      let (line, replies) = handBack(window, prior: sizing.prior ?? "")
       let sent = enqueue(line, replies: replies) { _ in
         for resume in waiting { resume() }
       }
@@ -493,6 +529,7 @@ final class TmuxSessionClient: @unchecked Sendable {
     }
     afterSizingDecision?()
     for resume in resumes { resume() }
+    if !waitsForResize { done() }
   }
 
   /// The size a first sizing line's `display-message` printed, or `""` when it printed none,
@@ -502,17 +539,25 @@ final class TmuxSessionClient: @unchecked Sendable {
     return TmuxAttacher.isSize(printed) ? printed : ""
   }
 
-  /// Only tmux before 3.3 answers this to a window size; any other refusal is about one size.
+  /// Only tmux before 3.3 answers this to a `refresh-client -C @W:` size; any other refusal is
+  /// about one size.
   static func refusesEveryWindowSize(_ message: String) -> Bool {
     message.contains("bad size argument")
   }
 
   /// `@W:P ; @W:` when the window's own size is known, which gives a window the desk is not
   /// viewing its size back. `@W:` alone otherwise. With the number of replies the line answers.
-  private static func handBack(_ window: String, prior: String) -> (line: String, replies: Int) {
-    prior.isEmpty
-      ? ("refresh-client -C \(window):", 1)
-      : ("refresh-client -C \(window):\(prior) ; refresh-client -C \(window):", 2)
+  ///
+  /// Before 3.3, `resize-window` to `P` and then `window-size` unset, or the unset alone. See the
+  /// type's comment. With the lock held.
+  private func handBack(_ window: String, prior: String) -> (line: String, replies: Int) {
+    guard sizesByResizeWindow else {
+      return prior.isEmpty
+        ? ("refresh-client -C \(window):", 1)
+        : ("refresh-client -C \(window):\(prior) ; refresh-client -C \(window):", 2)
+    }
+    let unset = "set-option -w -u -t \(window) window-size"
+    return prior.isEmpty ? (unset, 1) : ("\(sizeLine(window, prior)) ; \(unset)", 2)
   }
 
   /// Types `bytes` into `pane`, as hex keys so no byte is read as a key name or a flag.
@@ -534,7 +579,8 @@ final class TmuxSessionClient: @unchecked Sendable {
   static let keyChunk = 256
 
   /// How long a hand-back waits for tmux. A release must not hang on a link that went quiet:
-  /// the scene awaits it, and the channel closes anyway, which hands every window back.
+  /// the scene awaits it, and the channel closes anyway, which on 3.3 and later hands every
+  /// window back. Before 3.3 the window stays at the phone's size; see `TmuxAttacher`.
   static let handBackDeadline: Duration = .seconds(1)
   /// How long the listing after a stream ends may take, over its own exec channel.
   static let listingDeadline: Duration = .seconds(5)
@@ -542,10 +588,11 @@ final class TmuxSessionClient: @unchecked Sendable {
   /// Takes `attachment` off this client, hands back the windows it sized, and closes the client
   /// with the last one.
   ///
-  /// **The last one asks for its window too.** A client leaving hands every window back, but
-  /// after the release has returned, measured on 3.7c, and with a desk attached a window it is
-  /// not viewing keeps the phone's size. Asked first, the window is back at its own size when
-  /// the release returns, or `handBackDeadline` has passed.
+  /// **The last one asks for its window too.** On 3.3 and later a client leaving hands every
+  /// window back, but after the release has returned, measured on 3.7c, and with a desk attached
+  /// a window it is not viewing keeps the phone's size. Before 3.3 a client leaving hands nothing
+  /// back. Asked first, the window is back at its own size when the release returns, or
+  /// `handBackDeadline` has passed.
   func detach(_ attachment: TmuxAttachment) async {
     let (closes, windows) = takeOff(attachment)
     for window in windows { await leave(window, by: attachment.id) }
@@ -576,7 +623,7 @@ final class TmuxSessionClient: @unchecked Sendable {
         answer.resume(true)
       }
       let resumesNow: Bool = self.lock.withLock {
-        guard self.sizesWindows, !self.isEnded, var sizing = self.sizings[window],
+        guard !self.isEnded, var sizing = self.sizings[window],
           let index = sizing.holders.firstIndex(where: { $0.id == id })
         else { return true }
         let left = sizing.holders.remove(at: index)
@@ -585,8 +632,7 @@ final class TmuxSessionClient: @unchecked Sendable {
           // Only the newest holder's size is on screen.
           let isOn = index == sizing.holders.count
           guard isOn, newest.size != left.size else { return true }
-          let line = "refresh-client -C \(window):\(newest.size)"
-          return !self.enqueue(line, replies: 1, done: answered)
+          return !self.enqueue(self.sizeLine(window, newest.size), replies: 1, done: answered)
         }
         guard let prior = sizing.prior else {
           // tmux has not said the window's own size yet; its answer hands the window back.
@@ -595,7 +641,7 @@ final class TmuxSessionClient: @unchecked Sendable {
           return false
         }
         self.sizings[window] = nil
-        let (line, replies) = Self.handBack(window, prior: prior)
+        let (line, replies) = self.handBack(window, prior: prior)
         return !self.enqueue(line, replies: replies, done: answered)
       }
       self.afterSizingDecision?()

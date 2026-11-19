@@ -327,6 +327,7 @@ struct TmuxAttachmentTests {
   @Test("before 3.3, a window sized after the first refusal is never asked with refresh-client")
   func anotherWindowBefore33() async throws {
     let host = Host(["%3": Host.shell(), "%4": Host.shell(window: "@2")])
+    host.places["%4"] = "$0 @2 150x43"
     host.stream.refuseWindowSizes()
     let attacher = host.attacher
     let first = try await attacher.open(terminalID: "tmux:%3", size: Self.phone)

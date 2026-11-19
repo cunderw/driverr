@@ -272,14 +272,14 @@ public struct TmuxControl: HerdrControl {
   // MARK: Input
 
   public func sendText(paneID: String, text: String) async throws {
-    let pane = try quotedPane(paneID)
+    let pane = try rawPane(paneID)
     guard let command = TmuxCommands.input(binary: binary, pane: pane, text: text, submit: false)
     else { return }
     _ = try await execute(command)
   }
 
   public func submitText(paneID: String, text: String) async throws {
-    let pane = try quotedPane(paneID)
+    let pane = try rawPane(paneID)
     // Never `nil`: a submit always has an Enter to send.
     guard
       let command = TmuxCommands.input(
@@ -289,7 +289,7 @@ public struct TmuxControl: HerdrControl {
   }
 
   public func sendKeys(paneID: String, keys: [PaneKey]) async throws {
-    let pane = try quotedPane(paneID)
+    let pane = try rawPane(paneID)
     guard let command = TmuxCommands.keys(binary: binary, pane: pane, keys: keys) else { return }
     _ = try await execute(command)
   }
@@ -406,8 +406,8 @@ public struct TmuxControl: HerdrControl {
     guard let id = TmuxID.validRaw(raw, kind: .pane) else { throw AppError.herdrResponseUnreadable }
     let paneID = TmuxID.pane(id)
 
-    // Best effort: a tmux that refuses it still gets the line, as before.
-    _ = try? await execute(TmuxCommands.quitModes(binary: binary, pane: shellQuoted(id)))
+    // The first pane of a new server can be in view mode a moment after it starts, when the
+    // server's configuration prints something. The submit leaves it. See `leaveModes(pane:)`.
     do {
       try await submitText(paneID: paneID, text: launch.typedLine)
     } catch {
@@ -421,8 +421,13 @@ public struct TmuxControl: HerdrControl {
   // MARK: Plumbing
 
   private func quotedPane(_ id: String) throws -> String {
+    shellQuoted(try rawPane(id))
+  }
+
+  /// The raw pane id, `%3`, which `TmuxID` admits only as `%` and digits.
+  private func rawPane(_ id: String) throws -> String {
     guard let raw = TmuxID.rawPane(of: id) else { throw Self.notTmux(id) }
-    return shellQuoted(raw)
+    return raw
   }
 
   private static func notTmux(_ id: String) -> AppError {
