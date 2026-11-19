@@ -212,6 +212,16 @@ public final class TerminalSession {
     send(ArraySlice(Array(text.utf8)))
   }
 
+  /// Whether the far side answers the program's terminal queries itself. See
+  /// `TerminalFeed.answersQueries`.
+  public var answersQueries: Bool { feed.answersQueries }
+
+  /// The emulator's own answer to something the program wrote, such as a device attributes or
+  /// cursor position query, as opposed to what someone typed.
+  public func sendReply(_ bytes: ArraySlice<UInt8>) {
+    send(bytes)
+  }
+
   /// SwiftTerm's two focus reports, whole. Anything else a program asked for goes out.
   ///
   /// Public because the app's scene drops them too, from an observer with no focus channel.

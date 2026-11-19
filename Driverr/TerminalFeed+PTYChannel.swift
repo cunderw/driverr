@@ -49,7 +49,8 @@ extension TerminalFeed {
     raw: any RawTerminalStream,
     output: AsyncThrowingStream<Data, any Error>,
     send: @escaping @Sendable (Data) async throws -> Void,
-    resize: @escaping @Sendable (TerminalSize) async throws -> Void
+    resize: @escaping @Sendable (TerminalSize) async throws -> Void,
+    answersQueries: Bool = false
   ) {
     self.init(
       output: output,

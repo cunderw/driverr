@@ -42,6 +42,14 @@ public struct TerminalFeed: Sendable {
   ///
   /// See `TerminalSession.firstGridMeasured(_:)`.
   public var awaitsFirstSize: Bool
+  /// Whether the far side's own emulator answers the program's terminal queries, so the
+  /// local emulator's answers must never reach it.
+  ///
+  /// `true` for a tmux pane: the program talks to tmux's emulator, which answers a device
+  /// attributes or cursor position query itself, and the control client sees the query in
+  /// the pane's output too. An answer from here would reach the program a second time, as
+  /// typed input. See `TerminalSession.sendReply(_:)`.
+  public var answersQueries: Bool
 
   public init(
     output: AsyncThrowingStream<Data, any Error>,
@@ -53,7 +61,8 @@ public struct TerminalFeed: Sendable {
     focus: (@Sendable (Bool) async throws -> Void)? = nil,
     consumed: (@Sendable (Int) -> Void)? = nil,
     leftAlternateScreen: (@Sendable () -> Void)? = nil,
-    awaitsFirstSize: Bool = false
+    awaitsFirstSize: Bool = false,
+    answersQueries: Bool = false
   ) {
     self.output = output
     self.send = send
@@ -65,6 +74,7 @@ public struct TerminalFeed: Sendable {
     self.consumed = consumed
     self.leftAlternateScreen = leftAlternateScreen
     self.awaitsFirstSize = awaitsFirstSize
+    self.answersQueries = answersQueries
   }
 
   /// A feed for an `observe` stream: everything but reading is inert.

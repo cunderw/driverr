@@ -2960,6 +2960,20 @@ struct TerminalSceneModelTests {
     #expect(String(decoding: stream.keys(for: "%3"), as: UTF8.self) == "hi\r")
   }
 
+  /// tmux answers a pane's queries itself (#128), so the scene's feed for a tmux pane says so,
+  /// and the emulator's own answer never reaches the pane.
+  @Test("a tmux pane's feed answers queries itself, and drops the emulator's reply")
+  func aTmuxPaneDropsTheEmulatorsReply() async throws {
+    let (scene, transport, stream) = await tmuxScene()
+    let (session, _) = try await paintedTmuxPane(scene, transport)
+    #expect(session.answersQueries)
+
+    session.sendReply(ArraySlice(Array("\u{1b}[?1;2c".utf8)))
+    session.send(text: "k")
+    await waitUntilSignalled("the key never reached tmux") { !stream.keys(for: "%3").isEmpty }
+    #expect(stream.keys(for: "%3") == Data("k".utf8))
+  }
+
   @Test("the size the view measured sizes the tmux window before the paint")
   func theMeasuredSizeSizesTheTmuxWindow() async throws {
     let (scene, transport, stream) = await tmuxScene()
