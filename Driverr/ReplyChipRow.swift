@@ -282,11 +282,16 @@ private struct FlowLayout: Layout {
   func placeSubviews(
     in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()
   ) {
+    // Rows break where `sizeThatFits` broke them: against the proposed width, not the
+    // bounds. The bounds are the reported width, the widest row, and a row that exactly
+    // fills it can measure a hair over it after rounding, which wrapped the last chip of a
+    // centred block onto a row of its own.
+    let limit = bounds.minX + (proposal.width ?? bounds.width)
     var origin = bounds.origin
     var rowHeight: CGFloat = 0
     for subview in subviews {
       let size = subview.sizeThatFits(.unspecified)
-      if origin.x + size.width > bounds.maxX, origin.x > bounds.minX {
+      if origin.x + size.width > limit, origin.x > bounds.minX {
         origin.x = bounds.minX
         origin.y += rowHeight + spacing
         rowHeight = 0
