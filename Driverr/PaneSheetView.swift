@@ -492,7 +492,7 @@ struct PaneSheetView: View {
           .lineLimit(2)
         // When disabled, says why.
         if onNewPane == nil {
-          Text("A shell isn't a pane herdr can split.")
+          Text("A shell isn't a pane Driverr can split.")
             .font(.caption2)
             .foregroundStyle(.secondary)
             .multilineTextAlignment(.center)
@@ -509,7 +509,7 @@ struct PaneSheetView: View {
     .disabled(onNewPane == nil)
     .accessibilityIdentifier("terminal.sheet.newPane")
     .accessibilityLabel(newPaneTitle)
-    .accessibilityHint(onNewPane == nil ? "A shell isn't a pane herdr can split." : "")
+    .accessibilityHint(onNewPane == nil ? "A shell isn't a pane Driverr can split." : "")
   }
 
   /// `Split "index rebuild"`, or the bare verb when the scene is on its plain shell and

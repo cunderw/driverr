@@ -40,7 +40,9 @@ struct AppErrorTests {
   @Test("a set-up that stops answering says the host was reached, not that it was not")
   func herdrDidNotAnswerSaysTheHostWasReached() {
     let error = AppError.herdrDidNotAnswer(host: "workbox")
-    #expect(error.errorDescription == "Reached workbox, but herdr did not answer.")
+    #expect(
+      error.errorDescription
+        == "Reached workbox, but it stopped answering while Driverr looked for herdr and tmux.")
     #expect(error.isRetryable)
     #expect(error != AppError.connectionFailed(host: "workbox", reason: "herdr did not answer."))
   }

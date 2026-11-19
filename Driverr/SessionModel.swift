@@ -187,7 +187,7 @@ final class SessionModel {
       state = .failed(error)
       lastFailure = error
     } catch {
-      let error = AppError.herdrCommandFailed(reason: "herdr could not be reached.")
+      let error = AppError.herdrCommandFailed(reason: "The host could not be reached.")
       state = .failed(error)
       lastFailure = error
     }
@@ -275,7 +275,7 @@ final class SessionModel {
     } catch let error as AppError {
       renamePrompt = .failed(target, error)
     } catch {
-      renamePrompt = .failed(target, .herdrCommandFailed(reason: "herdr could not be reached."))
+      renamePrompt = .failed(target, .herdrCommandFailed(reason: "The host could not be reached."))
     }
     renameInFlight = nil
   }
@@ -327,7 +327,7 @@ final class SessionModel {
     } catch let error as AppError {
       terminalStart = .failed(error)
     } catch {
-      terminalStart = .failed(.herdrCommandFailed(reason: "herdr could not be reached."))
+      terminalStart = .failed(.herdrCommandFailed(reason: "The host could not be reached."))
     }
     return nil
   }

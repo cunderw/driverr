@@ -827,7 +827,7 @@ struct TerminalSceneModelTests {
   func aPromotionRefusedByTheEnd() async throws {
     let attacher = FakeCoreAttacher()
     // The promotion is held at the gate below, and the app's step deadline would answer it
-    // "herdr did not answer." over the close if the machine is slow to get there. 120 s is past
+    // "The host did not answer." over the close if the machine is slow to get there. 120 s is past
     // the suite's one-minute limit, so it cannot fire.
     var (scene, control, observer) = try await watchedAgentScene(
       attacher, stepDeadline: .seconds(120))
@@ -855,9 +855,9 @@ struct TerminalSceneModelTests {
     await waitUntil("the close") { scene.notice == .closed }
   }
 
-  /// A step that outlives `stepDeadline` writes "herdr did not answer." on its target, and its
+  /// A step that outlives `stepDeadline` writes "The host did not answer." on its target, and its
   /// own completion clears that notice again. Neither may touch a pane that has since closed:
-  /// the user would read that herdr did not answer about a pane that is gone, and then nothing.
+  /// the user would read that the host did not answer about a pane that is gone, and then nothing.
   @Test("a step that times out after the pane closed leaves the closed banner")
   func aStepTimeoutKeepsTheClosedBanner() async throws {
     let attacher = FakeCoreAttacher()

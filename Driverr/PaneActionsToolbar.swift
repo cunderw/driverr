@@ -221,7 +221,7 @@ struct PanePromptBar: View {
           }
 
         case .failed(let error):
-          Text(error.errorDescription ?? "herdr refused the request.")
+          Text(error.errorDescription ?? "The host refused the request.")
             .font(.footnote)
           HStack {
             Spacer()

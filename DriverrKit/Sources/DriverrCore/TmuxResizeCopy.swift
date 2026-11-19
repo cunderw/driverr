@@ -14,5 +14,5 @@ public enum TmuxResizeCopy {
   public static let footer =
     "While a tmux pane is open, Driverr resizes its tmux window to fit this screen, and puts "
     + "the old size back when you leave. Turn this off to keep the window at the computer's "
-    + "size, so a wider pane wraps on this screen."
+    + "size, so a wider pane wraps on this screen. Resizing needs tmux 3.3 or later."
 }

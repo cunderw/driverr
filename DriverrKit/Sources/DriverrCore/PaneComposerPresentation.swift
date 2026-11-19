@@ -185,8 +185,9 @@ public struct PaneComposerState: Equatable, Sendable {
     case .sent:
       sentStatus(asOf: now)
     case .failed(let error):
-      // The headline is the part that is always true. herdr's own sentence goes underneath,
-      // because "herdr did not answer" misdescribes a herdr that answered `no such pane`.
+      // The headline is the part that is always true. The far side's own sentence goes
+      // underneath, because "The host did not answer" misdescribes a host that answered
+      // `no such pane`.
       PaneComposerStatus(
         message: PaneComposerCopy.failed,
         detail: error.errorDescription ?? PaneComposerCopy.noAnswer,
@@ -308,7 +309,7 @@ public enum PaneComposerCopy {
 
   public static let failed = "Send failed"
   /// What stands in when a failure carries no sentence of its own.
-  public static let noAnswer = "herdr did not answer."
+  public static let noAnswer = "The host did not answer."
   public static let retry = "Retry"
   public static let send = "Send"
   /// The hint under a multi-select question's heading. Without it a multi-select group
@@ -372,13 +373,13 @@ public enum PaneComposerCopy {
   /// `Sent 40s ago`, the notice once nothing has confirmed it for a while.
   public static func sentAgo(_ elapsed: String) -> String { "Sent \(elapsed) ago" }
 
-  /// What herdr still reports, said as a report. Driverr cannot know whether the agent read
-  /// the reply.
+  /// What the pane still reports, said as a report. Driverr cannot know whether the agent read
+  /// the reply. It names no backend, because a tmux pane shows it too.
   public static func stillWaiting(_ agent: String) -> String {
-    "herdr still reports \(agent) as waiting."
+    "The pane still reports \(agent) as waiting."
   }
 
-  /// How long a send waits for herdr before it is called a failure.
+  /// How long a send waits for the host before it is called a failure.
   ///
   /// Without a deadline a stalled channel leaves the pane's only composer spinning with
   /// every key disabled and no Retry. Twelve seconds lets a slow link finish before a person
@@ -427,7 +428,7 @@ public struct PaneComposerHeader: Equatable, Sendable {
       invitation = "You can still say something."
     case .unknown:
       // `unknown` is an agent whose output nothing recognised, so claim nothing.
-      state = "herdr can't say what \(name) is doing."
+      state = "Driverr can't tell what \(name) is doing."
       invitation = "You can still say something."
     }
   }

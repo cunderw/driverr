@@ -146,7 +146,7 @@ final class PaneActionsModel {
   /// Not private, because the switcher's New pane cell runs through the scene, which adopts what
   /// it made, and has no prompt of its own to say it failed on.
   func report(_ error: any Error) {
-    let mapped = error as? AppError ?? .herdrCommandFailed(reason: "herdr could not be reached.")
+    let mapped = error as? AppError ?? .herdrCommandFailed(reason: "The host could not be reached.")
     failure = mapped
     prompt = .failed(mapped)
   }
