@@ -154,7 +154,20 @@ struct NewAgentSheet: View {
   @Environment(\.dismiss) private var dismiss
   @Environment(\.themeAccent) private var themeAccent
 
+  /// Page-sized on iPad. The default form sheet put Start below the fold, under five recent
+  /// folders, and a folder listing wants the height too. Not `fittedSheetHeight`, which
+  /// measures one scroll view and would size the pushed browser to the form. Branched, as in
+  /// `PaneSheetView`, because the sizings are different types.
+  @ViewBuilder
   var body: some View {
+    if isRegularWidth {
+      stack.presentationSizing(.page)
+    } else {
+      stack
+    }
+  }
+
+  private var stack: some View {
     NavigationStack(path: $browsePath) {
       Form {
         agentSection
@@ -185,10 +198,6 @@ struct NewAgentSheet: View {
     }
     // A start cannot be taken back, so the sheet stays until it answers.
     .interactiveDismissDisabled(model.isStarting)
-    // Page-sized on iPad. The default form sheet put Start below the fold, under five recent
-    // folders, and a folder listing wants the height too. Not `fittedSheetHeight`, which
-    // measures one scroll view and would size the pushed browser to the form.
-    .presentationSizing(isRegularWidth ? .page : .automatic)
   }
 
   private var agentSection: some View {
