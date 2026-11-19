@@ -2923,7 +2923,7 @@ struct TerminalSceneModelTests {
     await scene.settle()
     // Checked before the size, so a pane that went anywhere but the attacher fails here and
     // does not wait out the time limit for a paint that never comes.
-    #expect(await transport.lastPTYSize == nil, "no shell")
+    try #require(await transport.lastPTYSize == nil, "no shell")
     try #require(await transport.streamLog.isEmpty, "no herdr bridge")
     let session = try #require(scene.currentSession)
     session.resize(to: Self.measured)
@@ -2990,6 +2990,9 @@ struct TerminalSceneModelTests {
     #expect(stream.closeCount == 1)
     #expect(
       stream.size(of: "@2") == FakeTmuxControlStream.windowSize, "the window is the desk's again")
+    // This pins the ordering, not the pump's `Task.isCancelled` guard. `handBack` cancels the
+    // pump before the release, so the pump's end reports nothing. That end sends no signal and
+    // `settle()` does not await it, so without the cancel this line could still pass.
     #expect(scene.notice == nil)
   }
 
