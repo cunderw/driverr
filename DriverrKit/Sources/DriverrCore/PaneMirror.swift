@@ -34,30 +34,63 @@ public enum HerdrSessionKey: Hashable, Sendable {
     }
   }
 
+  /// The session a name picks, as `--session <name>` does. `nil`, empty and `default` are the
+  /// standard session.
+  ///
+  /// Measured on herdr 0.9.5: `herdr --session default` joins the standard session's server and
+  /// shows its panes, and no `sessions/default` socket appears. `HERDR_SESSION=default` is not
+  /// measured, and is read the same way.
+  public init(sessionName: String?) {
+    guard let sessionName, !sessionName.isEmpty, sessionName != Self.standardName else {
+      self = .standard
+      return
+    }
+    self = .named(sessionName)
+  }
+
   /// The file name of herdr's socket in every session's directory.
   static let socketName = "herdr.sock"
+  /// The name herdr gives the session it runs with no `--session`.
+  static let standardName = "default"
 }
 
-/// One pane that shows another source of panes on the same host, and the herdr session the host
-/// must list for that pane to be a duplicate.
+/// One pane that shows another source of panes on the same host, and what the host must also list
+/// for that pane to be a duplicate.
 ///
-/// One shape covers both ways round:
-///
-/// - **herdr in tmux.** A tmux pane runs a herdr client. `paneID` is the tmux pane, and
-///   `session` is the herdr session the client shows.
-/// - **tmux in herdr.** A herdr pane runs a tmux client. `paneID` is the herdr pane, from the
-///   client's `HERDR_PANE_ID`, and `session` is the herdr session that pane is in.
-///
-/// Either way the panes behind it are listed on their own. A claim hides nothing unless the
-/// host lists that herdr session, because otherwise the mirror is the only way to its panes.
+/// Every kind's panes are listed on their own. A claim hides nothing unless the host lists the
+/// source it shows in the same read, because otherwise the mirror is the only way to its panes.
+/// `CombinedControl` decides which panes the claims mark.
 public struct MirrorClaim: Hashable, Sendable {
-  /// The pane to hide, as the tree's ids spell it.
-  public let paneID: String
-  public let session: HerdrSessionKey
+  public enum Kind: Hashable, Sendable {
+    /// A pane and a herdr session, either way round:
+    ///
+    /// - **herdr in tmux.** A tmux pane runs a herdr client. `paneID` is the tmux pane, and
+    ///   `session` is the herdr session the client shows.
+    /// - **tmux in herdr.** A herdr pane runs a tmux client. `paneID` is the herdr pane, from the
+    ///   client's `HERDR_PANE_ID`, and `session` is the herdr session that pane is in.
+    ///
+    /// It hides `paneID` only when the host's herdr TUI answered and is bound to `session`.
+    case herdr(paneID: String, session: HerdrSessionKey)
+    /// **A core terminal in tmux.** A tmux pane, `paneID`, runs `hc attach <address>` against the
+    /// core Driverr reaches. It hides `paneID` only when that core's tree, in the same read,
+    /// lists `CorePaneID.id(forAddress: address)`.
+    case coreAttach(paneID: String, address: String)
+    /// **tmux in a core terminal.** A client of the tmux server Driverr reads runs as process
+    /// `pid` on the host. It hides the core terminal on the core's own computer whose foreground
+    /// process is `pid`, as the core reported it in the same read. A pid means nothing on another
+    /// computer, so a terminal on a machine the core added never matches.
+    case tmuxClient(pid: Int)
+  }
 
+  public let kind: Kind
+
+  public init(_ kind: Kind) {
+    self.kind = kind
+  }
+
+  /// A `.herdr` claim.
   public init(paneID: String, session: HerdrSessionKey) {
-    self.paneID = paneID
-    self.session = session
+    self.init(.herdr(paneID: paneID, session: session))
   }
 }
 
@@ -118,6 +151,6 @@ extension Pane {
     Pane(
       id: id, tabID: tabID, workspaceID: workspaceID, title: title, agent: agent,
       terminalID: terminalID, directory: directory, isFocused: isFocused,
-      viewportRows: viewportRows, isMirror: true)
+      viewportRows: viewportRows, isMirror: true, foregroundPID: foregroundPID)
   }
 }

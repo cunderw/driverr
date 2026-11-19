@@ -109,6 +109,10 @@ struct TmuxMirrorTests {
       ("/opt/homebrew/bin/herdr --session=work", .named("work")),
       ("herdr session attach work", .named("work")),
       ("herdr", .standard),
+      // Measured on herdr 0.9.5: `--session default` joins the standard session's server.
+      ("herdr --session default", .standard),
+      ("herdr --session=default", .standard),
+      ("herdr session attach default", .standard),
     ])
   func clientSession(arguments: String, key: HerdrSessionKey) {
     #expect(TmuxMirrors.herdrClientSession(arguments: arguments, environment: [:]) == key)
@@ -141,20 +145,101 @@ struct TmuxMirrorTests {
         == .named("c"), "the flag wins")
   }
 
+  // MARK: Reading an hc command line
+
+  @Test(
+    "an hc attach command line names the terminal by its address",
+    arguments: [
+      ("hc attach t1", "t1"),
+      ("/home/x/.local/bin/hc attach t12", "t12"),
+      ("herdr-core attach t1b", "t1b"),
+      ("hc attach box/t7", "box/t7"),
+      ("hc attach --observe t1", "t1"),
+      ("hc attach --history 50 t1", "t1"),
+      ("hc --json attach t1", "t1"),
+    ])
+  func attachedAddress(arguments: String, address: String) {
+    #expect(TmuxMirrors.attachedAddress(arguments: arguments) == address)
+  }
+
+  @Test(
+    "the picker, a name, and anything that is not hc attach name no terminal",
+    arguments: [
+      "hc", "/home/x/.local/bin/hc", "hc attach", "hc attach tm", "hc attach reviewer",
+      "hc attach --history t1", "hc attach t1 t2", "hc run tmux", "hc ls", "hc attach T1",
+      "hc attach t", "hc attach tx1", "hc attach /t1", "hc attach box/", "hcx attach t1",
+      "herdr attach t1", "zsh",
+    ])
+  func notAnAttach(arguments: String) {
+    #expect(TmuxMirrors.attachedAddress(arguments: arguments) == nil)
+  }
+
+  @Test(
+    "the core an hc command reaches: HC_SOCKET, else HC_SESSION, else default",
+    arguments: [
+      ([String: String](), CoreSessionKey.named("default")),
+      (["HC_SESSION": ""], .named("default")),
+      (["HC_SESSION": "default"], .named("default")),
+      (["HC_SESSION": "work"], .named("work")),
+      (["HC_SOCKET": "/run/user/1000/herdr-core/work.sock", "HC_SESSION": "play"], .named("work")),
+      (["HC_SOCKET": "/home/x/.local/state/herdr-core/default/default.sock"], .named("default")),
+      (["HC_SOCKET": "/tmp/odd.sock"], .socket("/tmp/odd.sock")),
+      (["HC_SOCKET": "/home/x/.local/state/herdr-core/a/b.sock"], .socket(
+        "/home/x/.local/state/herdr-core/a/b.sock")),
+      (["HC_SOCKET": "/x/herdr-core/.sock"], .socket("/x/herdr-core/.sock")),
+    ])
+  func coreKey(environment: [String: String], key: CoreSessionKey) {
+    #expect(CoreSessionKey(environment: environment) == key)
+  }
+
   // MARK: The command
 
-  @Test("the environment read keeps only four variables, filtered on the host, under sh")
+  @Test("the environment read keeps only six variables, filtered on the host, under sh")
   func command() {
     let command = TmuxProcessDetailsRead.command(forPIDs: [12, 34])
     #expect(command.hasPrefix("sh -c '"))
     let script = TmuxProcessDetailsRead.script(forPIDs: [12, 34])
-    #expect(script.contains("grep -E '^(HERDR_PANE_ID|HERDR_SESSION|HERDR_SOCKET_PATH|TMUX)='"))
+    #expect(
+      script.contains(
+        "grep -E '^(HERDR_PANE_ID|HERDR_SESSION|HERDR_SOCKET_PATH|TMUX|HC_SESSION|HC_SOCKET)='"))
     #expect(script.contains("/proc/12/environ"))
     #expect(script.contains("ps -wwE -o command= -p 34"))
     #expect(script.components(separatedBy: "grep -E").count == 3, "one filter per pid")
+    #expect(!script.contains(TmuxProcessDetailsRead.ownCoreMarker))
   }
 
-  @Test("what the host printed is split by pid, and a variable outside the four is dropped")
+  @Test("asked for its own core, the read first prints two of the channel's variables, filtered")
+  func ownCoreCommand() {
+    let script = TmuxProcessDetailsRead.script(forPIDs: [12], readingOwnCore: true)
+    #expect(
+      script.hasPrefix(
+        "printf '\\n%s\\n' '\(TmuxProcessDetailsRead.ownCoreMarker)'; "
+          + "env | grep -E '^(HC_SESSION|HC_SOCKET)='; "))
+    #expect(script.components(separatedBy: "grep -E").count == 3, "the channel's, then one per pid")
+  }
+
+  @Test("the channel's own lines are read apart from every process's")
+  func ownCoreOutput() {
+    let output = """
+
+      __DRIVERR_OWN_CORE__
+      HC_SESSION=work
+      PATH=/usr/bin
+
+      __DRIVERR_PROCESS__ 12
+      args hc attach t1
+      HC_SESSION=play
+      """
+    #expect(TmuxProcessDetailsRead.ownCoreEnvironment(from: output) == ["HC_SESSION": "work"])
+    let details = TmuxProcessDetailsRead.details(from: output, forPIDs: [12])
+    #expect(details[12]?.environment == ["HC_SESSION": "play"])
+    #expect(
+      TmuxProcessDetailsRead.ownCoreEnvironment(from: "\n__DRIVERR_OWN_CORE__\n") == [:],
+      "a channel with neither variable is the default session, not an unread one")
+    #expect(TmuxProcessDetailsRead.ownCoreEnvironment(from: "\n__DRIVERR_PROCESS__ 12\n") == nil)
+  }
+
+  @Test("what the host printed is split by pid, and a variable outside the six is dropped")
   func details() {
     let output = """
 
@@ -275,6 +360,127 @@ struct TmuxMirrorTests {
     #expect(tree.mirrorClaims.isEmpty)
   }
 
+  // MARK: A tmux host beside a herdr-core
+
+  /// The core itself, as `ps` names it when `hc` started it: the link's path.
+  private static let core = FakeTmuxHost.Process(
+    pid: 6100, tty: "??", command: "/home/x/.local/bin/hc", arguments: "hc --hc-launchd x")
+
+  /// `host(…)` with `%1` led by the given `hc` command line, and the core running.
+  private func coreHost(
+    attach arguments: String = "/home/x/.local/bin/hc attach t3",
+    environment: [String: String] = [:],
+    readable: Bool = true,
+    channel: [String: String] = [:],
+    clients: [(pid: Int, environment: [String: String])] = []
+  ) async -> FakeTmuxHost {
+    let fake = host(
+      herdr: arguments, herdrEnvironment: environment, herdrEnvironmentReadable: readable,
+      clients: clients)
+    await fake.setProcesses(await fake.processes + [Self.core])
+    await fake.setChannelEnvironment(channel)
+    return fake
+  }
+
+  @Test("with a core on the host, every client is a pid claim, and no command reads anything")
+  func clientsBesideACore() async throws {
+    let fake = host(herdr: nil, clients: [(8000, [:]), (8001, inHerdr)])
+    await fake.setProcesses(await fake.processes + [Self.core])
+    let tree = try await TmuxControl(run: fake.runner).snapshot()
+    #expect(tree.mirrorClaims == [MirrorClaim(.tmuxClient(pid: 8000)), MirrorClaim(.tmuxClient(pid: 8001))])
+    let commands = await fake.commands
+    #expect(commands.count == 3, "listing, process table, Claude's records: \(commands)")
+  }
+
+  @Test(
+    "a core's terminal holder, or a core run as herdr-core, is a core too",
+    arguments: [
+      "/home/x/.local/share/herdr-core/active/Herdr Core.app/Contents/MacOS/herdr-core",
+      "herdr-core", "hc",
+    ])
+  func coreNames(command: String) async throws {
+    let fake = host(herdr: nil, clients: [(8000, [:])])
+    await fake.setProcesses(
+      await fake.processes + [FakeTmuxHost.Process(pid: 6100, tty: "??", command: command)])
+    let tree = try await TmuxControl(run: fake.runner).snapshot()
+    #expect(tree.mirrorClaims == [MirrorClaim(.tmuxClient(pid: 8000))])
+  }
+
+  @Test("hc attach in a tmux pane claims that pane for the terminal, read with the channel's core")
+  func attachInTmux() async throws {
+    let fake = await coreHost(clients: [(8000, [:])])
+    let tree = try await TmuxControl(run: fake.runner).snapshot()
+    #expect(
+      tree.mirrorClaims == [
+        MirrorClaim(.coreAttach(paneID: "tmux:%1", address: "t3")),
+        MirrorClaim(.tmuxClient(pid: 8000)),
+      ])
+    // The leader alone is read, with the channel's own core. The clients need no read.
+    let read = try #require(await fake.commands.last)
+    #expect(read == TmuxProcessDetailsRead.command(forPIDs: [7001], readingOwnCore: true))
+  }
+
+  @Test(
+    "hc attach claims only on the core the channel reaches",
+    arguments: [
+      ([String: String](), [String: String](), true),
+      (["HC_SESSION": "work"], ["HC_SESSION": "work"], true),
+      (["HC_SESSION": "default"], [:], true),
+      (["HC_SOCKET": "/run/user/1000/herdr-core/work.sock"], ["HC_SESSION": "work"], true),
+      (["HC_SESSION": "play"], [:], false),
+      ([:], ["HC_SESSION": "work"], false),
+      (["HC_SOCKET": "/tmp/odd.sock"], [:], false),
+    ])
+  func attachOnAnotherCore(
+    client: [String: String], channel: [String: String], claims: Bool
+  ) async throws {
+    let fake = await coreHost(environment: client, channel: channel)
+    let tree = try await TmuxControl(run: fake.runner).snapshot()
+    #expect(
+      tree.mirrorClaims
+        == (claims ? [MirrorClaim(.coreAttach(paneID: "tmux:%1", address: "t3"))] : []))
+  }
+
+  @Test(
+    "the picker, a name, and an hc leader whose environment cannot be read claim nothing",
+    arguments: [
+      ("/home/x/.local/bin/hc", true), ("hc attach reviewer", true), ("hc attach t3", false),
+    ])
+  func attachThatClaimsNothing(arguments: String, readable: Bool) async throws {
+    let fake = await coreHost(attach: arguments, readable: readable)
+    #expect(try await TmuxControl(run: fake.runner).snapshot().mirrorClaims.isEmpty)
+  }
+
+  @Test("with herdr and a core both on the host, each is read as before, in one command")
+  func herdrAndCore() async throws {
+    let fake = await coreHost(clients: [(8000, inHerdr)])
+    await fake.setProcesses(
+      await fake.processes + [
+        FakeTmuxHost.Process(pid: 6000, tty: "??", command: "/opt/homebrew/bin/herdr")
+      ])
+    let tree = try await TmuxControl(run: fake.runner).snapshot()
+    #expect(
+      tree.mirrorClaims == [
+        MirrorClaim(.coreAttach(paneID: "tmux:%1", address: "t3")),
+        MirrorClaim(.tmuxClient(pid: 8000)),
+        MirrorClaim(paneID: "w1:p2", session: .named("work")),
+      ])
+    let read = try #require(await fake.commands.last)
+    #expect(read == TmuxProcessDetailsRead.command(forPIDs: [7001, 8000], readingOwnCore: true))
+  }
+
+  @Test("a failed read keeps the pid claims, which needed none")
+  func failedReadBesideACore() async throws {
+    let fake = await coreHost(clients: [(8000, [:])])
+    let control = TmuxControl(run: { command in
+      if command.contains(TmuxProcessDetailsRead.marker) {
+        throw AppError.channelFailed(reason: "gone")
+      }
+      return try await fake.runner(command)
+    })
+    #expect(try await control.snapshot().mirrorClaims == [MirrorClaim(.tmuxClient(pid: 8000))])
+  }
+
   // MARK: Beside herdr
 
   private func combined(
@@ -380,6 +586,143 @@ struct TmuxMirrorTests {
     ]))
     let tree = try await joined.bound(toSocketPath: nil).snapshot()
     #expect(tree.mirrorClaims.count == 1)
+    #expect(tree.allPanes.allSatisfy { !$0.isMirror })
+  }
+
+  // MARK: Beside a herdr-core
+
+  /// A core's tree: `core:t1` runs process 8000, which is a tmux client in these tests, and
+  /// `core:t3` is the terminal `hc attach t3` shows. `core:box/t1` is on a machine the core
+  /// added, and carries pid 8000 too, as another computer's process can.
+  private static let coreTree = SessionTree(
+    workspaces: [
+      Workspace(
+        id: "core:workspace", number: 1, label: "herdr-core",
+        tabs: [
+          DriverrCore.Tab(
+            id: "core:tab", workspaceID: "core:workspace", number: 1, label: "Terminals",
+            panes: [
+              Pane(
+                id: "core:t1", tabID: "core:tab", workspaceID: "core:workspace", title: "tmux",
+                foregroundPID: 8000),
+              Pane(
+                id: "core:t3", tabID: "core:tab", workspaceID: "core:workspace", title: "zsh",
+                foregroundPID: 9100),
+            ])
+        ]),
+      Workspace(
+        id: "core:box/workspace", number: 2, label: "box",
+        tabs: [
+          DriverrCore.Tab(
+            id: "core:box/tab", workspaceID: "core:box/workspace", number: 1, label: "Terminals",
+            panes: [
+              Pane(
+                id: "core:box/t1", tabID: "core:box/tab", workspaceID: "core:box/workspace",
+                title: "zsh", foregroundPID: 8000)
+            ])
+        ]),
+    ],
+    coreID: "c0re")
+
+  /// The three ways a core and tmux meet herdr: beside a TUI tree, beside a TUI with no
+  /// session, and with the core standing in for the TUI.
+  enum Shape: CaseIterable, Sendable {
+    case besideTUI, noSession, corePrimary
+  }
+
+  private func coreCombined(
+    _ shape: Shape, core: Result<SessionTree, AppError> = .success(coreTree), tmux fake: FakeTmuxHost
+  ) -> any HerdrControl {
+    let tmux = CombinedControl.Side(prefix: TmuxID.prefix, control: TmuxControl(run: fake.runner))
+    let core = StubTUI(core)
+    switch shape {
+    case .besideTUI, .noSession:
+      let tui =
+        shape == .besideTUI
+        ? StubTUI(.success(herdrTree))
+        : StubTUI(.failure(noSession), answer: .serverNotRunning(version: nil))
+      return CombinedControl(
+        tui: tui, sides: [CombinedControl.Side(prefix: CorePaneID.prefix, control: core), tmux]
+      ).bound(toSocketPath: nil)
+    case .corePrimary:
+      return CombinedControl(primary: core, sides: [tmux]).bound(toSocketPath: nil)
+    }
+  }
+
+  @Test(
+    "a core terminal running a tmux client of this server is marked, wherever the core is read",
+    arguments: Shape.allCases)
+  func marksCoreTerminal(shape: Shape) async throws {
+    let fake = host(herdr: nil, clients: [(8000, [:])])
+    await fake.setProcesses(await fake.processes + [Self.core])
+    let control = coreCombined(shape, tmux: fake)
+    let tree = try await control.snapshot()
+    #expect(tree.allPanes.filter(\.isMirror).map(\.id) == ["core:t1"], "\(shape)")
+    #expect(!tree.hidingMirrors().allPanes.map(\.id).contains("core:t1"))
+    // A pushed change is merged the same way.
+    #expect(
+      try await control.changedSnapshot().allPanes.filter(\.isMirror).map(\.id) == ["core:t1"])
+  }
+
+  @Test("a pid that matches no client marks nothing, and a client that matches no pid neither")
+  func pidMatchesNothing() async throws {
+    let fake = host(herdr: nil, clients: [(8050, [:])])
+    await fake.setProcesses(await fake.processes + [Self.core])
+    for shape in Shape.allCases {
+      let tree = try await coreCombined(shape, tmux: fake).snapshot()
+      #expect(tree.mirrorClaims == [MirrorClaim(.tmuxClient(pid: 8050))])
+      #expect(tree.allPanes.allSatisfy { !$0.isMirror }, "\(shape)")
+    }
+  }
+
+  /// A pid names a process on one computer. `core:box/t1` runs on a machine the core added, so
+  /// its 8000 is not this host's tmux client 8000, even though the numbers agree.
+  @Test("a terminal on a machine the core added never matches a pid, even an equal one")
+  func addedMachineNeverMatches() async throws {
+    let fake = host(herdr: nil, clients: [(8000, [:])])
+    await fake.setProcesses(await fake.processes + [Self.core])
+    let tree = try await coreCombined(.corePrimary, tmux: fake).snapshot()
+    #expect(tree.pane(id: "core:box/t1")?.isMirror == false)
+    #expect(tree.pane(id: "core:t1")?.isMirror == true)
+  }
+
+  @Test("a tmux pane attached to a core terminal is marked when the core lists it", arguments: Shape.allCases)
+  func marksAttachedPane(shape: Shape) async throws {
+    let fake = await coreHost()
+    let tree = try await coreCombined(shape, tmux: fake).snapshot()
+    #expect(tree.allPanes.filter(\.isMirror).map(\.id) == ["tmux:%1"], "\(shape)")
+  }
+
+  @Test("a tmux pane attached to a terminal the core does not list stays")
+  func attachedToAnUnlistedTerminal() async throws {
+    let fake = await coreHost(attach: "hc attach t9")
+    for shape in Shape.allCases {
+      let tree = try await coreCombined(shape, tmux: fake).snapshot()
+      #expect(tree.mirrorClaims == [MirrorClaim(.coreAttach(paneID: "tmux:%1", address: "t9"))])
+      #expect(tree.allPanes.allSatisfy { !$0.isMirror }, "\(shape)")
+    }
+  }
+
+  /// With the core's read failed, the tmux pane is the only way to the terminal it shows.
+  @Test("with the core's read failed, nothing is marked")
+  func coreReadFailed() async throws {
+    let fake = await coreHost(clients: [(8000, [:])])
+    let control = coreCombined(
+      .besideTUI, core: .failure(.channelFailed(reason: "gone")), tmux: fake)
+    let tree = try await control.snapshot()
+    #expect(tree.mirrorClaims.count == 2)
+    #expect(tree.allPanes.allSatisfy { !$0.isMirror })
+  }
+
+  @Test("tmux alone hides nothing for a core either")
+  func tmuxAloneBesideNoCore() async throws {
+    let fake = await coreHost(clients: [(8000, [:])])
+    let joined = try #require(
+      CombinedControl.joining(tui: nil, sides: [
+        CombinedControl.Side(prefix: TmuxID.prefix, control: TmuxControl(run: fake.runner))
+      ]))
+    let tree = try await joined.bound(toSocketPath: nil).snapshot()
+    #expect(tree.mirrorClaims.count == 2)
     #expect(tree.allPanes.allSatisfy { !$0.isMirror })
   }
 }

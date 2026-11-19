@@ -63,6 +63,30 @@ struct PaneMirrorTests {
     #expect(HerdrSessionKey(socketPath: nil) != .named("default"))
   }
 
+  @Test(
+    "a session name picks a session as --session does, and default is the standard one",
+    arguments: [
+      (String?.none, HerdrSessionKey.standard), ("", .standard), ("default", .standard),
+      ("work", .named("work")), ("Default", .named("Default")),
+    ])
+  func sessionName(name: String?, key: HerdrSessionKey) {
+    #expect(HerdrSessionKey(sessionName: name) == key)
+  }
+
+  @Test("marking keeps a core terminal's foreground pid")
+  func markingKeepsThePID() {
+    let pane = Pane(id: "core:t1", tabID: "t", workspaceID: "w", title: "tmux", foregroundPID: 42)
+    let tree = SessionTree(
+      workspaces: [
+        Workspace(
+          id: "w", number: 1, label: "w",
+          tabs: [Tab(id: "t", workspaceID: "w", number: 1, label: "t", panes: [pane])])
+      ])
+    let marked = tree.markingMirrors(["core:t1"]).pane(id: "core:t1")
+    #expect(marked?.isMirror == true)
+    #expect(marked?.foregroundPID == 42)
+  }
+
   @Test("marking sets isMirror on the named panes and changes nothing else")
   func marking() throws {
     let tree = mixedTree()

@@ -140,7 +140,8 @@ DRIVERR_LIVE_TMUX=1 swift test --package-path DriverrKit --filter LiveTmuxProbe
 ```
 
 It starts a tmux server of its own and stops it at the end, so it does not touch your
-sessions.
+sessions. Add `DRIVERR_LIVE_CORE=1` to also run its herdr-core case, which needs `hc`
+installed. That case starts a core on a scratch session under `/tmp` and stops it at the end.
 
 **The unfiltered UI suite is the most expensive thing in this repo.** It is for a release
 cut or a deliberate request, not for routine verification, and not for "make sure nothing

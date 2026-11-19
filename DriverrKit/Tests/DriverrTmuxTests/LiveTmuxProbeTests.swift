@@ -752,14 +752,21 @@
           MirrorClaim(paneID: "tmux:%1", session: .named("probe")),
           MirrorClaim(paneID: "w9:p9", session: .named("probe")),
         ]
+        // A core running on this computer adds a `.tmuxClient` claim for the client, which this
+        // case is not about.
+        func herdrClaims(_ tree: SessionTree) -> Set<MirrorClaim> {
+          tree.mirrorClaims.filter {
+            if case .herdr = $0.kind { true } else { false }
+          }
+        }
         var tree = try await control.snapshot()
-        for _ in 0..<50 where tree.mirrorClaims != expected {
+        for _ in 0..<50 where herdrClaims(tree) != expected {
           try await Task.sleep(for: .milliseconds(100))
           tree = try await control.snapshot()
         }
-        #expect(tree.mirrorClaims == expected)
+        #expect(herdrClaims(tree) == expected)
 
-        // The read itself, for the client: the four variables come back and nothing else does,
+        // The read itself, for the client: the six variables come back and nothing else does,
         // although the unfiltered environment holds the secret.
         let pid = try #require(Int(try await tmux("list-clients -F '#{client_pid}'")))
         let raw = try await LocalShell.runner("ps -wwE -o command= -p \(pid)")
@@ -789,6 +796,173 @@
           TmuxProcessDetailsRead.details(from: leaderRead.standardOutput, forPIDs: [leader])[leader]?
             .environment.keys.sorted() == ["HERDR_SOCKET_PATH", "TMUX"])
       }
+    }
+
+    // MARK: Mirrors beside a herdr-core (#133)
+
+    /// The `hc` to run the core case against: `DRIVERR_LIVE_HC`, else the installer's link.
+    private static let realHC =
+      ([ProcessInfo.processInfo.environment["DRIVERR_LIVE_HC"]].compactMap { $0 }
+      + [NSHomeDirectory() + "/.local/bin/hc"])
+      .first { FileManager.default.isExecutableFile(atPath: $0) }
+
+    /// A core of its own: a short scratch `HOME` under `/tmp`, because hc refuses a socket path
+    /// over 103 bytes, its own `HC_SESSION`, and scratch XDG directories.
+    private struct ScratchCore {
+      let hc: String
+      let home = "/tmp/dc-\(UUID().uuidString.prefix(8).lowercased())"
+      let session = "dc"
+
+      /// The variables every `hc` command here runs with, and nothing else.
+      var environment: String {
+        [
+          "HOME=\(home)", "PATH=/usr/bin:/bin:/usr/sbin:/sbin", "HC_SESSION=\(session)",
+          "XDG_CONFIG_HOME=\(home)/c", "XDG_STATE_HOME=\(home)/s", "XDG_DATA_HOME=\(home)/d",
+          "XDG_RUNTIME_DIR=\(home)/r",
+        ].map(shellQuoted).joined(separator: " ")
+      }
+
+      /// `hc` with `arguments`, from an environment built from empty, plus `extra`, which is
+      /// shell words the caller has already quoted.
+      func command(_ arguments: String, adding extra: String = "") -> String {
+        "env -i \(extra) \(environment) \(shellQuoted(hc)) \(arguments)"
+      }
+
+      func run(_ arguments: String) async throws -> CommandResult {
+        try await LocalShell.runner(command(arguments))
+      }
+
+      /// The directories, and `notes = false`, so the core types nothing into another terminal.
+      func create() throws {
+        for directory in ["c/herdr-core", "s", "d", "r"] {
+          try FileManager.default.createDirectory(
+            atPath: "\(home)/\(directory)", withIntermediateDirectories: true)
+        }
+        try "notes = false\n".write(
+          toFile: "\(home)/c/herdr-core/config.toml", atomically: true, encoding: .utf8)
+      }
+    }
+
+    /// A real core on a scratch session, beside this suite's throwaway tmux server.
+    ///
+    /// Also off unless `DRIVERR_LIVE_CORE=1`, because it needs herdr-core installed and starts a
+    /// core of its own:
+    ///
+    /// ```sh
+    /// DRIVERR_LIVE_TMUX=1 DRIVERR_LIVE_CORE=1 swift test --package-path DriverrKit \
+    ///   --filter LiveTmuxProbe
+    /// ```
+    ///
+    /// The core never reaches the user's own: see `ScratchCore`. It is stopped and its directory
+    /// removed whether or not the test passed.
+    ///
+    /// Core terminal `t1` runs a real `tmux attach` to this suite's server, and pane `%1` runs a
+    /// real `hc attach t2`, which holds a secret in its environment. The control's exec channel
+    /// carries the scratch `HC_SESSION`, as a host whose `hc connect` reaches that core would.
+    @Test(
+      "a tmux client in a core terminal and hc attach in a pane both claim, and no secret leaves",
+      .enabled(if: ProcessInfo.processInfo.environment["DRIVERR_LIVE_CORE"] == "1"))
+    func coreMirrors() async throws {
+      let core = ScratchCore(hc: try #require(Self.realHC, "no hc installed"))
+      try core.create()
+      defer { try? FileManager.default.removeItem(atPath: core.home) }
+
+      try await withLiveServer { plain, tmux in
+        do {
+          try await coreMirrors(core, plain: plain, tmux: tmux)
+        } catch {
+          _ = try? await core.run("server stop")
+          throw error
+        }
+        _ = try? await core.run("server stop")
+      }
+      // Nothing of the scratch core outlives the test.
+      let left = try await LocalShell.runner("pgrep -f \(shellQuoted(core.home)) || true")
+      #expect(left.standardOutput.isEmpty, "still running: \(left.standardOutput)")
+    }
+
+    private func coreMirrors(
+      _ core: ScratchCore,
+      plain: TmuxControl,
+      tmux: @escaping (String) async throws -> String
+    ) async throws {
+      let started = try await core.run("server status --json")
+      #expect(started.exitStatus == 0, "\(started.standardError)")
+      let sockets = try await LocalShell.runner("find \(shellQuoted(core.home)) -type s")
+      #expect(sockets.standardOutput.contains("\(core.home)/r/herdr-core/\(core.session).sock"))
+
+      let viewer = try await core.run(
+        "run --bg --name tm \(shellQuoted(plain.binaryPath)) attach -t probe")
+      #expect(viewer.exitStatus == 0, "\(viewer.standardError)")
+      let sleeper = try await core.run("run --bg --name sl /bin/sleep 600")
+      #expect(sleeper.exitStatus == 0, "\(sleeper.standardError)")
+      var client: Int?
+      for _ in 0..<50 where client == nil {
+        client = Int(try await tmux("list-clients -F '#{client_pid}'"))
+        if client == nil { try await Task.sleep(for: .milliseconds(100)) }
+      }
+      let pid = try #require(client, "the core terminal's tmux client never attached")
+
+      // The core's own fact, which `CoreSnapshotMapper` reads: its terminal's foreground is that
+      // client. A terminal just started has no `foreground` yet; the core samples it.
+      var foreground: Int?
+      var got = CommandResult(standardOutput: "", standardError: "", exitStatus: 0)
+      for _ in 0..<50 where foreground == nil {
+        got = try await core.run("get t1 --json")
+        let terminal = try JSONSerialization.jsonObject(with: Data(got.standardOutput.utf8))
+        foreground = ((terminal as? [String: Any])?["foreground"] as? [String: Any])?["pid"] as? Int
+        if foreground == nil { try await Task.sleep(for: .milliseconds(100)) }
+      }
+      #expect(foreground == pid, "\(got.standardOutput)")
+
+      // `%1` runs `hc attach t2` on the scratch core, with a secret beside its variables. It
+      // keeps the pane's `TMUX`, as every process in a tmux pane has it.
+      let attach = core.command(
+        "attach t2", adding: "DRIVERR_PROBE_SECRET=nope TERM=xterm-256color TMUX=\"$TMUX\"")
+      _ = try await tmux("respawn-pane -k -t \(shellQuoted("%1")) \(shellQuoted(attach))")
+
+      // The channel reaches the scratch core, as `hc connect` on it would.
+      let channel = TmuxControl(
+        binaryPath: plain.binaryPath,
+        run: { try await LocalShell.runner("export HC_SESSION=\(core.session); \($0)") })
+      let expected: Set<MirrorClaim> = [
+        MirrorClaim(.tmuxClient(pid: pid)),
+        MirrorClaim(.coreAttach(paneID: "tmux:%1", address: "t2")),
+      ]
+      var tree = try await channel.snapshot()
+      for _ in 0..<50 where tree.mirrorClaims != expected {
+        try await Task.sleep(for: .milliseconds(100))
+        tree = try await channel.snapshot()
+      }
+      #expect(tree.mirrorClaims == expected)
+
+      // A channel on another core claims the pid, which needs no key, and not the attach.
+      let elsewhere = try await TmuxControl(binaryPath: plain.binaryPath, run: LocalShell.runner)
+        .snapshot()
+      #expect(elsewhere.mirrorClaims == [MirrorClaim(.tmuxClient(pid: pid))])
+
+      // The read itself, for the attach client: only `HC_SESSION` and `TMUX` come back, and the
+      // channel's own `HC_SESSION`, although the unfiltered environment holds the secret.
+      let tty = try await tmux("display-message -p -t \(shellQuoted("%1")) '#{pane_tty}'")
+      let leader = try #require(
+        Int(
+          try await LocalShell.runner(
+            "ps -A -o pid=,tpgid=,tty= | awk -v t=\(shellQuoted(TmuxProcessTable.ttyName(ofPaneTTY: tty))) '$3==t && $1==$2 {print $1}'"
+          ).standardOutput.trimmingCharacters(in: .whitespacesAndNewlines)))
+      let raw = try await LocalShell.runner("ps -wwE -o command= -p \(leader)")
+      #expect(raw.standardOutput.contains("DRIVERR_PROBE_SECRET=nope"), "the secret is there to leak")
+      let read = try await LocalShell.runner(
+        "export HC_SESSION=\(core.session); "
+          + TmuxProcessDetailsRead.command(forPIDs: [leader], readingOwnCore: true))
+      #expect(!read.standardOutput.contains("DRIVERR_PROBE_SECRET"), "\(read.standardOutput)")
+      #expect(!read.standardOutput.contains("PATH="))
+      #expect(!read.standardOutput.contains("HOME="))
+      let details = TmuxProcessDetailsRead.details(from: read.standardOutput, forPIDs: [leader])
+      #expect(details[leader]?.environment.keys.sorted() == ["HC_SESSION", "TMUX"])
+      #expect(details[leader]?.arguments.hasSuffix("attach t2") == true)
+      #expect(
+        TmuxProcessDetailsRead.ownCoreEnvironment(from: read.standardOutput)
+          == ["HC_SESSION": core.session])
     }
   }
 #endif

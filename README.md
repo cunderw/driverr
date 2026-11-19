@@ -43,7 +43,8 @@ why they are identical on every run.*
   needs tmux 3.3 or later; on 3.2 the pane works, but the phone does not resize it. A
   Claude Code or Codex pane in tmux shows its chat, and a blocked one shows in Needs you. A
   Claude Code that asks whether to trust a folder also shows in Needs you. A
-  tmux pane that runs the herdr TUI, or a herdr pane that runs tmux, shows once. For a tmux
+  tmux pane that runs the herdr TUI or `hc attach`, or a herdr pane or herdr-core terminal
+  that runs tmux, shows once. For a tmux
   pane, Driverr reads Claude Code's session record from `$CLAUDE_CONFIG_DIR`, or from
   `~/.claude` when that is not set. For every kind of pane, Driverr reads Claude Code's
   transcripts, skills and plugins from the same directory. It reads Codex's rollouts from

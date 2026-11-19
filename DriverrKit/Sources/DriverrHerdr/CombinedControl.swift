@@ -318,8 +318,10 @@ public struct CombinedControl: HerdrControl {
 
   /// The TUI's focus and the first core id. With no TUI tree, the first side's focus.
   ///
-  /// Every side's `MirrorClaim`s are kept on the result. Beside a TUI tree, the panes they claim
-  /// for its session are marked `isMirror`, which `SessionTree.hidingMirrors(keeping:)` reads.
+  /// Every side's `MirrorClaim`s are kept on the result, and the panes they claim are marked
+  /// `isMirror`, which `SessionTree.hidingMirrors(keeping:)` reads. A `.herdr` claim marks only
+  /// beside a TUI tree, for its session. A core claim marks wherever the core's tree is in this
+  /// read: beside the TUI, with no session running, and with the core standing in for the TUI.
   private func merged(
     _ tuiSide: TUISide,
     _ reads: [Result<SessionTree, any Error>]
@@ -334,28 +336,68 @@ public struct CombinedControl: HerdrControl {
         coreID: tui.coreID ?? trees.lazy.compactMap(\.coreID).first,
         mirrorClaims: tui.mirrorClaims.union(claims)
       )
-      return primaryIsTUI ? tree.markingMirrors(mirrors(in: tree.mirrorClaims)) : tree
+      let herdr = primaryIsTUI ? mirrors(in: tree.mirrorClaims) : []
+      return tree.markingMirrors(herdr.union(Self.coreMirrors(in: tree)))
     case .noSession(let failure):
       guard !trees.isEmpty else { throw failure }
-      return SessionTree(
+      let tree = SessionTree(
         workspaces: trees.flatMap(\.workspaces),
         focusedPaneID: trees.lazy.compactMap(\.focusedPaneID).first,
         coreID: trees.lazy.compactMap(\.coreID).first,
         mirrorClaims: claims
       )
+      return tree.markingMirrors(Self.coreMirrors(in: tree))
     case .failed(let failure):
       throw failure
     }
   }
 
-  /// The panes whose claims name the herdr session this host's TUI is bound to.
+  /// The panes whose `.herdr` claims name the herdr session this host's TUI is bound to.
   ///
   /// Only for a TUI that answered with a tree: with no herdr session listed, a mirror is the only
   /// way to the panes it shows, so it stays. A core standing in for the TUI is not herdr's
-  /// session, and herdr-core hosts are not measured.
+  /// session.
   private func mirrors(in claims: Set<MirrorClaim>) -> Set<String> {
-    let session = HerdrSessionKey(socketPath: socketPath)
-    return Set(claims.filter { $0.session == session }.map(\.paneID))
+    let bound = HerdrSessionKey(socketPath: socketPath)
+    return Set(
+      claims.compactMap { claim in
+        guard case .herdr(let paneID, let session) = claim.kind, session == bound else { return nil }
+        return paneID
+      })
+  }
+
+  /// The panes the core claims mark, against the core's panes in `tree`, which is one read.
+  ///
+  /// - `.coreAttach` marks its tmux pane when the tree lists the core terminal it attaches to.
+  /// - `.tmuxClient` marks a core terminal on the core's own computer whose foreground process is
+  ///   that client. Its id has no machine and its `foregroundPID` is set. A terminal on a machine
+  ///   the core added is passed over even if a pid is set on it, because the pid is that
+  ///   computer's.
+  ///
+  /// The claims come from this host's tmux server and the core's panes from this host's core, so
+  /// both pids are this host's. A tree with no core in it marks nothing.
+  static func coreMirrors(in tree: SessionTree) -> Set<String> {
+    var attached: [String: Set<String>] = [:]
+    var clients: Set<Int> = []
+    for claim in tree.mirrorClaims {
+      switch claim.kind {
+      case .herdr: continue
+      case .coreAttach(let paneID, let address):
+        attached[CorePaneID.id(forAddress: address), default: []].insert(paneID)
+      case .tmuxClient(let pid): clients.insert(pid)
+      }
+    }
+    guard !attached.isEmpty || !clients.isEmpty else { return [] }
+    var marked: Set<String> = []
+    for pane in tree.allPanes where CorePaneID.isCore(pane.id) {
+      marked.formUnion(attached[pane.id] ?? [])
+      if CorePaneID.machine(of: pane.id) == nil, let pid = pane.foregroundPID,
+        clients.contains(pid)
+      {
+        marked.insert(pane.id)
+      }
+    }
+    return marked
   }
 
   /// Not `.notInstalled`, which `CLIControl.availability` also answers when its status
