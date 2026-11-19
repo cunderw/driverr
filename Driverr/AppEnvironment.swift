@@ -83,13 +83,17 @@ struct AppEnvironment {
   /// Consent lives here, not at each call site, so nothing can save a password around it.
   var passwordCredentials: PasswordCredentials { PasswordCredentials(store: passwordStore) }
 
+  /// The one settings store the live app uses: the Settings screen writes it, and a tmux open
+  /// reads the resize choice from it.
+  private static let liveSettings = UserDefaultsSettingsStore()
+
   /// The real thing: secrets in the Keychain, hosts on disk, SSH over the network.
   static let live = AppEnvironment(
     identityStore: KeychainIdentityStore(),
     passwordStore: KeychainPasswordStore(),
     knownHostsStore: UserDefaultsKnownHostsStore(),
     hostStore: UserDefaultsHostStore(),
-    settingsStore: UserDefaultsSettingsStore(),
+    settingsStore: liveSettings,
     makeTransport: { NIOSSHTransport() },
     // Discover the binaries: an exec channel runs a non-login shell, whose PATH may lack
     // Homebrew's prefix or `~/.local/bin`. **Detection is the only choice of backend**: every
@@ -102,7 +106,7 @@ struct AppEnvironment {
       // Read at each open, so turning the setting off reaches the next pane opened.
       async let tmux = TmuxControl.discovering(
         transport: transport,
-        resizesWindow: { await UserDefaultsSettingsStore().settings().resizesTmuxWindows })
+        resizesWindow: { await AppEnvironment.liveSettings.settings().resizesTmuxWindows })
       let (foundTUI, foundCore, foundTmux) = await (tui, core, tmux)
       let sides = [
         foundCore.map { CombinedControl.Side(prefix: CorePaneID.prefix, control: $0) },

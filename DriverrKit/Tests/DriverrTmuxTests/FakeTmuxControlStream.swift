@@ -27,6 +27,7 @@ final class FakeTmuxControlStream: HerdrStream, @unchecked Sendable {
   private var typed: [String: Data] = [:]
   private var closes = 0
   private var refusesWindowSizes = false
+  private var isSilent = false
   /// Pane output tmux had queued before a paint line ran, written ahead of its replies.
   private var staleOutput: [String: String] = [:]
   /// Pane output written right after a paint line's replies.
@@ -49,6 +50,8 @@ final class FakeTmuxControlStream: HerdrStream, @unchecked Sendable {
   func keys(for pane: String) -> Data { lock.withLock { typed[pane] ?? Data() } }
 
   func refuseWindowSizes() { lock.withLock { refusesWindowSizes = true } }
+  /// From here on, lines are recorded and nothing is answered, as on a link that went quiet.
+  func goSilent() { lock.withLock { isSilent = true } }
   func setPane(_ id: String, _ pane: Pane?) { lock.withLock { panes[id] = pane } }
   func around(paintOf pane: String, stale: String, fresh: String) {
     lock.withLock {
@@ -79,7 +82,11 @@ final class FakeTmuxControlStream: HerdrStream, @unchecked Sendable {
   }
 
   private func run(_ line: String) {
-    lock.withLock { received.append(line) }
+    let silent = lock.withLock {
+      received.append(line)
+      return isSilent
+    }
+    if silent { return }
     let commands = line.components(separatedBy: " ; ")
     let paintedPane = commands.count == 3 ? Self.target(of: commands[0]) : nil
     if let paintedPane, let stale = lock.withLock({ staleOutput[paintedPane] }) {

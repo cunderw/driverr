@@ -17,6 +17,8 @@ struct TmuxAttachmentTests {
     var cliCommands: [String] = []
     var livingPanes = "%3\n"
     var resizes = true
+    /// The listing after a stream ends never answers, as on a link that went quiet.
+    var listingHangs = false
     let stream: FakeTmuxControlStream
 
     init(_ panes: [String: FakeTmuxControlStream.Pane] = ["%3": Host.shell()]) {
@@ -41,6 +43,7 @@ struct TmuxAttachmentTests {
           if command.contains("display-message") {
             return CommandResult(standardOutput: "$0 @1 150x43\n", standardError: "", exitStatus: 0)
           }
+          if lock.withLock({ listingHangs }) { try await Task.sleep(for: .seconds(3600)) }
           return CommandResult(
             standardOutput: lock.withLock { livingPanes }, standardError: "", exitStatus: 0)
         },
@@ -62,6 +65,35 @@ struct TmuxAttachmentTests {
       seen.append(chunk)
     }
     return String(decoding: seen, as: UTF8.self)
+  }
+
+  /// Whether `body` returns within `limit`. A race, not a task group, because a group waits for
+  /// the child that hung, and a suspended task fails no test.
+  private func finishes(
+    within limit: Duration, _ body: @escaping @Sendable () async -> Void
+  ) async -> Bool {
+    final class Once: @unchecked Sendable {
+      let lock = NSLock()
+      var waiting: CheckedContinuation<Bool, Never>?
+      func resume(_ value: Bool) {
+        lock.withLock {
+          defer { waiting = nil }
+          return waiting
+        }?.resume(returning: value)
+      }
+    }
+    let once = Once()
+    return await withCheckedContinuation { continuation in
+      once.lock.withLock { once.waiting = continuation }
+      Task {
+        await body()
+        once.resume(true)
+      }
+      Task {
+        try? await Task.sleep(for: limit)
+        once.resume(false)
+      }
+    }
   }
 
   @Test("the client attaches to the session, sized to its current window, never to the pane")
@@ -165,14 +197,15 @@ struct TmuxAttachmentTests {
     await bridge.release()
   }
 
-  @Test("a resize sizes the window again, and release hands the window back")
+  @Test("a resize sizes the window again, and the last release closes the client")
   func resizeAndRelease() async throws {
     let host = Host()
     let bridge = try await host.attacher.open(terminalID: "tmux:%3", size: Self.phone)
     try await bridge.resize(to: TerminalSize(columns: 40, rows: 30, pixelWidth: 0, pixelHeight: 0))
     #expect(host.stream.lines.contains("refresh-client -C @1:40x30"))
     await bridge.release()
-    #expect(host.stream.lines.last == "refresh-client -C @1:")
+    // The client leaving hands its windows back, measured on 3.7c, so the last pane only closes.
+    #expect(!host.stream.lines.contains("refresh-client -C @1:"))
     #expect(host.stream.closeCount == 1, "the last pane to leave closes the client")
   }
 
@@ -213,11 +246,78 @@ struct TmuxAttachmentTests {
     #expect(!host.stream.lines.contains { $0.hasPrefix("refresh-client") }, "not until touched")
     try await bridge.send(text: "y")
     let repaint = try await read(&output, until: "H")
-    #expect(repaint.hasPrefix("\u{1B}[H\u{1B}[2J\u{1B}[3Jold one"))
+    #expect(repaint.hasPrefix("\u{1B}[?1047l\u{1B}[H\u{1B}[2J\u{1B}[3Jold one"))
+    // A command the fake answers after the key proves the key line has been read.
+    try await bridge.resize(to: TerminalSize(columns: 61, rows: 20, pixelWidth: 0, pixelHeight: 0))
     let sized = try #require(host.stream.lines.firstIndex(of: "refresh-client -C @1:60x20"))
     let typed = try #require(host.stream.lines.firstIndex { $0.hasPrefix("send-keys") })
     #expect(sized < typed)
     await bridge.release()
+  }
+
+  /// The observer's paint left the emulator on the alternate screen. A repaint that cleared there
+  /// would put the history and the normal screen into the alternate buffer, where they are lost
+  /// when the program leaves it.
+  @Test("a promoted observer on the alternate screen leaves it before it repaints")
+  func promotionOnTheAlternateScreen() async throws {
+    var pane = Host.shell()
+    pane.state.alternateScreen = true
+    pane.normal = ["$ claude", ""]
+    pane.screen = ["CLAUDE", "> "]
+    let host = Host(["%3": pane])
+    let observer = try #require(
+      try await host.attacher.observe(terminalID: "tmux:%3", size: Self.phone) as? any PromotableObserver)
+    var output = observer.output.makeAsyncIterator()
+    let first = try await read(&output, until: "CLAUDE")
+    #expect(first.contains("\u{1B}[?1049h"), "the observer's paint is on the alternate screen")
+
+    let bridge = try await observer.promote()
+    try await bridge.send(text: "y")
+    let repaint = try await read(&output, until: "CLAUDE")
+    #expect(repaint.hasPrefix("\u{1B}[?1047l\u{1B}[H\u{1B}[2J\u{1B}[3Jold one"))
+    let entering = try #require(repaint.range(of: "\u{1B}[?1049h"))
+    #expect(repaint[..<entering.lowerBound].contains("$ claude"), "the normal screen comes first")
+    await bridge.release()
+  }
+
+  /// A release that waits for tmux's answer holds the scene, which awaits it, for good.
+  @Test("release gives up on a tmux that does not answer, and closes the channel")
+  func releaseOnASilentLink() async throws {
+    let host = Host(["%3": Host.shell(), "%4": Host.shell()])
+    let attacher = host.attacher
+    let bridge = try await attacher.open(terminalID: "tmux:%3", size: Self.phone)
+    let other = try await attacher.observe(terminalID: "tmux:%4", size: Self.phone)
+    host.stream.goSilent()
+
+    #expect(await finishes(within: .seconds(5)) { await bridge.release() })
+    #expect(host.stream.lines.last == "refresh-client -C @1:", "the window was asked back")
+    #expect(await finishes(within: .seconds(5)) { await other.release() })
+    #expect(host.stream.closeCount == 1)
+  }
+
+  /// The listing after the stream ends goes over a fresh exec channel, which can hang as well.
+  @Test("a stream end whose listing never answers is .streamEnded, in time")
+  func streamEndWithASilentListing() async throws {
+    let host = Host()
+    host.listingHangs = true
+    let bridge = try await host.attacher.open(terminalID: "tmux:%3", size: Self.phone)
+    let output = bridge.output
+    host.stream.emit("%exit\n")
+    host.stream.finish()
+    final class Ending: @unchecked Sendable {
+      let lock = NSLock()
+      var error: (any Error)?
+    }
+    let ending = Ending()
+    let ended = await finishes(within: .seconds(10)) {
+      do {
+        for try await _ in output {}
+      } catch {
+        ending.lock.withLock { ending.error = error }
+      }
+    }
+    #expect(ended)
+    #expect(ending.lock.withLock { ending.error } as? TerminalCloseReason == .streamEnded)
   }
 
   @Test("two panes in one session share one client, which closes with the last")
@@ -257,7 +357,14 @@ struct TmuxAttachmentTests {
     while !host.stream.lines.contains(where: { $0.hasSuffix("'#{pane_id} #{window_id}'") }) {
       try await Task.sleep(for: .milliseconds(5))
     }
-    try await bridge.resize(to: TerminalSize(columns: 40, rows: 30, pixelWidth: 0, pixelHeight: 0))
+    // The move hands the old window back and sizes the new one, with nobody touching anything.
+    let deadline = ContinuousClock.now + .seconds(5)
+    while !host.stream.lines.contains("refresh-client -C @7:60x20"), ContinuousClock.now < deadline {
+      try await Task.sleep(for: .milliseconds(5))
+    }
+    let handedBack = try #require(host.stream.lines.firstIndex(of: "refresh-client -C @1:"))
+    let sized = try #require(host.stream.lines.firstIndex(of: "refresh-client -C @7:60x20"))
+    #expect(handedBack < sized)
     try await bridge.resize(to: TerminalSize(columns: 41, rows: 30, pixelWidth: 0, pixelHeight: 0))
     #expect(host.stream.lines.contains("refresh-client -C @7:41x30"))
     host.stream.emit(FakeTmuxControlStream.output("%3", "STILL HERE"))

@@ -321,20 +321,49 @@ final class TmuxSessionClient: @unchecked Sendable {
   /// Bytes per `send-keys -H` line.
   static let keyChunk = 256
 
-  /// Gives a window its own size back, unless another viewer that can type still sizes it.
+  /// How long a hand-back waits for tmux. A release must not hang on a link that went quiet:
+  /// the scene awaits it, and the channel closes anyway, which hands every window back.
+  static let handBackDeadline: Duration = .seconds(1)
+  /// How long the listing after a stream ends may take, over its own exec channel.
+  static let listingDeadline: Duration = .seconds(5)
+
+  /// Takes `attachment` off this client, and closes the client with the last one.
+  ///
+  /// **The last one only closes.** A client leaving hands every window it sized back, measured on
+  /// 3.7c, so asking for the window first would only add a wait.
   func detach(_ attachment: TmuxAttachment, sizedWindow: String?) async {
-    let (clear, closes): (Bool, Bool) = lock.withLock {
+    let closes: Bool = lock.withLock {
       attachments[attachment.id] = nil
-      let stillSized =
-        sizedWindow.map { window in
-          attachments.values.contains { $0.sizes(window) }
-        } ?? true
       let closes = attachments.isEmpty && !isEnded && !isClosing
       if closes { isClosing = true }
-      return (!stillSized && sizesWindows && !isEnded, closes)
+      return closes
     }
-    if clear, let sizedWindow { _ = try? await command("refresh-client -C \(sizedWindow):") }
-    if closes { await close() }
+    if closes {
+      await close()
+    } else if let sizedWindow {
+      await handBack(sizedWindow)
+    }
+  }
+
+  /// Gives `window` its own size back, unless another viewer still sizes it. Waits at most
+  /// `handBackDeadline` for tmux's answer.
+  func handBack(_ window: String) async {
+    let clears: Bool = lock.withLock {
+      sizesWindows && !isEnded && !isClosing && !attachments.values.contains { $0.sizes(window) }
+    }
+    guard clears else { return }
+    _ = await FirstAnswer.within(Self.handBackDeadline, otherwise: false) { answer in
+      self.send("refresh-client -C \(window):") { _ in answer.resume(true) }
+    }
+  }
+
+  /// A pane moved to `window`: the window it sized goes back, and the new one takes its size.
+  private func follow(_ attachment: TmuxAttachment, to window: String) {
+    guard let move = attachment.moved(to: window) else { return }
+    Task {
+      if let left = move.sizedWindow { await self.handBack(left) }
+      await attachment.sizeWindow()
+    }
   }
 
   private func close() async {
@@ -409,7 +438,7 @@ final class TmuxSessionClient: @unchecked Sendable {
         let words = replies.first?.first.map { String(decoding: $0, as: UTF8.self) }?
           .split(separator: " ").map(String.init) ?? []
         if words.count == 2, words[0] == pane, TmuxID.validRaw(words[1], kind: .window) != nil {
-          for attachment in self.viewers(of: pane) { attachment.moved(to: words[1]) }
+          for attachment in self.viewers(of: pane) { self.follow(attachment, to: words[1]) }
         } else {
           for attachment in self.viewers(of: pane) { attachment.end(paneClosed: true) }
         }
@@ -443,11 +472,15 @@ final class TmuxSessionClient: @unchecked Sendable {
     finish()
   }
 
-  /// The server's panes, or `nil` when tmux could not be asked. No server means no panes.
+  /// The server's panes, or `nil` when tmux could not be asked within `listingDeadline`. No
+  /// server means no panes.
   private func livingPanes() async -> Set<String>? {
-    guard let result = try? await run("\(binary) list-panes -a -F '#{pane_id}'") else {
-      return nil
+    let (run, binary) = (run, binary)
+    let answer: CommandResult?? = await FirstAnswer.within(Self.listingDeadline, otherwise: nil) {
+      answer in
+      Task { answer.resume(.some(try? await run("\(binary) list-panes -a -F '#{pane_id}'"))) }
     }
+    guard let answer, let result = answer else { return nil }
     if result.exitStatus != 0 {
       return TmuxControl.isNoServer(result.standardError) ? [] : nil
     }
@@ -515,8 +548,21 @@ final class TmuxAttachment: PaneBridge, PromotableObserver, RawTerminalStream, @
     continuation.yield(bytes)
   }
 
-  func moved(to window: String) {
-    lock.withLock { currentWindow = window }
+  /// Follows the pane to `window`. Answers `nil` when it was already there, and otherwise the
+  /// window this viewer had sized, which is no longer its to hold.
+  func moved(to window: String) -> Move? {
+    lock.withLock {
+      guard currentWindow != window else { return nil }
+      currentWindow = window
+      defer { sizedWindow = nil }
+      return Move(sizedWindow: sizedWindow)
+    }
+  }
+
+  /// A pane's move to another window, as this viewer saw it.
+  struct Move {
+    /// The window this viewer had sized before the move, if any.
+    let sizedWindow: String?
   }
 
   /// `PaneBridge.output`'s contract: a clean finish for a pane that closed, `.streamEnded` for
@@ -647,4 +693,37 @@ final class TmuxAttachment: PaneBridge, PromotableObserver, RawTerminalStream, @
   /// The first paint carries the normal screen behind an alternate one, so there is nothing to
   /// fetch.
   func leftAlternateScreen() {}
+}
+
+/// Resumes a wait once, with whichever answer comes first: the work's, or `otherwise` after the
+/// deadline. Not a task group, because a group waits for the child that never answers.
+final class FirstAnswer<Value: Sendable>: @unchecked Sendable {
+  private let lock = NSLock()
+  private var waiting: CheckedContinuation<Value, Never>?
+
+  private init() {}
+
+  func resume(_ value: Value) {
+    lock.withLock {
+      defer { waiting = nil }
+      return waiting
+    }?.resume(returning: value)
+  }
+
+  /// Starts the work with `start`, which calls `resume` when it has an answer.
+  static func within(
+    _ limit: Duration,
+    otherwise fallback: Value,
+    _ start: @escaping @Sendable (FirstAnswer<Value>) -> Void
+  ) async -> Value {
+    let answer = FirstAnswer<Value>()
+    return await withCheckedContinuation { continuation in
+      answer.lock.withLock { answer.waiting = continuation }
+      start(answer)
+      Task {
+        try? await Task.sleep(for: limit)
+        answer.resume(fallback)
+      }
+    }
+  }
 }

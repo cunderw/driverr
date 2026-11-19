@@ -8,9 +8,11 @@ public enum TmuxResizeCopy {
 
   public static let title = "Resize tmux Windows"
 
-  /// The second sentence matters most: the desk gets its size back.
+  /// "Wraps" is what the setting off does: the pane's rows arrive at the computer's width and
+  /// the phone's grid wraps each one. `TerminalSessionTests.aNarrowerGridDoesNotHoldTheProgramsRows`
+  /// shows a wider row split across two.
   public static let footer =
-    "While a tmux pane is open, Driverr sizes its window to this screen. The window gets its "
-    + "size back when you leave the pane. Turn this off to keep the desk's size; a wide pane "
-    + "then does not fit."
+    "While a tmux pane is open, Driverr resizes its tmux window to fit this screen, and puts "
+    + "the old size back when you leave. Turn this off to keep the window at the computer's "
+    + "size, so a wider pane wraps on this screen."
 }

@@ -93,6 +93,11 @@ enum TmuxPaint {
 
   /// The paint. `clearing` first homes and clears the emulator, for a repaint over a screen that
   /// already shows something. Returns `nil` for replies it cannot read.
+  ///
+  /// **A repaint leaves the alternate screen first.** An observer's paint of a full-screen
+  /// program left the emulator there, and clearing there would put the history and the normal
+  /// screen into the alternate buffer. `?1047l`, not `?1049l`: nothing saved a cursor to restore,
+  /// and SwiftTerm's restore brings the saved autowrap with it (see `CorePaint`).
   static func bytes(from replies: [[Data]], clearing: Bool = false) -> Data? {
     guard replies.count == 3, let stateLine = replies[0].first,
       let state = TmuxPaneState(stateLine)
@@ -103,7 +108,7 @@ enum TmuxPaint {
     let visible = Array(capture.suffix(visibleCount))
 
     var out = Data()
-    if clearing { out.append(Data("\u{1B}[H\u{1B}[2J\u{1B}[3J".utf8)) }
+    if clearing { out.append(Data("\u{1B}[?1047l\u{1B}[H\u{1B}[2J\u{1B}[3J".utf8)) }
     if state.alternateScreen {
       out.append(rows(history + replies[2].suffix(state.height)))
       out.append(Data("\u{1B}[0m\u{1B}[?1049h\u{1B}[H\u{1B}[2J".utf8))

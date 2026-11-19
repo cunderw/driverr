@@ -46,6 +46,23 @@ struct PaneSessionWitnessTests {
     #expect(bare.sessionWitness == nil)
   }
 
+  /// The rule above changes nothing for herdr or a core: neither's terminal id is its pane id.
+  @Test("herdr and core panes keep their terminal ids as witnesses")
+  func herdrAndCoreWitnessesAreUnchanged() {
+    let herdr = Pane(
+      id: "w1:p1", tabID: "w1:t1", workspaceID: "w1", title: "zsh", terminalID: "term_a1",
+      directory: "~/dev/driverr")
+    #expect(herdr.sessionWitness == "term_a1")
+    let core = Pane(
+      id: "core:t7", tabID: "core:tab", workspaceID: "core:workspace", title: "t7",
+      terminalID: "t7", directory: "~/dev/driverr")
+    #expect(core.sessionWitness == "t7")
+    let machine = Pane(
+      id: "core:box/t1", tabID: "core:tab", workspaceID: "core:workspace", title: "t1",
+      terminalID: "box/t1")
+    #expect(machine.sessionWitness == "box/t1")
+  }
+
   /// `ConnectionModel.noteLastPane` then forgets rather than writing an unverifiable record.
   @Test("a pane with neither field has no witness")
   func neitherFieldIsNoWitness() {
