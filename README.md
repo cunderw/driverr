@@ -44,7 +44,10 @@ why they are identical on every run.*
   Claude Code or Codex pane in tmux shows its chat, and a blocked one shows in Needs you. A
   tmux pane that runs the herdr TUI, or a herdr pane that runs tmux, shows once. For a tmux
   pane, Driverr reads Claude Code's session record from `$CLAUDE_CONFIG_DIR`, or from
-  `~/.claude` when that is not set. Driverr runs its commands in a non-interactive shell,
+  `~/.claude` when that is not set. For every kind of pane, Driverr reads Claude Code's
+  transcripts, skills and plugins from the same directory. It reads Codex's rollouts from
+  `$CODEX_HOME`, or from `~/.codex` when that is not set. A herdr-core pane uses the value
+  that the core started with. Driverr runs its commands in a non-interactive shell,
   so a variable exported only in an interactive shell's startup file may not reach them.
   zsh reads only `~/.zshenv` there, so set it in that file. Many `~/.bashrc` files return
   early when the shell is not interactive, so set it above that check.
