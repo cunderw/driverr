@@ -422,7 +422,7 @@ struct TmuxAttachmentTests {
     // A command the fake answers after the key proves the key line has been read.
     try await bridge.resize(to: TerminalSize(columns: 61, rows: 20, pixelWidth: 0, pixelHeight: 0))
     let sized = try #require(host.stream.lines.firstIndex(of: Self.firstSizing("@1", "60x20")))
-    let typed = try #require(host.stream.lines.firstIndex { $0.hasPrefix("send-keys") })
+    let typed = try #require(host.stream.lines.firstIndex { $0.contains("send-keys") })
     #expect(sized < typed)
     await bridge.release()
   }

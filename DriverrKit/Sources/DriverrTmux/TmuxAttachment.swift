@@ -564,13 +564,19 @@ final class TmuxSessionClient: @unchecked Sendable {
   ///
   /// In chunks, because one command line holds a whole paste otherwise. They go in order, and
   /// nothing waits for tmux's answers.
+  ///
+  /// **Each line leaves any mode the pane is in first** (#128). The phone never shows a mode,
+  /// because a control client hears the program's own output, so a key typed into a pane the desk
+  /// left in copy mode would vanish. `copy-mode -q` does nothing to a pane in none, measured on
+  /// 3.7c and 3.2a. It is unconditional, unlike `TmuxCommands.leaveModes(pane:)`: an `if-shell`
+  /// answers a third block when its command runs, and the queue counts a fixed number per line.
   func type(_ bytes: Data, into pane: String) throws {
     guard isUsable else { throw TerminalCloseReason.streamEnded }
     var index = bytes.startIndex
     while index < bytes.endIndex {
       let end = bytes.index(index, offsetBy: Self.keyChunk, limitedBy: bytes.endIndex) ?? bytes.endIndex
       let hex = bytes[index..<end].map { String(format: "%02x", $0) }.joined(separator: " ")
-      send("send-keys -t \(pane) -H \(hex)")
+      send("copy-mode -q -t \(pane) ; send-keys -t \(pane) -H \(hex)", replies: 2)
       index = end
     }
   }
