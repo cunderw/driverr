@@ -182,7 +182,7 @@ struct PaneComposerBar: View {
   /// built without it, as in most hosted tests, is the bar it was.
   var savedPrompts: SavedPromptsModel?
 
-  /// Why typed text may not be sent now, from the pane and its chat. `nil` lets it go. Handed
+  /// Why typed text may not be sent now, from the pane's agent. `nil` lets it go. Handed
   /// to the model, which refuses the send; the bar only says why. See `PaneComposerHold`.
   var hold: PaneComposerHold?
 
@@ -1436,12 +1436,18 @@ struct PaneComposerBar: View {
   }
 
   /// Why Send is off. The words are `PaneComposerHold.message`'s.
+  ///
+  /// The text is `.primary`: `.secondary` footnote text measured 3.4 to 3.6:1 in light. Only the
+  /// glyph is secondary.
   private func holdRow(_ hold: PaneComposerHold) -> some View {
-    Label(hold.message, systemImage: "hand.raised")
-      .font(.footnote)
-      .foregroundStyle(.secondary)
-      .fixedSize(horizontal: false, vertical: true)
-      .accessibilityIdentifier("composer.hold")
+    Label {
+      Text(hold.message).foregroundStyle(.primary)
+    } icon: {
+      Image(systemName: "hand.raised").foregroundStyle(.secondary)
+    }
+    .font(.footnote)
+    .fixedSize(horizontal: false, vertical: true)
+    .accessibilityIdentifier("composer.hold")
   }
 
   // MARK: - The reply

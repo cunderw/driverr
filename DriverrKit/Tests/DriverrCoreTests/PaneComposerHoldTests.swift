@@ -1,48 +1,51 @@
 import DriverrCore
 import Testing
 
-/// The composer's hold: an agent that has not started its session and asks on its screen
+/// The composer's hold: a blocked Claude with no session of its own asks on its screen and
 /// must not get typed text and Enter. Claude Code's folder-trust prompt picks "No, exit" on
 /// Enter (#122).
 @Suite("PaneComposerHold")
 struct PaneComposerHoldTests {
+  private static let session = AgentSession(
+    agent: TranscriptAgent.claude.rawValue, kind: "id", value: "s-1",
+    source: AgentSession.claudeRecordSource)
+
   @Test(
-    "a blocked agent waiting for its first file holds the send",
+    "a blocked Claude with no session of its own holds the send",
     arguments: [
-      TranscriptAbsence.noSessionFiles(directory: "/home/x/project"),
-      .reportedSessionMissing(sessionID: "s", directory: "/home/x/project"),
+      Agent(name: "Claude", kind: "claude", status: .blocked),
+      // No kind: the display name decides, as the reader's does.
+      Agent(name: "Claude Code", status: .blocked),
     ])
-  func held(absence: TranscriptAbsence) {
-    #expect(
-      PaneComposerHold.reason(agentStatus: .blocked, absence: absence) == .agentAsksOnScreen)
+  func held(agent: Agent) {
+    #expect(PaneComposerHold.reason(agent: agent) == .agentAsksOnScreen)
+  }
+
+  @Test("a blocked Claude with a session of its own lets the send go")
+  func withSession() {
+    let agent = Agent(name: "Claude", kind: "claude", status: .blocked, session: Self.session)
+    #expect(PaneComposerHold.reason(agent: agent) == nil)
   }
 
   @Test(
-    "any other status with no file lets the send go",
-    arguments: [AgentStatus?.none, .idle, .working, .done, .error, .unknown])
-  func otherStatuses(status: AgentStatus?) {
-    #expect(
-      PaneComposerHold.reason(
-        agentStatus: status, absence: .noSessionFiles(directory: "/home/x/project")) == nil)
-    #expect(
-      PaneComposerHold.reason(
-        agentStatus: status,
-        absence: .reportedSessionMissing(sessionID: "s", directory: "/home/x/project")) == nil)
+    "any other status lets the send go",
+    arguments: [AgentStatus.idle, .working, .done, .error, .unknown])
+  func otherStatuses(status: AgentStatus) {
+    #expect(PaneComposerHold.reason(agent: Agent(name: "Claude", kind: "claude", status: status)) == nil)
   }
 
-  @Test(
-    "a blocked agent with a transcript, or another absence, lets the send go",
-    arguments: [
-      TranscriptAbsence?.none, .paneHasNoDirectory, .agentNotSupported(agent: "Gemini"),
-      .paneHasNoAgent,
-    ])
-  func otherAbsences(absence: TranscriptAbsence?) {
-    #expect(PaneComposerHold.reason(agentStatus: .blocked, absence: absence) == nil)
+  @Test("a blocked Codex, or no agent, lets the send go")
+  func notClaude() {
+    let codex = Agent(name: "Codex", kind: TranscriptAgent.codex.rawValue, status: .blocked)
+    #expect(PaneComposerHold.reason(agent: codex) == nil)
+    #expect(PaneComposerHold.reason(agent: nil) == nil)
   }
 
-  @Test("the held composer names Show the Screen")
-  func message() {
-    #expect(PaneComposerHold.agentAsksOnScreen.message.contains(TranscriptNotice.showScreenTitle))
+  @Test("the held composer's line is one short sentence that names no button")
+  func lineIsShort() {
+    let line = PaneComposerHold.agentAsksOnScreen.message
+    #expect(line == "Sending is off while the agent asks on its screen.")
+    #expect(!line.contains(TranscriptNotice.showScreenTitle))
   }
 
   @Test("a hold keeps the typed text and refuses to send it, and its end lets it go")

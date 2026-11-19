@@ -327,6 +327,12 @@ struct PaneChatView: View {
     isShowingSubagent ? nil : model.pane.agent?.status
   }
 
+  /// The composer's hold, from the pane's agent as `TerminalScreen` reads it, so the notice
+  /// and the composer agree. `nil` while a sub-agent is shown, for `agentStatus`'s reason.
+  private var composerHold: PaneComposerHold? {
+    isShowingSubagent ? nil : PaneComposerHold.reason(agent: model.pane.agent)
+  }
+
   /// What the pane's agent said it is blocked on, for `agentStatus`'s reason.
   private var blockedKind: AgentBlockedKind? {
     isShowingSubagent ? nil : model.pane.agent?.blockedKind
@@ -1092,7 +1098,7 @@ struct PaneChatView: View {
   private func notice(for resolution: TranscriptResolution) -> some View {
     switch resolution {
     case .absent(let absence):
-      centred(TranscriptNotice(absence: absence, agentStatus: agentStatus))
+      centred(TranscriptNotice(absence: absence, agentStatus: agentStatus, hold: composerHold))
     case .ambiguous(let directory, let candidates):
       // The one place nothing is drawn behind what is on screen. Behind it would be a guessed,
       // possibly wrong, conversation.

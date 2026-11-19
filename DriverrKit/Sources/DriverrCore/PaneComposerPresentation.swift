@@ -76,8 +76,8 @@ public struct PaneComposerState: Equatable, Sendable {
 
   public init() {}
 
-  /// Why typed text may not be sent now, or `nil`. Set from the pane and its chat; see
-  /// `PaneComposerHold.reason(agentStatus:absence:)`. It keeps what is typed.
+  /// Why typed text may not be sent now, or `nil`. Set from the pane's agent; see
+  /// `PaneComposerHold.reason(agent:)`. It keeps what is typed.
   public var hold: PaneComposerHold?
 
   public var isSending: Bool { phase == .sending }
@@ -259,29 +259,31 @@ public struct PaneComposerState: Equatable, Sendable {
 /// still go.
 ///
 /// A case per reason, so another reason is another case and another argument to
-/// `reason(agentStatus:absence:)`.
+/// `reason(agent:)`.
 public enum PaneComposerHold: Equatable, Sendable {
-  /// The agent has not started its session, and is blocked on a choice drawn on its screen.
+  /// A blocked Claude Code with no session of its own, which asks on its screen.
   ///
-  /// Claude Code's folder-trust prompt is the measured case (2.1.328, #122). It ignores typed
-  /// text, and Enter picks the highlighted choice, which is "No, exit" by default. A sent
-  /// message would end the agent.
+  /// Claude Code's folder-trust prompt is the measured case (2.1.328, #122): it writes no
+  /// record, so no session, and it ignores typed text. Enter picks the highlighted choice,
+  /// which is "No, exit" by default, so a sent message would end the agent.
   case agentAsksOnScreen
 
-  /// The hold for a pane, or `nil` when a send may go. `absence` is why the chat has no
-  /// transcript, or `nil` when it has one or has not read yet.
-  public static func reason(
-    agentStatus: AgentStatus?, absence: TranscriptAbsence?
-  ) -> PaneComposerHold? {
-    guard agentStatus == .blocked, absence?.awaitsFirstFile == true else { return nil }
-    return .agentAsksOnScreen
+  /// The hold for a pane's agent, or `nil` when a send may go.
+  ///
+  /// **The agent alone decides, never the chat's state.** The chat is loading before it knows
+  /// there is no file, and in a folder with an older session the directory match draws that
+  /// file as `.ready`. Neither says the agent has stopped asking.
+  ///
+  /// Claude Code only. Codex never reports a session to tmux, and its picker is another
+  /// reason with its own evidence.
+  public static func reason(agent: Agent?) -> PaneComposerHold? {
+    nil  // STUB for #122 red run
   }
 
-  /// The composer's line while held. Short, and it names the way to answer.
+  /// The composer's line while held. One short sentence: the chat's notice says how to answer.
   public var message: String {
     switch self {
-    case .agentAsksOnScreen:
-      "Sending is off while the agent asks on its screen. Use \(TranscriptNotice.showScreenTitle)."
+    case .agentAsksOnScreen: "Sending is off while the agent asks on its screen."
     }
   }
 }

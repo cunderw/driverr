@@ -99,6 +99,17 @@ struct FakeTranscriptHostTests {
     #expect(source.provenance == .matchedByDirectory)
   }
 
+  /// A Claude on its folder-trust prompt in a folder that holds an older session: the
+  /// directory match draws that file, and the agent still asks on its screen (#122). The hold
+  /// comes from the agent, so the chat finding a file, or still loading, cannot lift it.
+  @Test("a blocked Claude with no session stays held when the directory match finds an older file")
+  func heldThroughTheDirectoryMatch() async throws {
+    let pane = pane(session: nil)
+    let resolution = try await TranscriptReader(run: host.run).resolve(for: pane)
+    #expect(resolution.source?.provenance == .matchedByDirectory)
+    #expect(PaneComposerHold.reason(agent: pane.agent) == .agentAsksOnScreen)
+  }
+
   /// `look.sh` captures the answered state from this, so a dropped reply record would capture
   /// nothing.
   @Test("an answered question's reply record parses back with its answers")

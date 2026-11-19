@@ -513,13 +513,10 @@ struct TerminalScreen: View {
     return model.composers?.model(for: pane)
   }
 
-  /// Whether the composer may send typed text, from the pane's status and why its chat has
-  /// no transcript. See `PaneComposerHold`.
+  /// Whether the composer may send typed text, from the pane's agent alone, whatever the
+  /// chat has loaded. See `PaneComposerHold.reason(agent:)`.
   private var composerHold: PaneComposerHold? {
-    guard let pane = scene.currentPane else { return nil }
-    var absence: TranscriptAbsence?
-    if case .unavailable(.absent(let reason)) = chatModel?.state { absence = reason }
-    return PaneComposerHold.reason(agentStatus: pane.agent?.status, absence: absence)
+    PaneComposerHold.reason(agent: scene.currentPane?.agent)
   }
 
   /// The reply surface, under either chat-side surface. Here, not in `PaneChatView`, so it

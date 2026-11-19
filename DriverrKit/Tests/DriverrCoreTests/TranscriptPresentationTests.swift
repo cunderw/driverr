@@ -1222,7 +1222,9 @@ struct TranscriptPresentationTests {
       TranscriptNotice(absence: .agentNotSupported(agent: "Gemini"), agentStatus: nil),
       TranscriptNotice(absence: .paneHasNoDirectory, agentStatus: nil),
       TranscriptNotice(absence: .noSessionFiles(directory: "/p"), agentStatus: nil),
-      TranscriptNotice(absence: .noSessionFiles(directory: "/p"), agentStatus: .blocked),
+      TranscriptNotice(
+        absence: .noSessionFiles(directory: "/p"), agentStatus: .blocked,
+        hold: .agentAsksOnScreen),
     ]
     let symbols = Set(distinguishable.map(\.symbolName))
     #expect(symbols.count == distinguishable.count, "every notice must have its own symbol")
@@ -1246,7 +1248,7 @@ struct TranscriptPresentationTests {
 
   @Test(
     "a named session with no file yet shares the empty directory's glyph",
-    arguments: [AgentStatus.idle, .unknown, nil])
+    arguments: [AgentStatus.blocked, .idle, .unknown, nil])
   func aNamedSessionWithNoFileYetSharesTheWaitGlyph(status: AgentStatus?) {
     let named = TranscriptNotice(
       absence: .reportedSessionMissing(sessionID: "s", directory: "/p"), agentStatus: status)
@@ -1255,22 +1257,46 @@ struct TranscriptPresentationTests {
     #expect(named.symbolName == empty.symbolName)
   }
 
-  /// Claude Code's folder-trust prompt reports blocked with no file, and Enter on it picks
-  /// "No, exit". The notice must not invite a message, and has no Retry (#122).
+  // MARK: - A held pane (#122)
+
+  /// Claude Code's folder-trust prompt: blocked, no session, no file. Enter on it picks
+  /// "No, exit", so the notice must not invite a message, and it has no Retry.
   @Test(
-    "a blocked agent with no file yet is sent to the screen, not to the composer",
+    "a held pane waiting for a file is sent to the screen, not to the composer",
     arguments: [
       TranscriptAbsence.noSessionFiles(directory: "/home/x/project"),
       .reportedSessionMissing(sessionID: "s", directory: "/home/x/project"),
     ])
-  func aBlockedAgentWithNoFileIsSentToTheScreen(absence: TranscriptAbsence) {
-    let notice = TranscriptNotice(absence: absence, agentStatus: .blocked)
-    #expect(notice.title == "Waiting on its screen")
+  func aHeldPaneIsSentToTheScreen(absence: TranscriptAbsence) {
+    let notice = TranscriptNotice(absence: absence, agentStatus: .blocked, hold: .agentAsksOnScreen)
+    #expect(notice.title == "The agent is asking on its screen")
     #expect(notice.message.contains(TranscriptNotice.showScreenTitle))
     #expect(!notice.message.contains("Send a message"))
+    #expect(!notice.message.contains("has not started"), "also true mid-conversation")
     #expect(notice.offersScreen(inSubagentChat: false))
     #expect(!notice.offersRetry)
     #expect(notice.symbolName == "hand.raised")
+  }
+
+  /// No hold, or an absence that is not a wait for a file, is the notice it always was.
+  @Test(
+    "a pane that is not held, or not waiting for a file, gets its ordinary notice",
+    arguments: [AgentStatus?.none] + AgentStatus.allCases.map { $0 },
+    [
+      TranscriptAbsence.noSessionFiles(directory: "/home/x/project"),
+      .reportedSessionMissing(sessionID: "s", directory: "/home/x/project"),
+      .paneHasNoDirectory,
+      .agentNotSupported(agent: "Gemini"),
+    ])
+  func anUnheldPaneGetsTheOrdinaryNotice(status: AgentStatus?, absence: TranscriptAbsence) {
+    #expect(
+      TranscriptNotice(absence: absence, agentStatus: status, hold: nil)
+        == TranscriptNotice(absence: absence, agentStatus: status))
+    if !absence.awaitsFirstFile {
+      #expect(
+        TranscriptNotice(absence: absence, agentStatus: status, hold: .agentAsksOnScreen)
+          == TranscriptNotice(absence: absence, agentStatus: status))
+    }
   }
 
   /// A new Claude Code session is named before its file exists, and the file appears with
@@ -1298,11 +1324,10 @@ struct TranscriptPresentationTests {
     #expect(notice.symbolName == "exclamationmark.triangle")
   }
 
-  /// A working or finished agent has had its prompt and gets the fault. A blocked one is a new
-  /// Claude on its trust prompt (`FakeControl.treeWithUnstartedAgent`) and is sent to the
-  /// screen; see `aBlockedAgentWithNoFileIsSentToTheScreen`. Every other status keeps the
-  /// wait. `noSessionFiles` is included because a reported id in an empty directory lands
-  /// there. The fault and the wait keep the retry.
+  /// A working or finished agent has had its prompt and gets the fault. Every other status
+  /// keeps the wait: a new Claude on its trust prompt reports blocked before any prompt
+  /// (`FakeControl.treeWithUnstartedAgent`). `noSessionFiles` is included because a reported
+  /// id in an empty directory lands there. Both keep the retry.
   @Test(
     "a missing file is a fault once the agent has had its prompt, and a wait before",
     arguments: [AgentStatus?.none] + AgentStatus.allCases.map { $0 },
@@ -1312,11 +1337,6 @@ struct TranscriptPresentationTests {
     ])
   func aMissingFileFollowsTheAgentStatus(status: AgentStatus?, absence: TranscriptAbsence) {
     let notice = TranscriptNotice(absence: absence, agentStatus: status)
-    if status == .blocked {
-      #expect(notice.title == "Waiting on its screen")
-      #expect(!notice.offersRetry)
-      return
-    }
     let prompted: Bool
     switch status {
     case .working, .done: prompted = true
