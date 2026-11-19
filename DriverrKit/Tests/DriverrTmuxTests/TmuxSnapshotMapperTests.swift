@@ -145,7 +145,9 @@ struct TmuxSnapshotMapperTests {
     #expect(pane.directory == "/home/dev/app")
     #expect(pane.viewportRows == 40)
     #expect(pane.agent == nil)
-    #expect(pane.terminalID == nil, "%N is reused after a restart, so it is no witness")
+    // The pane's own id, which the live terminal opens. It is reused after a restart, so the
+    // directory stays the witness.
+    #expect(pane.terminalID == pane.id)
     #expect(pane.sessionWitness == "/home/dev/app")
     #expect(result.agentStatusCounts.shells == 1)
   }

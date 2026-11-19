@@ -620,7 +620,6 @@ struct TmuxControlActionTests {
   func startTerminal() async throws {
     let host = FakeTmuxHost.seeded()
     let control = TmuxControl(run: host.runner)
-    #expect(!control.canStartTerminal, "off until a tmux pane's terminal can be shown")
     let id = try await control.startTerminal()
     #expect(id == "tmux:%4")
     let tree = try await control.snapshot()

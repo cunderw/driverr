@@ -16,17 +16,32 @@ import Foundation
 ///
 /// **Polls, because nothing subscribes.** tmux's control mode reports only the attached
 /// session's panes, so `changes` is `nil` and `needsPolling` is `true`. Control mode is for
-/// the live terminal, in a later slice.
+/// the live terminal only. See `TmuxAttacher`.
 public struct TmuxControl: HerdrControl {
   /// How to reach `tmux` on the host. Discovery may set an absolute path, because an SSH exec
   /// channel's non-login shell may lack Homebrew on `PATH`. See `discovering(run:)`.
   public let binaryPath: String
   private let run: CommandRunner
   private let backoff = NoServerBackoff()
+  /// What opens a pane's live terminal, or `nil` with no way to start a long-lived command.
+  private let attacher: TmuxAttacher?
 
-  public init(binaryPath: String = "tmux", run: @escaping CommandRunner) {
+  /// - Parameter open: starts a long-lived command, for the control clients the live terminal
+  ///   runs. `nil` leaves this control without a terminal.
+  /// - Parameter resizesWindow: whether the phone may size the desk's tmux window to its own
+  ///   while a pane is open. Asked at each open, so a change reaches the next one.
+  public init(
+    binaryPath: String = "tmux",
+    run: @escaping CommandRunner,
+    open: StreamRunner? = nil,
+    resizesWindow: @escaping @Sendable () async -> Bool = { true }
+  ) {
     self.binaryPath = binaryPath
     self.run = run
+    attacher = open.map {
+      TmuxAttacher(
+        binary: "\(shellQuoted(binaryPath)) -u", run: run, open: $0, resizesWindow: resizesWindow)
+    }
   }
 
   /// The most polls in a row that skip a tmux with no server, counted in ticks, as
@@ -155,9 +170,13 @@ public struct TmuxControl: HerdrControl {
   ///
   /// `attach-session -t %N` makes that pane's window current in its session, so the desk's
   /// view moves with the phone, and attaching to the session alone shows whichever pane is
-  /// current there. The live terminal opens a pane through `paneAttacher(for:)` instead, and
-  /// until it does, `TerminalSceneModel` says the terminal is unavailable.
+  /// current there. The live terminal opens a pane through `paneAttacher(for:)` instead.
   public func attachCommand(for pane: Pane) -> String? { nil }
+
+  /// The control-mode attacher, for a tmux pane. See `TmuxAttacher`.
+  public func paneAttacher(for paneID: String) -> (any PaneAttacher)? {
+    TmuxID.isTmux(paneID) ? attacher : nil
+  }
 
   // MARK: Input
 
@@ -243,9 +262,8 @@ public struct TmuxControl: HerdrControl {
     )
   }
 
-  /// `false` until a tmux pane's terminal can be shown. A window started now would open on the
-  /// desk and then show nothing on the phone. `startTerminal()` still works, for that day.
-  public var canStartTerminal: Bool { false }
+  /// Whether a window started here can be shown: only with a way to open its terminal.
+  public var canStartTerminal: Bool { attacher != nil }
 
   /// Opens a window in the most recently used session, or a session when no server runs, and
   /// returns the id of its pane.
