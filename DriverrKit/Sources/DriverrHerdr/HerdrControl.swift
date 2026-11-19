@@ -169,6 +169,9 @@ public protocol HerdrControl: Sendable {
   ///
   /// An agent stopped at a startup question, such as Claude Code's folder trust check, has
   /// started: the question is for the person, in that pane.
+  ///
+  /// It can take about 10 s on herdr's TUI, which waits for the agent. See
+  /// `CLIControl.agentStartTimeoutMilliseconds`.
   func startAgent(_ launch: AgentLaunch) async throws -> String
 
   /// Makes the next `snapshot()` ask every side it would skip on a timer.
@@ -564,6 +567,9 @@ public struct CLIControl: HerdrControl {
   /// a startup question such as Claude Code's folder trust check, and the agent is running.
   /// The message goes as `-- -- <message>`: the first `--` ends herdr's options, and herdr types
   /// the second, so a message that starts with `-` stays a message.
+  ///
+  /// **The call can take about 10 s**: with a first message in a folder the agent trusts, and
+  /// for a program that is not installed. See `agentStartTimeoutMilliseconds`.
   public func startAgent(_ launch: AgentLaunch) async throws -> String {
     try launch.checkLength()
     let directory = try await resolvedDirectory(for: launch)
@@ -577,6 +583,7 @@ public struct CLIControl: HerdrControl {
     var arguments =
       "agent start \(Self.agentName(folder: folder, paneID: paneID, kind: launch.kind))"
       + " --kind \(launch.kind.command) --pane \(shellQuoted(paneID))"
+      + " --timeout \(Self.agentStartTimeoutMilliseconds)"
     if let prompt = launch.typedPrompt { arguments += " -- -- \(shellQuoted(prompt))" }
 
     let result: CommandResult
@@ -589,11 +596,35 @@ public struct CLIControl: HerdrControl {
         reason: (error as? AppError)?.localizedDescription ?? "Could not run herdr on this host.")
     }
     if result.exitStatus == 0 || Self.refusalCode(in: result) == "agent_not_ready" { return paneID }
+    // A `timeout` is also a working agent, so the pane is asked before the start counts as
+    // failed. A missing program times out the same way and has no agent there.
+    if await hasAgent(launch.kind, inPane: paneID) { return paneID }
     throw AppError.agentDidNotStart(
       paneID: paneID, place: folder,
       reason: Self.refusal(in: result)
         ?? Self.failure(exitStatus: result.exitStatus, standardError: result.standardError)
         .localizedDescription)
+  }
+
+  /// How long `agent start` may wait for the agent to be ready, in milliseconds.
+  ///
+  /// herdr's own default is 30 s, and it keeps waiting while the agent is `working`: it
+  /// returns at idle or done, at blocked (`agent_not_ready`), or at the timeout (herdr's
+  /// `src/cli/agent.rs`). A first message in a folder the agent already trusts starts a turn
+  /// at once, so that start ends at this timeout, and `hasAgent(_:inPane:)` then finds the
+  /// agent. 10 s, and not less: Claude Code reached its trust check in about 3.4 s and Codex
+  /// was ready in about 4 s on #97, and an agent that is not yet detected when this ends
+  /// reads as one that did not start.
+  static let agentStartTimeoutMilliseconds = 10_000
+
+  /// Whether herdr detects an agent of this kind in the pane: `agent get` by pane id. A shell
+  /// pane is `agent_not_found`. Measured on #97.
+  private func hasAgent(_ kind: AgentLaunch.Kind, inPane paneID: String) async -> Bool {
+    guard let output = try? await execute("agent get \(shellQuoted(paneID))"),
+      let answer = try? JSONDecoder().decode(
+        HerdrResponse<HerdrAgentGetResult>.self, from: Data(output.utf8))
+    else { return false }
+    return answer.result.agent.agent == kind.command
   }
 
   /// The folder's absolute path on the host. Not a herdr call, so no socket path.

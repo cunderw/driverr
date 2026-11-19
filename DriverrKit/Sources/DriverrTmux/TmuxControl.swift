@@ -330,6 +330,8 @@ public struct TmuxControl: HerdrControl {
     guard let id = TmuxID.validRaw(raw, kind: .pane) else { throw AppError.herdrResponseUnreadable }
     let paneID = TmuxID.pane(id)
 
+    // Best effort: a tmux that refuses it still gets the line, as before.
+    _ = try? await execute(TmuxCommands.quitModes(binary: binary, pane: shellQuoted(id)))
     do {
       try await submitText(paneID: paneID, text: launch.typedLine)
     } catch {

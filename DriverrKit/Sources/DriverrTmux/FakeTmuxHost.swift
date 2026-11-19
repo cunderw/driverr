@@ -488,6 +488,11 @@ public actor FakeTmuxHost {
       sessions[location.session].windows[location.window].name = expanded
       sessions[location.session].windows[location.window].isAutoNamed = false
       return Self.success("")
+    case "copy-mode":
+      // Only `-q`, which leaves any mode. No pane here is ever in one.
+      guard flags.has("-q") else { return Self.failure("unknown command: copy-mode", status: 1) }
+      guard target(flags.value("-t")) != nil else { return Self.noPane(flags.value("-t")) }
+      return Self.success("")
     case "new-window":
       return newWindow(&flags)
     case "new-session":
@@ -506,7 +511,7 @@ public actor FakeTmuxHost {
     /// no command here takes. This is what a label that starts with `-` becomes without `--`.
     private(set) var unknown: [String] = []
 
-    private static let known: Set<String> = ["-a", "-d", "-h", "-v", "-P", "-l", "-H", "-e", "-p"]
+    private static let known: Set<String> = ["-a", "-d", "-h", "-v", "-P", "-l", "-H", "-e", "-p", "-q"]
     private static let withValue: Set<String> = ["-t", "-F", "-c", "-T", "-s", "-n", "-f"]
 
     init(_ arguments: [String]) {

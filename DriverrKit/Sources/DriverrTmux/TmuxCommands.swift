@@ -221,6 +221,15 @@ enum TmuxCommands {
     "\(binary) new-session -d -P -F \(shellQuoted("#{pane_id}"))"
   }
 
+  /// Takes the pane out of any mode, and does nothing to a pane in none.
+  ///
+  /// The first pane of a new server can be in view mode a moment after it starts, when the
+  /// server's configuration prints something. Text sent then is read as mode keys, or refused
+  /// with "no current client". Measured on 3.7c. `pane` is shell-quoted.
+  static func quitModes(binary: String, pane: String) -> String {
+    "\(binary) copy-mode -q -t \(pane)"
+  }
+
   /// `newWindow(binary:)`, named `name` and started in `folder`.
   ///
   /// tmux expands a format in `-c`, so every `#` is doubled: measured on 3.7c, a folder named

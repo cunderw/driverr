@@ -18,6 +18,17 @@ private final class LaunchHost: @unchecked Sendable {
     standardOutput: #"{"id":"cli:agent:start","result":{"type":"agent_started"}}"#,
     standardError: "", exitStatus: 0)
 
+  /// What `agent get <pane>` answers: by default no agent, as for a shell, measured on #97.
+  var agentGet = LaunchHost.refusal("agent_not_found", "agent target w2:p1 not found")
+
+  /// `agent get`'s answer for a pane with this agent, trimmed from herdr 0.9.5's.
+  static func found(_ agent: String) -> CommandResult {
+    CommandResult(
+      standardOutput: #"{"id":"cli:agent:get","result":{"agent":{"agent":"\#(agent)","#
+        + #""agent_status":"working","name":"my-app-w2p1","pane_id":"w2:p1"}}}"#,
+      standardError: "", exitStatus: 0)
+  }
+
   var runner: CommandRunner {
     { [self] command in
       lock.withLock { _commands.append(command) }
@@ -44,6 +55,7 @@ private final class LaunchHost: @unchecked Sendable {
       return CommandResult(standardOutput: json, standardError: "", exitStatus: 0)
     }
     if command.contains("agent start") { return agentStart }
+    if command.contains("agent get") { return agentGet }
     return CommandResult(standardOutput: "", standardError: "unexpected\n", exitStatus: 2)
   }
 
@@ -77,7 +89,7 @@ struct CLIControlAgentLaunchTests {
       host.commands == [
         AgentLaunch.resolveCommand(for: "~/my app"),
         "herdr workspace create --cwd '/srv/my app' --label 'my app' --no-focus",
-        "herdr agent start my-app-w2p1 --kind claude --pane 'w2:p1' -- -- 'fix the build'",
+        "herdr agent start my-app-w2p1 --kind claude --pane 'w2:p1' --timeout 10000 -- -- 'fix the build'",
       ])
   }
 
@@ -86,7 +98,7 @@ struct CLIControlAgentLaunchTests {
     let host = LaunchHost()
     _ = try await CLIControl(run: host.runner).startAgent(
       AgentLaunch(kind: .codex, directory: "/srv/my app"))
-    #expect(host.commands.last == "herdr agent start my-app-w2p1 --kind codex --pane 'w2:p1'")
+    #expect(host.commands.last == "herdr agent start my-app-w2p1 --kind codex --pane 'w2:p1' --timeout 10000")
   }
 
   @Test("the message herdr types is the one tmux and a core type: one line, no tabs")
@@ -144,7 +156,27 @@ struct CLIControlAgentLaunchTests {
     ) {
       try await CLIControl(run: host.runner).startAgent(launch)
     }
+    #expect(host.commands.last == "herdr agent get 'w2:p1'", "the pane was asked first")
     #expect(!host.commands.contains { $0.contains("close") }, "the pane stays")
+  }
+
+  /// herdr keeps `agent start` waiting while the agent works, so a first message in a folder
+  /// the agent trusts ends in `timeout` on a running agent (herdr's `src/cli/agent.rs`).
+  @Test("a timeout with the agent detected in the pane is a start")
+  func timeoutWithAgentIsStarted() async throws {
+    let host = LaunchHost()
+    host.agentStart = LaunchHost.refusal("timeout", "timed out waiting for agent startup")
+    host.agentGet = LaunchHost.found("claude")
+    #expect(try await CLIControl(run: host.runner).startAgent(launch) == "w2:p1")
+    #expect(host.commands.last == "herdr agent get 'w2:p1'")
+  }
+
+  @Test("an agent of another kind in the pane is not this start")
+  func otherAgentIsNotStarted() async {
+    let host = LaunchHost()
+    host.agentStart = LaunchHost.refusal("timeout", "timed out waiting for agent startup")
+    host.agentGet = LaunchHost.found("codex")
+    await #expect(throws: AppError.self) { try await CLIControl(run: host.runner).startAgent(launch) }
   }
 
   @Test("a link that drops at the agent start still names the open pane")

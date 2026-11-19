@@ -38,6 +38,11 @@ struct HerdrWorkspaceCreated: Decodable, Sendable {
   }
 }
 
+/// What `agent get` answers for a pane with an agent in it.
+struct HerdrAgentGetResult: Decodable, Sendable {
+  let agent: HerdrAgent
+}
+
 struct HerdrSnapshotResult: Decodable, Sendable {
   let snapshot: HerdrSessionSnapshot
 }
