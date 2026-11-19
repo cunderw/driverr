@@ -14,8 +14,8 @@ struct SkillCatalogTests {
 
   @Test("all four locations are asked about in one command")
   func asksAboutEveryLocation() {
-    let command = TranscriptCommands.skillsCommand(cwd: "/home/carson/dev/driverr")
-    #expect(command.contains(#""$h"/.claude/skills/*/"#))
+    let command = TranscriptCommands.skillsCommand(cwd: "/home/x/dev/driverr")
+    #expect(command.contains(#""$k"/skills/*/"#))
     #expect(command.contains(#""$c"/.claude/skills/*/"#))
     #expect(command.contains(#""$c"/.claude/commands/*.md"#))
     #expect(command.contains("installed_plugins.json"))
@@ -25,7 +25,7 @@ struct SkillCatalogTests {
   @Test("a pane with no directory asks only about the user and plugin scopes")
   func degradesWithoutADirectory() {
     let command = TranscriptCommands.skillsCommand(cwd: nil)
-    #expect(command.contains(#""$h"/.claude/skills/*/"#))
+    #expect(command.contains(#""$k"/skills/*/"#))
     #expect(!command.contains(".claude/commands"))
     #expect(!command.contains("$c"))
     #expect(command.contains("installed_plugins.json"))
@@ -36,11 +36,20 @@ struct SkillCatalogTests {
     #expect(TranscriptCommands.skillsCommand(cwd: nil).contains(#"h="$HOME""#))
   }
 
+  /// `$h` is the fallback, so a host with no variable reads `~/.claude` as before.
+  @Test("the user's skills and plugin manifest follow CLAUDE_CONFIG_DIR, and the project's do not")
+  func userScopeFollowsTheConfigDirectory() {
+    let command = TranscriptCommands.skillsCommand(cwd: "/home/x/dev/driverr")
+    #expect(command.contains("k=${CLAUDE_CONFIG_DIR:-$h/.claude}"))
+    #expect(command.contains("j=$k/plugins/installed_plugins.json"))
+    #expect(!command.contains(#""$h"/.claude"#))
+  }
+
   /// A working directory reaches `/bin/sh` as a string; `shellQuoted` keeps it an argument.
   @Test("a working directory with a space in it is quoted")
   func quotesTheWorkingDirectory() {
-    let command = TranscriptCommands.skillsCommand(cwd: "/home/carson/my projects/driverr")
-    #expect(command.contains(#"c='/home/carson/my projects/driverr'"#))
+    let command = TranscriptCommands.skillsCommand(cwd: "/home/x/my projects/driverr")
+    #expect(command.contains(#"c='/home/x/my projects/driverr'"#))
   }
 
   /// The plugin cache keeps old version directories, so globbing it would offer commands from
@@ -76,7 +85,7 @@ struct SkillCatalogTests {
 
   @Test("nothing here needs more than POSIX")
   func staysPOSIX() {
-    let command = TranscriptCommands.skillsCommand(cwd: "/home/carson/dev/driverr")
+    let command = TranscriptCommands.skillsCommand(cwd: "/home/x/dev/driverr")
     for tool in ["jq", "python3", "find ", "xargs"] {
       #expect(!command.contains(tool), "\(tool) is not installed everywhere")
     }
@@ -269,7 +278,7 @@ struct SkillCatalogTests {
     ])
     let reader = TranscriptReader(run: host.run)
 
-    let catalog = await reader.skills(cwd: "/home/carson/dev/driverr")
+    let catalog = await reader.skills(cwd: "/home/x/dev/driverr")
 
     let found = catalog.commands.filter { $0.source != .builtIn }
     #expect(found.map(\.name) == ["/analyze", "/push"])

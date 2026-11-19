@@ -1,3 +1,4 @@
+import DriverrCore
 import Foundation
 
 /// Where Claude Code keeps a session's transcript. The project directory is a pure
@@ -16,9 +17,14 @@ enum ClaudeProjects {
     return String(path.map { $0 == "/" || $0 == "." ? "-" : $0 })
   }
 
-  /// Where the project directories live, as a shell fragment the host expands. `$HOME`,
-  /// because the login account need not be the one named in a pane's `cwd`.
-  static let root = "\"$HOME/.claude/projects\""
+  /// Where the project directories live, as a shell fragment the host expands. Claude Code's
+  /// configuration directory, `${CLAUDE_CONFIG_DIR:-$HOME/.claude}`, as
+  /// `AgentIntegration.claudeCode` resolves it, because the login account need not be the one
+  /// named in a pane's `cwd`.
+  ///
+  /// The variable only counts if the shell that runs the command has it. A variable exported
+  /// only in an interactive shell's rc file does not reach a non-interactive SSH shell.
+  static let root = "\(AgentIntegration.claudeCode.configDirectory)/projects"
 
   static let fileExtension = "jsonl"
 }

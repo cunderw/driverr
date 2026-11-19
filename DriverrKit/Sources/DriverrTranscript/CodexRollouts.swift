@@ -3,7 +3,7 @@ import Foundation
 
 /// Where Codex CLI keeps a rollout, and how to pick a pane's own thread out of them.
 ///
-/// Rollouts are `~/.codex/sessions/<yyyy>/<mm>/<dd>/rollout-<timestamp>-<uuid>.jsonl`.
+/// Rollouts are `${CODEX_HOME:-~/.codex}/sessions/<yyyy>/<mm>/<dd>/rollout-<timestamp>-<uuid>.jsonl`.
 /// Line 1 is always a `session_meta` record whose `payload.id` is the filename's uuid.
 ///
 /// `thread_source` is `user` (the pane's thread), `subagent` or `guardian_review` (Codex's
@@ -17,9 +17,10 @@ import Foundation
 /// each key pattern occurs once on line 1, and a quote inside a JSON string is escaped, so
 /// no transcript text can forge one.
 enum CodexRollouts {
-  /// Where the day directories live, as a shell fragment the host expands. `$HOME`, for
-  /// `ClaudeProjects.root`'s reason.
-  static let root = "\"$HOME/.codex/sessions\""
+  /// Where the day directories live, as a shell fragment the host expands:
+  /// `${CODEX_HOME:-$HOME/.codex}/sessions`, Codex's own override, for `ClaudeProjects.root`'s
+  /// reason.
+  static let root = "\"${CODEX_HOME:-$HOME/.codex}\"/sessions"
 
   static let fileExtension = "jsonl"
 
