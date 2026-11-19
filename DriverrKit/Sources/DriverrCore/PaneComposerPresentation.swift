@@ -326,8 +326,10 @@ public enum PaneComposerHold: Equatable, Sendable {
   ///
   /// The watch restarts on a pane switch back, on the app coming to the front, and on a new
   /// pending call, and each restart has no screen for a moment. An open picker stays held
-  /// until a settled read says it closed. Released in between, Send would turn back on and a
-  /// waiting upload would type its path into the picker.
+  /// until the next settled read, answered or refused. Released in between, Send would turn
+  /// back on and a waiting upload would type its path into the picker. A refused read also
+  /// releases it: that is the chosen trade against a hold that sticks for ever on a pane whose
+  /// reads keep failing.
   public static func reason(
     agent: Agent?, screen: PaneScreen?, awaitingRead: Bool, previous: PaneComposerHold?
   ) -> PaneComposerHold? {

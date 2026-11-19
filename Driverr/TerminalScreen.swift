@@ -518,7 +518,8 @@ struct TerminalScreen: View {
   /// `PaneComposerHold.reason(agent:screen:)`.
   ///
   /// An open picker stays held while a restarted watch has no settled read, so the hold lifts
-  /// only on a read that shows the picker closed. See
+  /// only on a settled read, answered or refused. A refused read also releases it, the chosen
+  /// trade against a hold that sticks for ever on a pane whose reads keep failing. See
   /// `PaneComposerHold.reason(agent:screen:awaitingRead:previous:)`.
   private var composerHold: PaneComposerHold? {
     PaneComposerHold.reason(
