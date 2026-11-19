@@ -68,11 +68,12 @@ struct TmuxCommandsTests {
   private let tmux = "tmux"
   private let pane = "'%3'"
 
-  @Test("the listing is one list-panes -a with the format quoted")
+  @Test("the listing is one list-panes -a with the format quoted, then list-clients")
   func listPanes() {
     let command = TmuxCommands.listPanes(binary: tmux)
     #expect(command.hasPrefix("tmux list-panes -a -F '#{pane_id}"))
-    #expect(command.hasSuffix("#{pane_current_path}'"))
+    #expect(command.contains("#{pane_current_path}' \\; list-clients -F "))
+    #expect(command.hasSuffix(" -F '\(TmuxClientFormat.marker) #{client_pid}'"))
     #expect(command.contains(TmuxPaneFormat.delimiter))
   }
 

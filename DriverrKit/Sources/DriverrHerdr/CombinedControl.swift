@@ -322,23 +322,37 @@ public struct CombinedControl: HerdrControl {
     _ reads: [Result<SessionTree, any Error>]
   ) throws -> SessionTree {
     let trees = reads.compactMap { try? $0.get() }
+    let claims = trees.reduce(into: Set<MirrorClaim>()) { $0.formUnion($1.mirrorClaims) }
     switch tuiSide {
     case .tree(let tui):
-      return SessionTree(
+      let tree = SessionTree(
         workspaces: tui.workspaces + trees.flatMap(\.workspaces),
         focusedPaneID: tui.focusedPaneID,
-        coreID: tui.coreID ?? trees.lazy.compactMap(\.coreID).first
+        coreID: tui.coreID ?? trees.lazy.compactMap(\.coreID).first,
+        mirrorClaims: tui.mirrorClaims.union(claims)
       )
+      return primaryIsTUI ? tree.markingMirrors(mirrors(in: tree.mirrorClaims)) : tree
     case .noSession(let failure):
       guard !trees.isEmpty else { throw failure }
       return SessionTree(
         workspaces: trees.flatMap(\.workspaces),
         focusedPaneID: trees.lazy.compactMap(\.focusedPaneID).first,
-        coreID: trees.lazy.compactMap(\.coreID).first
+        coreID: trees.lazy.compactMap(\.coreID).first,
+        mirrorClaims: claims
       )
     case .failed(let failure):
       throw failure
     }
+  }
+
+  /// The panes whose claims name the herdr session this host's TUI is bound to.
+  ///
+  /// Only for a TUI that answered with a tree: with no herdr session listed, a mirror is the only
+  /// way to the panes it shows, so it stays. A core standing in for the TUI is not herdr's
+  /// session, and herdr-core hosts are not measured.
+  private func mirrors(in claims: Set<MirrorClaim>) -> Set<String> {
+    let session = HerdrSessionKey(socketPath: socketPath)
+    return Set(claims.filter { $0.session == session }.map(\.paneID))
   }
 
   /// Not `.notInstalled`, which `CLIControl.availability` also answers when its status

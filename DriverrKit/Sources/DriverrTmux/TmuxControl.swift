@@ -111,11 +111,15 @@ public struct TmuxControl: HerdrControl {
     await backoff.reset()
   }
 
-  /// The panes, and then the agents in them.
+  /// The panes, then the agents in them, then the panes that show herdr or that herdr shows.
   ///
   /// **The process table is read only when there are panes**, so a host with tmux installed and
   /// no server costs one command a check, and `longestNoServerBackoff` spaces the checks out.
   /// `resetBackoff()` ends the gap.
+  ///
+  /// **A host with no herdr process runs no command for mirrors.** The clients come with the
+  /// listing, and a process's details are read only when the table holds a `herdr`. See
+  /// `TmuxMirrors`.
   public func snapshot() async throws -> SessionTree {
     if await backoff.skip() { return .empty }
     let output = try await execute(
@@ -124,21 +128,44 @@ public struct TmuxControl: HerdrControl {
     await backoff.listed(empty: rows.isEmpty)
     guard !rows.isEmpty else { return .empty }
 
-    // The process table only adds agents, so a host that will not answer it still has a tree.
-    let processes = try? await run(TmuxProcessTable.command)
-    let agents = await agents(forRows: rows, processTable: processes)
+    // The process table only adds agents and mirrors, so a host that will not answer it still
+    // has a tree.
+    let table = try? await run(TmuxProcessTable.command)
+    let processes = table.flatMap { $0.succeeded ? TmuxProcessTable.parse($0.standardOutput) : nil }
+    let agents = await agents(forRows: rows, processes: processes)
+    let claims = await mirrorClaims(
+      forRows: rows, clientPIDs: TmuxClientFormat.pids(from: output), processes: processes)
     try Task.checkCancellation()
-    return TmuxSnapshotMapper.tree(from: rows, agents: agents)
+    return TmuxSnapshotMapper.tree(from: rows, agents: agents, mirrorClaims: claims)
+  }
+
+  /// What `TmuxMirrors` makes of the herdr leaders and the clients. Nothing when the table holds
+  /// no herdr, when there is nobody to ask about, or when the read fails.
+  ///
+  /// **The exit status is ignored.** `grep` exits 1 for a process with none of the variables.
+  private func mirrorClaims(
+    forRows rows: [TmuxPaneRow],
+    clientPIDs: [Int],
+    processes: [TmuxProcess]?
+  ) async -> Set<MirrorClaim> {
+    guard let processes, processes.contains(where: TmuxMirrors.isHerdr) else { return [] }
+    let leaders = TmuxMirrors.herdrLeaders(rows: rows, processes: processes)
+    let pids = Array(Set(leaders.values).union(clientPIDs)).sorted()
+    guard !pids.isEmpty,
+      let result = try? await run(TmuxProcessDetailsRead.command(forPIDs: pids))
+    else { return [] }
+    return TmuxMirrors.claims(
+      herdrLeaders: leaders, clientPIDs: clientPIDs,
+      details: TmuxProcessDetailsRead.details(from: result.standardOutput, forPIDs: pids))
   }
 
   /// The agent in each pane, by raw pane id. A failed process table leaves every pane a shell.
   /// A failed read of Claude's records leaves Claude's panes shells and still finds Codex.
   private func agents(
     forRows rows: [TmuxPaneRow],
-    processTable: CommandResult?
+    processes: [TmuxProcess]?
   ) async -> [String: Agent] {
-    guard let processTable, processTable.succeeded else { return [:] }
-    let processes = TmuxProcessTable.parse(processTable.standardOutput)
+    guard let processes else { return [:] }
 
     var candidates: [String: [Int]] = [:]
     for row in rows {

@@ -18,7 +18,20 @@ public enum HerdrSessionKey: Hashable, Sendable {
   /// read, so `~` and `$HOME` spellings of one directory agree. Any other path is compared
   /// whole.
   public init(socketPath: String?) {
-    self = .standard
+    guard let socketPath, !socketPath.isEmpty else {
+      self = .standard
+      return
+    }
+    let parts = socketPath.split(separator: "/", omittingEmptySubsequences: false)
+    guard parts.last == Self.socketName[...] else {
+      self = .socket(socketPath)
+      return
+    }
+    if parts.count >= 3, parts[parts.count - 3] == "sessions", !parts[parts.count - 2].isEmpty {
+      self = .named(String(parts[parts.count - 2]))
+    } else {
+      self = .standard
+    }
   }
 
   /// The file name of herdr's socket in every session's directory.
@@ -51,7 +64,10 @@ public struct MirrorClaim: Hashable, Sendable {
 extension SessionTree {
   /// This tree with `paneIDs` marked `isMirror`, and every other field as it was.
   public func markingMirrors(_ paneIDs: Set<String>) -> SessionTree {
-    self
+    guard allPanes.contains(where: { paneIDs.contains($0.id) }) else { return self }
+    return rebuilt { panes in
+      panes.map { paneIDs.contains($0.id) ? $0.asMirror : $0 }
+    }
   }
 
   /// This tree without its mirror panes, then without the tabs and workspaces that left empty.
@@ -59,6 +75,49 @@ extension SessionTree {
   /// `paneID` stays whatever it is, for a scene already open on it. A focused pane that is
   /// hidden is no longer the focus. A tab or workspace that was empty already stays.
   public func hidingMirrors(keeping paneID: String? = nil) -> SessionTree {
-    self
+    let hidden = Set(allPanes.filter { $0.isMirror && $0.id != paneID }.map(\.id))
+    guard !hidden.isEmpty else { return self }
+    let kept = rebuilt { panes in panes.filter { !hidden.contains($0.id) } }
+    return SessionTree(
+      workspaces: kept.workspaces,
+      focusedPaneID: focusedPaneID.flatMap { hidden.contains($0) ? nil : $0 },
+      coreID: coreID,
+      mirrorClaims: mirrorClaims
+    )
+  }
+
+  /// This tree with each tab's panes passed through `change`. A tab that `change` emptied goes,
+  /// and so does a workspace that lost its last tab that way. Every other field is kept.
+  private func rebuilt(_ change: ([Pane]) -> [Pane]) -> SessionTree {
+    SessionTree(
+      workspaces: workspaces.compactMap { workspace in
+        let tabs = workspace.tabs.compactMap { tab -> Tab? in
+          let panes = change(tab.panes)
+          if panes.isEmpty, !tab.panes.isEmpty { return nil }
+          return Tab(
+            id: tab.id, workspaceID: tab.workspaceID, number: tab.number, label: tab.label,
+            isFocused: tab.isFocused, status: tab.status, isAutoNamed: tab.isAutoNamed,
+            panes: panes)
+        }
+        if tabs.isEmpty, !workspace.tabs.isEmpty { return nil }
+        return Workspace(
+          id: workspace.id, number: workspace.number, label: workspace.label,
+          isFocused: workspace.isFocused, status: workspace.status, tabs: tabs,
+          machineCoreID: workspace.machineCoreID)
+      },
+      focusedPaneID: focusedPaneID,
+      coreID: coreID,
+      mirrorClaims: mirrorClaims
+    )
+  }
+}
+
+extension Pane {
+  /// This pane, marked `isMirror`, with every other field as it was.
+  var asMirror: Pane {
+    Pane(
+      id: id, tabID: tabID, workspaceID: workspaceID, title: title, agent: agent,
+      terminalID: terminalID, directory: directory, isFocused: isFocused,
+      viewportRows: viewportRows, isMirror: true)
   }
 }
