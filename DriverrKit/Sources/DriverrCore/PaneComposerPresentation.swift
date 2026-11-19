@@ -329,6 +329,26 @@ public enum PaneComposerCopy {
   public static let suggestionsLabel = "Command suggestions"
   public static let dismissSuggestions = "Dismiss suggestions"
 
+  // MARK: - Saved prompts
+
+  /// The composer's button that opens the saved list, spoken only, and the list's caption.
+  public static let savedPrompts = "Saved prompts"
+  /// Saves the field's text. `saveShort` stands in where the long label does not fit.
+  public static let savePrompt = "Save current text"
+  public static let saveShort = "Save"
+  public static let closeSavedPrompts = "Close saved prompts"
+  /// What the list says before anything is saved: what it is for and how to fill it.
+  public static let noSavedPrompts = "Nothing saved yet. Type a prompt, then Save current text."
+  /// Spoken on a row: a tap fills the field and does not send.
+  public static let insertPromptHint = "Puts the prompt in the field without sending it."
+  /// The row's menu, spoken only, for an `ellipsis`.
+  public static func promptActions(_ name: String) -> String { "Actions for \(name)" }
+  public static let renamePrompt = "Rename"
+  public static let deletePrompt = "Delete"
+  public static let renamePromptTitle = "Rename prompt"
+  public static let promptName = "Prompt name"
+  public static let done = "Done"
+
   // MARK: - Reply chips
 
   /// The pair a raw `y`/`n` prompt with no structured options gets. See

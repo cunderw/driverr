@@ -14,6 +14,9 @@ struct DriverrApp: App {
   /// The per-host Start/Stop, owned here for the reason `settingsModel` is.
   @State private var liveActivityPreferences: LiveActivityPreferencesModel
 
+  /// The composer's saved prompts, owned here for the reason `settingsModel` is.
+  @State private var savedPrompts: SavedPromptsModel
+
   /// Turns a notification tap into an open pane.
   ///
   /// Held for the app's lifetime because `UNUserNotificationCenter.delegate` is `weak`.
@@ -41,6 +44,7 @@ struct DriverrApp: App {
         widgetTheme: environment.widgetTheme))
     _liveActivityPreferences = State(
       initialValue: LiveActivityPreferencesModel(store: environment.liveActivityPreferences))
+    _savedPrompts = State(initialValue: SavedPromptsModel(store: environment.savedPrompts))
     let watch = BackgroundWatchRunner(environment: environment)
     _backgroundWatch = State(initialValue: watch)
 
@@ -102,6 +106,7 @@ struct DriverrApp: App {
         .environment(\.appEnvironment, environment)
         .environment(\.settingsModel, settingsModel)
         .environment(\.liveActivityPreferences, liveActivityPreferences)
+        .environment(\.savedPrompts, savedPrompts)
         .environment(\.backgroundWatch, backgroundWatch)
         // The theme's ANSI 4 drives the app accent. Set here because an environment value
         // does not reach a sheet attached above it, and every sheet is attached below
@@ -111,6 +116,7 @@ struct DriverrApp: App {
         // `BlockedPaneActivityRoute` defines both ends.
         .onOpenURL { ActivityURLRouter.route(url: $0, to: TerminalPresenter.shared) }
         .task { await settingsModel.load() }
+        .task { await savedPrompts.load() }
     }
     // The pane scene's keys, listed in the iPadOS menu bar.
     .commands { PaneCommands() }

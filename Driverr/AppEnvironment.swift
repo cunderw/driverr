@@ -80,6 +80,9 @@ struct AppEnvironment {
   /// `FakeAuthorizedKeysHost`.
   var makeKeyInstallRunner: @Sendable (ConnectionCoordinator) -> CommandRunner
 
+  /// Where the composer's saved prompts are kept. See `UserDefaultsSavedPromptStore`.
+  var savedPrompts: any SavedPromptStore
+
   /// Consent lives here, not at each call site, so nothing can save a password around it.
   var passwordCredentials: PasswordCredentials { PasswordCredentials(store: passwordStore) }
 
@@ -142,7 +145,8 @@ struct AppEnvironment {
     // is busy either. The install command reads nothing from its standard input.
     makeKeyInstallRunner: { coordinator in
       { try await coordinator.run($0, standardInput: Data()) }
-    }
+    },
+    savedPrompts: UserDefaultsSavedPromptStore()
   )
 
   // From here to the `#else`, everything exists for UI tests, look passes, previews and the
@@ -303,8 +307,28 @@ struct AppEnvironment {
       // In memory, so a decline cannot reach the next launch.
       hookOffers: InMemoryHookOfferStore(),
       makeHookRunners: { _ in hookFixture.runners },
-      makeKeyInstallRunner: { _ in keyFixture.run }
+      makeKeyInstallRunner: { _ in keyFixture.run },
+      // In memory, so one test's save cannot reach the next launch. See `seededSavedPrompts`.
+      savedPrompts: InMemorySavedPromptStore(seededSavedPrompts)
     )
+  }
+
+  // MARK: - Saved prompts
+
+  /// `-uiTestingSavedPrompts`: the composer's saved list starts with two prompts, so a test or
+  /// a capture of the list does not have to save them first. Empty otherwise.
+  static var seededSavedPrompts: [SavedPrompt] {
+    guard ProcessInfo.processInfo.arguments.contains("-uiTestingSavedPrompts") else { return [] }
+    return [
+      SavedPrompt(
+        id: UUID(uuidString: "00000000-0000-0000-0000-000000009501")!,
+        name: "Run the tests",
+        text: "Run the whole test suite and tell me what failed."),
+      SavedPrompt(
+        id: UUID(uuidString: "00000000-0000-0000-0000-000000009502")!,
+        name: "Review the diff",
+        text: "Review the current diff for bugs before I commit it."),
+    ]
   }
 
   // MARK: - Installing a key

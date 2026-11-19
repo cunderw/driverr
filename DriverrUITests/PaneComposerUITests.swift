@@ -1163,6 +1163,149 @@ extension PaneComposerUITests {
       "The failure is inline. A sheet or an alert is the shape CLAUDE.md forbids here."
     )
   }
+
+  // MARK: - Saved prompts
+
+  /// Opens a blocked pane, focuses the field and opens the saved list. The list's button is
+  /// in the card, which the focus brings.
+  private func composerWithSavedPrompts(_ launchArguments: [String] = []) -> XCUIApplication {
+    let app = connectedHost(launchArguments)
+    treePaneRow(app, titled: "needs a decision").tap()
+    require(app, "composer.text", "Expected the composer").tap()
+    return app
+  }
+
+  private func openSavedPrompts(_ app: XCUIApplication) {
+    require(app, "composer.prompts", "Expected a saved prompts button in the card").tap()
+    require(app, "composer.prompts.dismiss", "Expected the saved list to open over the card")
+  }
+
+  /// Nothing in the field changed after an insert was sent: a send clears the field and
+  /// brings the conversation's foot back saying "Sent".
+  private func requireNotSent(_ app: XCUIApplication, file: StaticString = #filePath, line: UInt = #line) {
+    let activity = element(app, "pane.chat.activity")
+    if activity.exists {
+      XCTAssertFalse(
+        activity.label.contains("Sent"),
+        "Inserting a saved prompt must not send it. The conversation said: \(activity.label)",
+        file: file,
+        line: line
+      )
+    }
+  }
+
+  /// The field's text is saved from the list's header, shows at the top of the list, and a
+  /// tap on it appends it to the field after one space without sending anything.
+  ///
+  /// Starts with nothing saved, so the empty sentence and the save are both this test's own.
+  func testSavingTheFieldThenInsertingItAppendsWithoutSending() {
+    let app = composerWithSavedPrompts()
+    app.typeText("check the build")
+    openSavedPrompts(app)
+    require(app, "composer.prompts.empty", "Expected the list to say nothing is saved yet")
+
+    require(app, "composer.prompts.save", "Expected Save current text").tap()
+
+    let row = require(app, "composer.prompts.row.0", "Expected the saved text as the first row")
+    XCTAssertEqual(row.label, "check the build", "The row is named after the saved text")
+    requireGone(app, "composer.prompts.empty", "The empty sentence must go once a prompt is saved")
+    XCTAssertFalse(
+      element(app, "composer.prompts.save").isEnabled,
+      "Save must be off for text that is already saved")
+
+    row.tap()
+
+    let field = element(app, "composer.text")
+    XCTAssertEqual(
+      field.value as? String,
+      "check the build check the build",
+      "An insert appends after one space. Field held: \(String(describing: field.value))"
+    )
+    requireGone(app, "composer.prompts.dismiss", "The list must close after an insert")
+    requireNotSent(app)
+  }
+
+  /// Rename is inline, from the row's menu: the field takes the name over, and Done puts the
+  /// new name on the same row.
+  func testRenamingASavedPromptRetitlesItsRow() {
+    let app = composerWithSavedPrompts(["-uiTestingSavedPrompts"])
+    openSavedPrompts(app)
+    XCTAssertEqual(
+      require(app, "composer.prompts.row.1", "Expected the second seeded prompt").label,
+      "Review the diff")
+
+    require(app, "composer.prompts.row.1.more", "Expected the row's menu").tap()
+    require(app, "composer.prompts.rename", "Expected Rename in the row's menu").tap()
+
+    let field = require(app, "composer.prompts.rename.field", "Expected an inline rename field")
+    // The field takes focus itself and selects the whole name; the deletes clear whatever is
+    // left if the selection had not landed when the keys arrived.
+    waitUntilStill(app, field)
+    field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 20) + "Diff check")
+    require(app, "composer.prompts.rename.done", "Expected Done").tap()
+
+    requireGone(app, "composer.prompts.rename.field", "Done must close the rename field")
+    let renamed = require(app, "composer.prompts.row.1", "Expected the renamed row in its place")
+    XCTAssertEqual(renamed.label, "Diff check", "Rename must retitle the row it was opened on")
+    XCTAssertEqual(
+      element(app, "composer.prompts.row.0").label, "Run the tests",
+      "Rename must leave the other row alone")
+    XCTAssertEqual(
+      element(app, "composer.text").value as? String ?? "", "",
+      "Rename must not touch the composer's text")
+  }
+
+  /// A rename field that loses the keyboard some other way than Done or Cancel ends the
+  /// rename unsaved. Here a tap on the composer's field takes the keyboard: the rename field
+  /// goes, the row keeps its name, and the keyboard stays with the composer.
+  ///
+  /// Left running, the rename would keep reporting the composer as focused to the chat with
+  /// no field holding the keyboard.
+  func testTheRenameEndsWhenItsFieldLosesTheKeyboard() {
+    let app = composerWithSavedPrompts(["-uiTestingSavedPrompts"])
+    openSavedPrompts(app)
+    require(app, "composer.prompts.row.1.more", "Expected the row's menu").tap()
+    require(app, "composer.prompts.rename", "Expected Rename in the row's menu").tap()
+
+    let renameField = require(app, "composer.prompts.rename.field", "Expected a rename field")
+    let renameFocused = XCTNSPredicateExpectation(
+      predicate: NSPredicate(format: "hasKeyboardFocus == true"), object: renameField)
+    XCTAssertEqual(
+      XCTWaiter().wait(for: [renameFocused], timeout: 5), .completed,
+      "Expected the rename field to take the keyboard first")
+
+    let composer = element(app, "composer.text")
+    composer.tap()
+
+    requireGone(
+      app, "composer.prompts.rename.field",
+      "The rename must end when its field loses the keyboard")
+    let composerFocused = XCTNSPredicateExpectation(
+      predicate: NSPredicate(format: "hasKeyboardFocus == true"), object: composer)
+    XCTAssertEqual(
+      XCTWaiter().wait(for: [composerFocused], timeout: 5), .completed,
+      "The keyboard must stay with the composer's field")
+    XCTAssertEqual(
+      require(app, "composer.prompts.row.1", "Expected the list back").label,
+      "Review the diff",
+      "A rename that ended this way must not save")
+  }
+
+  /// Delete, from the row's menu, removes that prompt and only that one.
+  func testDeletingASavedPromptRemovesItsRow() {
+    let app = composerWithSavedPrompts(["-uiTestingSavedPrompts"])
+    openSavedPrompts(app)
+    require(app, "composer.prompts.row.1", "Expected two seeded prompts")
+
+    require(app, "composer.prompts.row.0.more", "Expected the row's menu").tap()
+    require(app, "composer.prompts.delete", "Expected Delete in the row's menu").tap()
+
+    requireGone(app, "composer.prompts.row.1", "Delete must leave one row")
+    XCTAssertEqual(
+      require(app, "composer.prompts.row.0", "Expected the other prompt to stay").label,
+      "Review the diff",
+      "Delete must remove the prompt it was opened on")
+  }
 }
 
 /// `SlashCommandMatcher.maximumSuggestions`, restated because the UI test bundle does not

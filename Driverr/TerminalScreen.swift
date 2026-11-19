@@ -23,6 +23,8 @@ struct TerminalScreen: View {
   /// For the pane menu's Start/Stop Live Activity. Read here, because `PaneActionsMenu`
   /// has no host.
   @Environment(\.liveActivityPreferences) private var liveActivityPreferences
+  /// The composer's saved prompts, one list for the whole app.
+  @Environment(\.savedPrompts) private var savedPrompts
   /// For the pane menu's Continue in Background. Read here for the same reason.
   @Environment(\.backgroundWatch) private var backgroundWatch
 
@@ -560,7 +562,8 @@ struct TerminalScreen: View {
         // From the live pane, so the button turns off the moment the pane is blocked.
         modeControl: PaneModeControl(
           pane: pane,
-          deliversShiftTab: model.herdrAvailability?.deliversShiftTab(toPane: pane.id) == true)
+          deliversShiftTab: model.herdrAvailability?.deliversShiftTab(toPane: pane.id) == true),
+        savedPrompts: savedPrompts
       )
     }
   }
