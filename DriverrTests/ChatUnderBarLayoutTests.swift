@@ -48,11 +48,15 @@ struct ChatUnderBarLayoutTests {
     let screen: PaneScreenModel
     var onComposer: @MainActor (CGRect) -> Void
     var onCapsules: @MainActor (CGRect) -> Void
+    /// The stop notice's Continue opt-in, `nil` for none, as `TerminalScreen` hands it in.
+    var continueAtReset: Binding<Bool>? = nil
+    var typeSize: DynamicTypeSize = .large
 
     var body: some View {
       NavigationStack {
         PaneChatView(
-          model: model, agentName: "Claude", screen: screen, onCapsulesFrame: onCapsules)
+          model: model, agentName: "Claude", screen: screen, onCapsulesFrame: onCapsules,
+          continueAtReset: continueAtReset)
           // As `TerminalScreen.paneSurfaces` attaches the composer.
           .safeAreaBar(edge: .bottom, spacing: 0) {
             Color.green
@@ -68,6 +72,7 @@ struct ChatUnderBarLayoutTests {
             ToolbarItem(placement: .primaryAction) { Button("Panes") {} }
           }
       }
+      .environment(\.dynamicTypeSize, typeSize)
     }
   }
 
@@ -109,6 +114,61 @@ struct ChatUnderBarLayoutTests {
     await model.currentLoad?.value
     await model.subagentListLoad?.value
     expectTheConversation(model: model, pane: PreviewSupport.agentPane, floatsCapsules: true)
+  }
+
+  /// At the largest accessibility size the floating stop stack leaves the chat readable: a
+  /// live usage limit with the Continue opt-in, on a blocked pane that also offers Show the
+  /// Screen, takes at most a third of the region between the bar and the composer, on the
+  /// phone and on the iPad (#107). At AX3 the three blocks once covered most of the phone.
+  @Test("at accessibility sizes the stop stack leaves most of the chat visible")
+  func theStopStackIsSmallAtAccessibilitySizes() async {
+    let model = PreviewSupport.transcript(
+      for: PreviewSupport.agentPane, run: AppEnvironment.usageLimitedTranscript.run)
+    await model.currentLoad?.value
+    await model.subagentListLoad?.value
+    #expect(
+      model.transcript?.agentStop?.kind == .rateLimit,
+      "The fixture must end on a usage-limit stop, got \(String(describing: model.transcript?.agentStop))")
+    for size in [HostedProbe.phone, HostedProbe.pad] {
+      expectASmallStopStack(model: model, size: size)
+    }
+  }
+
+  private func expectASmallStopStack(model: PaneTranscriptModel, size: CGSize) {
+    var composer = CGRect.zero
+    var capsules: CGRect?
+    let window = HostedProbe.window(
+      Fixture(
+        model: model,
+        screen: PreviewSupport.paneScreen(for: PreviewSupport.agentPane),
+        onComposer: { composer = $0 },
+        onCapsules: { capsules = $0 },
+        continueAtReset: .constant(false),
+        typeSize: .accessibility5),
+      size: size)
+    pump(until: {
+      first(UICollectionView.self, in: window) != nil && composer.width > 100
+        && capsules != nil
+    })
+    // Let the capsules' text settle at the scaled size.
+    for _ in 0..<10 { RunLoop.current.run(until: Date().addingTimeInterval(0.01)) }
+    guard let bar = first(UINavigationBar.self, in: window), let capsules else {
+      Issue.record(
+        "At \(size): no navigation bar, or no capsules (\(String(describing: capsules))).")
+      withExtendedLifetime(window) {}
+      return
+    }
+    let barBottom = bar.convert(bar.bounds, to: window).maxY
+    let region = composer.minY - barBottom
+    let report = """
+      At \(size) and AX5 the stop stack is \(capsules.height) pt tall (\(capsules.minY)..\
+      \(capsules.maxY)), against the \(region) pt between the bar's bottom at \(barBottom) and \
+      the composer at \(composer.minY). It may take at most a third, \(region / 3) pt.
+      """
+    print(report)
+    #expect(region > 200, "\(report)")
+    #expect(capsules.height <= region / 3, "\(report)")
+    withExtendedLifetime(window) {}
   }
 
   /// The synchronous half: `RunLoop` cannot be pumped from an `async` context.
