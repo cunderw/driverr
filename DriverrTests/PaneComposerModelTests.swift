@@ -286,6 +286,34 @@ struct PaneComposerModelTests {
     #expect(await control.sent == [.keys(paneID: "w1:p2", keys: [.yes])])
   }
 
+  // MARK: - A chip that reads the screen before it sends (#109)
+
+  /// Claude Code's folder-trust dialog takes no digits, so its chip moves the cursor and
+  /// presses Enter. The screen is read once at the tap, and the arrows come from that read.
+  @Test("a trust chip reads the screen and sends the arrows from where the cursor is")
+  func trustChipReadsTheScreen() async {
+    let control = FakeControl(screen: FakeControl.claudeTrustScreen)
+    let model = composer(control)
+    await model.send(ReplyChip(label: "Yes, I trust this folder", action: .cursorTo(option: 2)))
+
+    #expect(await control.screenReads.count == 1)
+    #expect(await control.sent == [.keys(paneID: "w1:p2", keys: [.down, .enter])])
+    #expect(model.state.phase == .sent)
+  }
+
+  /// The dialog went (answered in the terminal, or the agent moved on) between the draw and
+  /// the tap. Enter on whatever is there now could do anything, so nothing goes.
+  @Test("a trust chip whose dialog is gone sends nothing and says why")
+  func trustChipDialogGone() async {
+    let control = FakeControl()
+    let model = composer(control)
+    await model.send(ReplyChip(label: "Yes, I trust this folder", action: .cursorTo(option: 2)))
+
+    #expect(await control.sent.isEmpty)
+    #expect(model.state.failure == .screenQuestionChanged)
+    #expect(model.status?.offersRetry == false)
+  }
+
   @Test("a key goes over as a key, not as its name typed out")
   func sendsKeys() async {
     let control = FakeControl()

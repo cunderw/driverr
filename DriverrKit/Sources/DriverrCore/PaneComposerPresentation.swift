@@ -153,6 +153,14 @@ public struct PaneComposerState: Equatable, Sendable {
     phase = .failed(error)
   }
 
+  /// Nothing went, because the answer could not be worked out: a chip whose question changed
+  /// on the screen before it could send. There is nothing to repeat, so no Retry, and the
+  /// last attempt is forgotten so a Retry cannot resend that instead.
+  public mutating func refused(_ error: AppError) {
+    attempt = nil
+    phase = .failed(error)
+  }
+
   /// The pane as the latest poll reports it. Retires `Sent` once the pane has moved.
   ///
   /// herdr leaving `blocked` is evidence the agent read the reply, and a clock is not. A
@@ -205,7 +213,7 @@ public struct PaneComposerState: Equatable, Sendable {
         message: PaneComposerCopy.failed,
         detail: error.errorDescription ?? PaneComposerCopy.noAnswer,
         tone: .failure,
-        offersRetry: !isRetryHeld
+        offersRetry: attempt != nil && !isRetryHeld
       )
     }
   }
@@ -532,6 +540,12 @@ public struct ReplyChip: Hashable, Sendable, Identifiable {
     /// There is no typed-text action. The picker ignores typed text and its Enter picks the
     /// highlighted option, so typing a label records the wrong answer.
     case keys([PaneKey])
+    /// Move the cursor to the option with this number and press Enter, for a picker that
+    /// takes no digits: Claude Code's folder-trust dialog. The keys are worked out at send
+    /// time from a fresh read of the screen (`PaneQuestionScreen.cursorKeys(to:on:)`),
+    /// because the cursor can move in the terminal after the chips are drawn, and a wrong
+    /// Enter there is "No, exit".
+    case cursorTo(option: Int)
   }
 
   public let label: String
@@ -595,15 +609,14 @@ extension ToolCall {
         // which would draw a blank line.
         question: question.question.isEmpty ? nil : question.question,
         // Each option's picker number, not its label. The picker ignores typed text, and a
-        // digit selects by position. A picker that takes no digits gets the arrow keys from
-        // its cursor and Enter instead; see `PickerTab.cursor`.
+        // digit selects by position. A picker that takes no digits moves its cursor and
+        // presses Enter instead; see `PickerTab.cursor`.
         chips: question.options.indices.compactMap { at in
           PaneKey.digit(question.optionNumbers[at]).map { digit in
             ReplyChip(
               label: question.options[at],
-              action: question.pickerTab?.cursor.map {
-                .keys(Self.moves(from: $0, to: question.optionNumbers[at]) + [.enter])
-              } ?? .key(digit),
+              action: question.pickerTab?.cursor != nil
+                ? .cursorTo(option: question.optionNumbers[at]) : .key(digit),
               detail: question.optionDescriptions.indices.contains(at)
                 ? question.optionDescriptions[at] : nil
             )

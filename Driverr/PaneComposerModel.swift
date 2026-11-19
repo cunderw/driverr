@@ -153,7 +153,26 @@ final class PaneComposerModel: Identifiable {
       await send(key)
     case .keys(let keys):
       await perform { $0.beginSending(keys) }
+    case .cursorTo(let option):
+      await sendCursorAnswer(to: option)
     }
+  }
+
+  /// Answers a picker that takes no digits. Reads the screen once, right before sending, and
+  /// works the arrows out from where the cursor is now, not where it was when the chips were
+  /// drawn. A screen that no longer shows the question sends nothing and says so.
+  private func sendCursorAnswer(to option: Int) async {
+    guard !state.isSending else { return }
+    guard let control = control() else {
+      state.failed(.notConnected(host: "this host"))
+      return
+    }
+    let screen = try? await control.readScreen(of: pane, lines: PaneScreen.maximumLines)
+    guard let keys = screen.flatMap({ PaneQuestionScreen.cursorKeys(to: option, on: $0) }) else {
+      state.refused(.screenQuestionChanged)
+      return
+    }
+    await perform { $0.beginSending(keys) }
   }
 
   /// Sends the failed attempt again, unchanged, rather than rebuilding it from the field.

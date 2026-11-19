@@ -377,6 +377,12 @@ extension PaneQuestionScreen {
     )
   }
 
+  /// The keys that move a picker's cursor to `option` and press Enter, from a fresh read of
+  /// the screen, or `nil` when the screen no longer shows the dialog or its cursor.
+  public static func cursorKeys(to option: Int, on screen: PaneScreen) -> [PaneKey]? {
+    ToolCall.moves(from: 1, to: option) + [.enter]  // STUB
+  }
+
   // MARK: - When to read the screen
 
   /// Whether the chat reads the pane's screen for a question, one `pane read` per tick of

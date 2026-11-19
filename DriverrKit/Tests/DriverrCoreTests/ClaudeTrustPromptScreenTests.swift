@@ -64,26 +64,55 @@ struct ClaudeTrustPromptScreenTests {
     #expect(!read.question.allowsMultiple)
   }
 
-  @Test("Yes moves down from No and presses Enter")
-  func yesFromNo() throws {
+  /// The chips carry the option, not keys: the keys come from a fresh read when one is tapped.
+  @Test("a chip carries its option for a send-time read, not keys from the drawn screen")
+  func chipsCarryTheOption() throws {
     #expect(
       try reply("Yes, I trust this folder", on: ClaudeTrustPromptScreenFixture.wide)
-        == .keys([.down, .enter]))
+        == .cursorTo(option: 2))
+    #expect(try reply("No, exit", on: ClaudeTrustPromptScreenFixture.wide) == .cursorTo(option: 1))
   }
 
-  @Test("No, under the cursor already, is Enter alone")
-  func noFromNo() throws {
-    #expect(try reply("No, exit", on: ClaudeTrustPromptScreenFixture.wide) == .keys([.enter]))
+  /// The narrow capture with the cursor on Yes, as after a `Down` in the terminal.
+  private static let movedToYes = narrow
+    .replacingOccurrences(of: " ❯ No, exit", with: "   No, exit")
+    .replacingOccurrences(of: "   Yes, I trust this folder", with: " ❯ Yes, I trust this folder")
+
+  @Test("from No: Yes is Down and Enter, No is Enter alone")
+  func fromNo() {
+    let fresh = screen(ClaudeTrustPromptScreenFixture.wide)
+    #expect(PaneQuestionScreen.cursorKeys(to: 2, on: fresh) == [.down, .enter])
+    #expect(PaneQuestionScreen.cursorKeys(to: 1, on: fresh) == [.enter])
   }
 
-  /// The cursor moved in the terminal. The screen says where it is.
-  @Test("with the cursor on Yes, No moves up")
-  func noFromYes() throws {
-    let moved = Self.narrow
-      .replacingOccurrences(of: " ❯ No, exit", with: "   No, exit")
-      .replacingOccurrences(of: "   Yes, I trust this folder", with: " ❯ Yes, I trust this folder")
-    #expect(try reply("No, exit", on: moved) == .keys([.up, .enter]))
-    #expect(try reply("Yes, I trust this folder", on: moved) == .keys([.enter]))
+  @Test("from Yes: No is Up and Enter, Yes is Enter alone")
+  func fromYes() {
+    let fresh = screen(Self.movedToYes)
+    #expect(PaneQuestionScreen.cursorKeys(to: 1, on: fresh) == [.up, .enter])
+    #expect(PaneQuestionScreen.cursorKeys(to: 2, on: fresh) == [.enter])
+  }
+
+  /// Drawn with the cursor on No; moved to Yes in the terminal before the tap. The keys come
+  /// from where the cursor is at send time, so Yes is Enter alone, not Down and Enter, which
+  /// would wrap to "No, exit".
+  @Test("a cursor that moved after the chips were drawn is read where it is now")
+  func cursorMovedSinceDrawn() throws {
+    #expect(
+      try reply("Yes, I trust this folder", on: ClaudeTrustPromptScreenFixture.wide)
+        == .cursorTo(option: 2))
+    #expect(PaneQuestionScreen.cursorKeys(to: 2, on: screen(Self.movedToYes)) == [.enter])
+  }
+
+  @Test("a dialog gone at send time gives no keys")
+  func goneAtSend() {
+    #expect(PaneQuestionScreen.cursorKeys(to: 2, on: screen("❯ \n  claude is ready")) == nil)
+    #expect(PaneQuestionScreen.cursorKeys(to: 2, on: PaneScreen(lines: [])) == nil)
+  }
+
+  @Test("a highlight that cannot be read at send time gives no keys")
+  func unreadableAtSend() {
+    let bare = Self.narrow.replacingOccurrences(of: " ❯ No, exit", with: "   No, exit")
+    #expect(PaneQuestionScreen.cursorKeys(to: 2, on: screen(bare)) == nil)
   }
 
   /// Enter picks the row under the cursor, so a row with no cursor gives no keys to trust.
@@ -122,5 +151,27 @@ struct ClaudeTrustPromptScreenTests {
       Transcript.questionCall(
         in: nil, screen: screen(ClaudeTrustPromptScreenFixture.wide), agentStatus: .blocked))
     #expect(call.pendingNotice(agentStatus: .blocked).label == TranscriptChatCopy.pendingQuestion)
+  }
+}
+
+/// A chip whose question changed before it could send: nothing went, and there is nothing to
+/// retry (#109).
+@Suite("A screen question that changed before the send")
+struct ScreenQuestionChangedTests {
+  @Test("the refusal names the screen and offers no Retry, even after an earlier send")
+  func refusal() {
+    var state = PaneComposerState()
+    state.text = "/permissions"
+    _ = state.beginSending()
+    state.succeeded()
+    state.refused(.screenQuestionChanged)
+
+    #expect(state.failure == .screenQuestionChanged)
+    #expect(state.status?.offersRetry == false)
+    #expect(state.beginRetry() == nil, "a Retry must not resend the earlier text")
+    #expect(!AppError.screenQuestionChanged.isRetryable)
+    #expect(
+      AppError.screenQuestionChanged.errorDescription?.contains(TranscriptNotice.showScreenTitle)
+        == true)
   }
 }
