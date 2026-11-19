@@ -2874,13 +2874,18 @@ struct TerminalSceneModelTests {
   /// `FakeTmuxHost` answers the listing. Locating the pane is answered here, because
   /// `FakeTmuxHost` does not print `TmuxAttacher.placeFormat`. Every control client is the one
   /// returned stream, whose `onActivity` wakes `waitUntilSignalled`.
-  private func tmuxScene() async -> (
+  /// - Parameter agentPane: open the seeded host's Claude pane, `%1`, on its chat, which reads
+  ///   it through an observer, instead of the shell `%3` on its terminal.
+  private func tmuxScene(agentPane: Bool = false) async -> (
     TerminalSceneModel, FakeSSHTransport, FakeTmuxControlStream
   ) {
     let seeded = FakeTmuxHost.seeded().runner
     let run: CommandRunner = { command in
       if command.contains("display-message -p -t '%3'") {
         return CommandResult(standardOutput: "$1 @2 150x43\n", standardError: "", exitStatus: 0)
+      }
+      if command.contains("display-message -p -t '%1'") {
+        return CommandResult(standardOutput: "$0 @0 150x43\n", standardError: "", exitStatus: 0)
       }
       return try await seeded(command)
     }
@@ -2891,20 +2896,22 @@ struct TerminalSceneModelTests {
     state.cursorRow = 1
     state.scrollBottom = 1
     let stream = FakeTmuxControlStream(
-      panes: [
-        "%3": .init(
-          window: "@2", session: "$1", state: state, history: ["old one"],
-          screen: ["$ ls", "$ "])
-      ],
-      session: "$1",
+      panes: agentPane
+        ? ["%1": .init(window: "@0", session: "$0", state: state, screen: ["❯ 1. Yes", "  2. No"])]
+        : [
+          "%3": .init(
+            window: "@2", session: "$1", state: state, history: ["old one"],
+            screen: ["$ ls", "$ "])
+        ],
+      session: agentPane ? "$0" : "$1",
       onActivity: { Waker.signalShared() }
     )
     let tmux = TmuxControl(binaryPath: "tmux", run: run, open: { _ in stream })
     let control = CombinedControl.joining(
       tui: FakeControl(), sides: [.init(prefix: TmuxID.prefix, control: tmux)])
     let (scene, transport) = await makeScene(
-      initialTarget: .pane(id: "tmux:%3"),
-      surface: .terminal,
+      initialTarget: .pane(id: agentPane ? "tmux:%1" : "tmux:%3"),
+      surface: agentPane ? .chat : .terminal,
       herdr: control,
       openSettlingWindow: .zero,
       responder: { _ in nil }
@@ -2958,6 +2965,42 @@ struct TerminalSceneModelTests {
       stream.keys(for: "%3").count >= 3
     }
     #expect(String(decoding: stream.keys(for: "%3"), as: UTF8.self) == "hi\r")
+  }
+
+  /// tmux answers a pane's queries itself (#128), so the scene's feed for a tmux pane says so,
+  /// and the emulator's own answer never reaches the pane.
+  @Test("a tmux pane's feed answers queries itself, and drops the emulator's reply")
+  func aTmuxPaneDropsTheEmulatorsReply() async throws {
+    let (scene, transport, stream) = await tmuxScene()
+    let (session, _) = try await paintedTmuxPane(scene, transport)
+    #expect(session.answersQueries)
+
+    session.sendReply(ArraySlice(Array("\u{1b}[?1;2c".utf8)))
+    session.send(text: "k")
+    await waitUntilSignalled("the key never reached tmux") { !stream.keys(for: "%3").isEmpty }
+    #expect(stream.keys(for: "%3") == Data("k".utf8))
+  }
+
+  /// The observer's feed is built apart from the controller's: a tmux agent pane opened on its
+  /// chat is read through an observer.
+  @Test("a tmux agent pane's observer feed answers queries itself")
+  func aTmuxObserverAnswersQueries() async throws {
+    let (scene, _, _) = await tmuxScene(agentPane: true)
+    scene.start()
+    await scene.settle()
+    try #require(scene.currentSession).resize(to: Self.measured)
+    await waitUntilSignalled("the observer never opened") { scene.currentRole == .observer }
+    #expect(scene.currentRole == .observer)
+    #expect(scene.currentSession?.answersQueries == true)
+  }
+
+  /// The rule both feeds use.
+  @Test("only a tmux pane answers its own queries, for the controller and the observer feeds")
+  func onlyATmuxPaneAnswersQueries() {
+    #expect(TerminalSceneModel.answersQueries(.pane(id: "tmux:%3")))
+    #expect(!TerminalSceneModel.answersQueries(.pane(id: "core:t7")))
+    #expect(!TerminalSceneModel.answersQueries(.pane(id: "w1:p1")))
+    #expect(!TerminalSceneModel.answersQueries(.shell))
   }
 
   @Test("the size the view measured sizes the tmux window before the paint")

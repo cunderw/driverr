@@ -41,8 +41,12 @@ why they are identical on every run.*
   [Herdr desktop app](https://github.com/herdrdev/herdr-app), or more than one of them.
   Driverr finds what the host has when it connects, over the same SSH connection.
 - **tmux** — a host with tmux 3.2 or later lists its sessions, windows and panes beside
-  herdr's, and a tmux pane opens as a live terminal. Resizing the window to fit the phone
-  needs tmux 3.3 or later; on 3.2 the pane works, but the phone does not resize it. A
+  herdr's, and a tmux pane opens as a live terminal. While the pane is open, the phone resizes
+  its window to fit, and puts the old size back when you leave. On tmux 3.2, a dropped
+  connection leaves the window at the phone's size until you open and leave a pane in that
+  window from Driverr again, or run `tmux set -wu window-size` in that window. Text and keys that Driverr sends
+  to a tmux pane first take it out of copy mode, so a desk scrolling that pane loses its
+  place. A
   Claude Code or Codex pane in tmux shows its chat, and a blocked one shows in Needs you. A
   Claude Code that asks whether to trust a folder also shows in Needs you. A
   tmux pane that runs the herdr TUI or `hc attach`, or a herdr pane or herdr-core terminal

@@ -59,7 +59,7 @@ struct TerminalMouseReportingTests {
     }
   }
 
-  private func hosted(pane: Bool) throws -> Hosted {
+  private func hosted(pane: Bool, answersQueries: Bool = false) throws -> Hosted {
     let (stream, continuation) = AsyncThrowingStream<Data, any Error>.makeStream()
     let farSide = FarSide()
     let feed = TerminalFeed(
@@ -70,7 +70,8 @@ struct TerminalMouseReportingTests {
       scroll: pane ? { @Sendable _, _ in } : nil,
       // `async`, as herdr's bridge is. A synchronous closure runs on the caller's actor
       // without a hop, so it could never show a reorder.
-      click: pane ? { @Sendable cell async in farSide.record(cell) } : nil
+      click: pane ? { @Sendable cell async in farSide.record(cell) } : nil,
+      answersQueries: answersQueries
     )
     let session = TerminalSession(feed: feed)
     let window = HostedProbe.window(
@@ -601,6 +602,51 @@ struct TerminalMouseReportingTests {
 
     #expect(hosted.farSide.clicks.isEmpty)
     #expect(hosted.farSide.text.isEmpty)
+    withExtendedLifetime(hosted.window) {}
+  }
+
+  // MARK: The emulator's own replies (#128)
+
+  /// A device attributes query, a cursor position query, and the two colour queries.
+  private static let queries = "\u{1b}[c\u{1b}[6n\u{1b}]10;?\u{07}\u{1b}]11;?\u{07}"
+
+  /// tmux answers a pane's queries itself, and its control client sees the queries in the
+  /// pane's output too, so SwiftTerm's answers reached the program a second time, typed.
+  /// Fed through the session's own entry, which is where replies are told from keys.
+  @Test("the emulator's replies to queries never reach a far side that answers them itself")
+  func repliesDroppedWhereTheFarSideAnswers() async throws {
+    let hosted = try hosted(pane: false, answersQueries: true)
+    defer { hosted.finish() }
+    hosted.view.feedKeepingScrollGeometry(ArraySlice(Array(Self.queries.utf8)))
+    hosted.view.send(txt: "typed")
+    await Self.waitFor { hosted.farSide.text.contains("typed") }
+    #expect(hosted.farSide.text == "typed")
+    withExtendedLifetime(hosted.window) {}
+  }
+
+  /// A mouse report also goes out through SwiftTerm's reply path, but from a tap, not from
+  /// the program's output.
+  @Test("a tap's mouse report still reaches a far side that answers queries itself")
+  func clickKeptWhereTheFarSideAnswers() async throws {
+    let hosted = try hosted(pane: false, answersQueries: true)
+    defer { hosted.finish() }
+    hosted.view.feedKeepingScrollGeometry(ArraySlice(Array("\u{1b}[?1000h\u{1b}[?1006h".utf8)))
+    try tap(hosted, at: TerminalCell(column: 6, row: 4))
+    await Self.waitFor { hosted.farSide.text.contains("m") }
+    #expect(hosted.farSide.text == "\u{1b}[<0;7;5M\u{1b}[<0;7;5m")
+    withExtendedLifetime(hosted.window) {}
+  }
+
+  /// An SSH shell's program has nothing else to answer it.
+  @Test("the emulator's replies still reach a far side that does not answer queries")
+  func repliesKeptForAShell() async throws {
+    let hosted = try hosted(pane: false)
+    defer { hosted.finish() }
+    hosted.view.feedKeepingScrollGeometry(ArraySlice(Array("\u{1b}[c".utf8)))
+    hosted.view.send(txt: "typed")
+    await Self.waitFor { hosted.farSide.text.contains("typed") }
+    #expect(hosted.farSide.text.hasPrefix("\u{1b}[?"), "the device attributes answer")
+    #expect(hosted.farSide.text.hasSuffix("ctyped"))
     withExtendedLifetime(hosted.window) {}
   }
 }

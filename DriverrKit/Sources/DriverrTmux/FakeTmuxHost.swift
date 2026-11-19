@@ -27,6 +27,9 @@ public actor FakeTmuxHost {
     /// What `capture-pane` prints, one string per row.
     public var screen: [String]
     public var isActive: Bool
+    /// In copy mode, view mode or another of tmux's modes, where `#{pane_in_mode}` is 1 and
+    /// typed text never reaches the program.
+    public var isInMode: Bool
 
     public init(
       id: Int,
@@ -36,7 +39,8 @@ public actor FakeTmuxHost {
       width: Int = 80,
       height: Int = 24,
       screen: [String] = [],
-      isActive: Bool = false
+      isActive: Bool = false,
+      isInMode: Bool = false
     ) {
       self.id = id
       self.title = title
@@ -46,6 +50,7 @@ public actor FakeTmuxHost {
       self.height = height
       self.screen = screen
       self.isActive = isActive
+      self.isInMode = isInMode
     }
 
     /// tmux's pane tty, which `ps` prints without `/dev/`.
@@ -145,6 +150,8 @@ public actor FakeTmuxHost {
   public private(set) var commands: [String] = []
   /// What typed into each pane, by tmux's id (`%3`).
   public private(set) var input: [String: [Input]] = [:]
+  /// Every pane `copy-mode -q` ran on, by tmux's id, in order, whether or not it was in a mode.
+  public private(set) var modeQuits: [String] = []
   private var nextPane: Int
   private var nextWindow: Int
   private var nextSession: Int
@@ -185,6 +192,17 @@ public actor FakeTmuxHost {
       for w in sessions[s].windows.indices {
         for p in sessions[s].windows[w].panes.indices where sessions[s].windows[w].panes[p].id == paneID {
           sessions[s].windows[w].panes[p].screen = rows
+        }
+      }
+    }
+  }
+
+  /// Puts a pane in a mode or takes it out, by its number, as `copy-mode` at the desk does.
+  public func setInMode(_ paneID: Int, _ inMode: Bool) {
+    for s in sessions.indices {
+      for w in sessions[s].windows.indices {
+        for p in sessions[s].windows[w].panes.indices where sessions[s].windows[w].panes[p].id == paneID {
+          sessions[s].windows[w].panes[p].isInMode = inMode
         }
       }
     }
@@ -490,6 +508,8 @@ public actor FakeTmuxHost {
   }
 
   private func tmuxCommand(_ command: [String]) -> CommandResult {
+    // Its `-F` is a switch, where every other command here takes a value after it.
+    if command[0] == "if-shell" { return ifShell(Array(command.dropFirst())) }
     var flags = Flags(Array(command.dropFirst()))
     if let bad = flags.unknown.first { return Self.failure("unknown flag \(bad)", status: 1) }
     switch command[0] {
@@ -549,9 +569,12 @@ public actor FakeTmuxHost {
       sessions[location.session].windows[location.window].isAutoNamed = false
       return Self.success("")
     case "copy-mode":
-      // Only `-q`, which leaves any mode. No pane here is ever in one.
+      // Only `-q`, which leaves any mode, and does nothing to a pane in none.
       guard flags.has("-q") else { return Self.failure("unknown command: copy-mode", status: 1) }
-      guard target(flags.value("-t")) != nil else { return Self.noPane(flags.value("-t")) }
+      guard let location = target(flags.value("-t")) else { return Self.noPane(flags.value("-t")) }
+      let pane = sessions[location.session].windows[location.window].panes[location.pane]
+      modeQuits.append("%\(pane.id)")
+      sessions[location.session].windows[location.window].panes[location.pane].isInMode = false
       return Self.success("")
     case "new-window":
       return newWindow(&flags)
@@ -713,9 +736,30 @@ public actor FakeTmuxHost {
     return printed && !utf8 ? Self.asciiOnly(out) : out
   }
 
+  /// `if-shell -F -t <pane> '#{pane_in_mode}' '<command>'`, the only form Driverr sends. The
+  /// command runs only for a pane in a mode, as tmux's own parser reads it.
+  private func ifShell(_ arguments: [String]) -> CommandResult {
+    guard arguments.count == 5, arguments[0] == "-F", arguments[1] == "-t",
+      arguments[3] == "#{pane_in_mode}"
+    else { return Self.failure("unsupported if-shell: \(arguments)", status: 1) }
+    guard let location = target(arguments[2]) else { return Self.noPane(arguments[2]) }
+    guard sessions[location.session].windows[location.window].panes[location.pane].isInMode
+    else { return Self.success("") }
+    let words = Self.tokens(of: arguments[4]).compactMap { token -> String? in
+      if case .word(let word) = token { return word }
+      return nil
+    }
+    guard !words.isEmpty else { return Self.failure("empty if-shell command", status: 1) }
+    return tmuxCommand(words)
+  }
+
+  /// Text typed into a pane in a mode is read as the mode's keys, and never reaches the program.
+  /// Measured on 3.7c and 3.2a: `send-keys -l` there exits 0 and nothing arrives.
   private func sendKeys(_ flags: inout Flags) -> CommandResult {
     guard let location = target(flags.value("-t")) else { return Self.noPane(flags.value("-t")) }
-    let id = "%\(sessions[location.session].windows[location.window].panes[location.pane].id)"
+    let pane = sessions[location.session].windows[location.window].panes[location.pane]
+    guard !pane.isInMode else { return Self.success("") }
+    let id = "%\(pane.id)"
     if flags.has("-l") {
       input[id, default: []].append(.text(flags.positional.joined()))
     } else {

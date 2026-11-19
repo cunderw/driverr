@@ -1573,7 +1573,8 @@ final class TerminalSceneModel {
         raw: raw,
         output: stream,
         send: { try await bridge.send(bytes: $0) },
-        resize: { try await bridge.resize(to: $0) }
+        resize: { try await bridge.resize(to: $0) },
+        answersQueries: Self.answersQueries(target)
       )
       return (feed, pump)
     }
@@ -1588,6 +1589,18 @@ final class TerminalSceneModel {
       click: { try await bridge.click($0) }
     )
     return (feed, pump)
+  }
+
+  /// Whether the far side answers the pane's terminal queries itself: tmux does, measured on
+  /// 3.7c and 3.2a (#128). Read from the id, so a wrapper such as `DeferredPaneBridge` cannot
+  /// hide it. See `TerminalFeed.answersQueries`.
+  ///
+  /// A herdr-core terminal stays off, measured on hc 0.1.21. The core answers DA, CPR and
+  /// OSC 10 and 11 itself, but it also strips the queries from what a viewer hears, controller
+  /// or observer, so the emulator here never sees one to answer. A herdr pane was not measured.
+  static func answersQueries(_ target: TerminalTarget) -> Bool {
+    if case .pane(let id) = target { return TmuxID.isTmux(id) }
+    return false
   }
 
   /// An observer's frames, with input held for the controller.
@@ -1665,7 +1678,8 @@ final class TerminalSceneModel {
         raw: raw,
         output: stream,
         send: send,
-        resize: { try await (observer as? any PaneBridge)?.resize(to: $0) }
+        resize: { try await (observer as? any PaneBridge)?.resize(to: $0) },
+        answersQueries: Self.answersQueries(target)
       )
       return (feed, pump)
     }

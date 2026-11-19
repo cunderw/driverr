@@ -53,7 +53,9 @@ enum TmuxArgument {
 ///
 /// Static and pure, so a test asserts the whole string. `binary` is `shellQuoted(binaryPath)`.
 /// A pane, window or session id arrives already shell-quoted, as `shellQuoted(TmuxID.raw(of:))`:
-/// `$1` unquoted is the shell's first parameter, and `%3` is a job in some shells.
+/// `$1` unquoted is the shell's first parameter, and `%3` is a job in some shells. `input` and
+/// `keys` are the exception: they take the raw pane id, checked by `TmuxID.rawPane(of:)`,
+/// because it also goes inside a tmux command. See `leaveModes(pane:)`.
 enum TmuxCommands {
   /// Every pane, then every client, in one call. The clients are for `TmuxMirrors`: a tmux
   /// client running in a herdr pane makes that pane a mirror.
@@ -63,7 +65,8 @@ enum TmuxCommands {
   }
 
   /// Types `text` into a pane, and then Enter when `submit`. `nil` when there is nothing to
-  /// send.
+  /// send. `pane` is the raw id, `%3`. Any mode the pane is in is left first, in the same
+  /// invocation. See `leaveModes(pane:)`.
   ///
   /// **`-l`, so every character is literal.** Without it tmux reads `Enter`, `C-c` and `Up` in
   /// typed text as key names. **`--`, so text that starts with `-` is not a flag.**
@@ -72,13 +75,35 @@ enum TmuxCommands {
   /// between two would leave a half-typed answer in the pane. Claude Code reads a line feed
   /// as a line break and Enter as submit, so the text goes as typed and Enter follows.
   static func input(binary: String, pane: String, text: String, submit: Bool) -> String? {
+    let quoted = shellQuoted(pane)
     var commands: [String] = []
     if !text.isEmpty {
-      commands.append("send-keys -t \(pane) -l -- \(TmuxArgument.quoted(text))")
+      commands.append("send-keys -t \(quoted) -l -- \(TmuxArgument.quoted(text))")
     }
-    if submit { commands.append("send-keys -t \(pane) Enter") }
+    if submit { commands.append("send-keys -t \(quoted) Enter") }
     guard !commands.isEmpty else { return nil }
-    return "\(binary) " + commands.joined(separator: TmuxArgument.separator)
+    return "\(binary) " + ([leaveModes(pane: pane)] + commands).joined(separator: TmuxArgument.separator)
+  }
+
+  /// Takes the pane out of any mode it is in, and runs nothing for a pane in none. A tmux
+  /// command, for the front of an invocation. `pane` is the raw id, `%3`.
+  ///
+  /// **A pane in a mode never gets the text.** Copy mode and view mode read typed text as the
+  /// mode's keys, measured on 3.7c and 3.2a: `send-keys -l` exits 0 and nothing reaches the
+  /// program. A pane is in one when the desk scrolls, or when `run-shell` or a server's start-up
+  /// configuration prints something. Driverr leaves it before every send, so a desk scrolling
+  /// that pane loses its place. The owner chose that cost on #128.
+  ///
+  /// **`copy-mode -q`, not `send-keys -X cancel`.** `-q` leaves copy, view and tree mode, on 3.7c
+  /// and 3.2a. `cancel` leaves only copy and view mode, and fails with `not in a mode` on a pane
+  /// in none, which would stop the send behind it.
+  ///
+  /// **`if-shell -F` on `#{pane_in_mode}`**, so only a pane in a mode runs `copy-mode`, in the same
+  /// invocation and with no read first. The inner command needs its own `-t`: without one it
+  /// fails with `no current client`, measured on both. The raw id is safe inside the quotes,
+  /// because `TmuxID` admits only `%` and digits.
+  static func leaveModes(pane: String) -> String {
+    "if-shell -F -t \(shellQuoted(pane)) '#{pane_in_mode}' \(shellQuoted("copy-mode -q -t \(pane)"))"
   }
 
   /// A reply as it goes over: trailing newlines and spaces trimmed, everything else as typed.
@@ -110,17 +135,23 @@ enum TmuxCommands {
     }
   }
 
-  /// One tmux call per key, chained in one exec.
+  /// One tmux call per key, chained in one exec. `pane` is the raw id, `%3`.
   ///
   /// Two keys in one `send-keys` arrive as one burst, and Claude Code's picker drops both.
   /// Separate processes are spaced by their own start-up. `&&` stops at the first refusal.
+  /// The first call leaves any mode the pane is in, which is enough for the rest.
   static func keys(binary: String, pane: String, keys: [PaneKey]) -> String? {
     guard !keys.isEmpty else { return nil }
-    return keys.map { pressed in
+    let quoted = shellQuoted(pane)
+    return keys.enumerated().map { index, pressed in
       let (name, isLiteral) = key(pressed)
-      return isLiteral
-        ? "\(binary) send-keys -t \(pane) -l -- \(shellQuoted(name))"
-        : "\(binary) send-keys -t \(pane) \(shellQuoted(name))"
+      let send =
+        isLiteral
+        ? "send-keys -t \(quoted) -l -- \(shellQuoted(name))"
+        : "send-keys -t \(quoted) \(shellQuoted(name))"
+      return index == 0
+        ? "\(binary) \(leaveModes(pane: pane))\(TmuxArgument.separator)\(send)"
+        : "\(binary) \(send)"
     }
     .joined(separator: " && ")
   }
@@ -222,15 +253,6 @@ enum TmuxCommands {
   /// For a host with no server, which `new-window` cannot target.
   static func newSession(binary: String) -> String {
     "\(binary) new-session -d -P -F \(shellQuoted("#{pane_id}"))"
-  }
-
-  /// Takes the pane out of any mode, and does nothing to a pane in none.
-  ///
-  /// The first pane of a new server can be in view mode a moment after it starts, when the
-  /// server's configuration prints something. Text sent then is read as mode keys, or refused
-  /// with "no current client". Measured on 3.7c. `pane` is shell-quoted.
-  static func quitModes(binary: String, pane: String) -> String {
-    "\(binary) copy-mode -q -t \(pane)"
   }
 
   /// `newWindow(binary:)`, named `name` and started in `folder`.

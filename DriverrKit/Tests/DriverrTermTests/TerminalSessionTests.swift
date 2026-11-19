@@ -85,7 +85,9 @@ private final class TestFeed {
   ///   closure, which is what `scrollsRemotely` reads.
   /// - Parameter raw: stand in for a herdr-core terminal, which also takes focus and consumed
   ///   bytes.
-  init(scrollable: Bool = false, raw: Bool = false) {
+  /// - Parameter answersQueries: stand in for a tmux pane, whose own emulator answers the
+  ///   program's terminal queries.
+  init(scrollable: Bool = false, raw: Bool = false, answersQueries: Bool = false) {
     let (stream, continuation) = AsyncThrowingStream.makeStream(
       of: Data.self,
       throwing: (any Error).self
@@ -106,7 +108,8 @@ private final class TestFeed {
       focus: raw ? { @Sendable gained async in recorder.record(focus: gained) } : nil,
       consumed: raw ? { @Sendable in recorder.record(consumed: $0) } : nil,
       leftAlternateScreen: raw ? { @Sendable in recorder.recordLeftAlternateScreen() } : nil,
-      awaitsFirstSize: raw
+      awaitsFirstSize: raw,
+      answersQueries: answersQueries
     )
   }
 
@@ -1318,6 +1321,34 @@ struct TerminalSessionRawStreamTests {
   @Test("a feed without focus keeps SwiftTerm's own report")
   func ptyKeepsTheFocusReport() async {
     #expect(await replies(toPaintOn: TestFeed()) == "\u{1b}[I")
+  }
+
+  /// tmux answers a pane's device attributes and cursor position queries itself, measured on
+  /// 3.7c and 3.2a, so an answer from here reached the program a second time, as typed input
+  /// (#128).
+  @Test("an emulator reply is dropped for a far side that answers queries, and typing is not")
+  func replyDroppedWhereTheFarSideAnswers() async {
+    let feed = TestFeed(raw: true, answersQueries: true)
+    let session = TerminalSession(feed: feed.feed)
+    session.start()
+    #expect(session.answersQueries)
+    session.sendReply(ArraySlice(Array("\u{1b}[?1;2c".utf8)))
+    session.send(text: "x")
+    await waitUntil { feed.sentText.hasSuffix("x") }
+    #expect(feed.sentText == "x")
+  }
+
+  /// A shell's program has no other emulator to answer it.
+  @Test("an emulator reply still reaches a far side that does not answer queries")
+  func replyKeptWhereNothingElseAnswers() async {
+    let feed = TestFeed()
+    let session = TerminalSession(feed: feed.feed)
+    session.start()
+    #expect(!session.answersQueries)
+    session.sendReply(ArraySlice(Array("\u{1b}[?1;2c".utf8)))
+    session.send(text: "x")
+    await waitUntil { feed.sentText.hasSuffix("x") }
+    #expect(feed.sentText == "\u{1b}[?1;2cx")
   }
 
   @Test("only a whole focus report is dropped")

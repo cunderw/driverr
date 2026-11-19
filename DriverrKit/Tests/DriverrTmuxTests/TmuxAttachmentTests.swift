@@ -82,6 +82,17 @@ struct TmuxAttachmentTests {
     "refresh-client -C \(window):\(size) ; refresh-client -C \(window):"
   }
 
+  /// How tmux before 3.3 sizes `window`, which takes no `@W:` size.
+  private static func resize(_ window: String, _ columns: Int, _ rows: Int) -> String {
+    "resize-window -x \(columns) -y \(rows) -t \(window)"
+  }
+
+  /// The line that gives `window` back at `150x43` on tmux before 3.3, and leaves its size to
+  /// tmux again.
+  private static func handBackBefore33(_ window: String) -> String {
+    "resize-window -x 150 -y 43 -t \(window) ; set-option -w -u -t \(window) window-size"
+  }
+
   /// Polls `condition` for up to `seconds`, for state with no signal of its own. Callers assert
   /// after, so a wait that runs out fails there.
   private func poll(_ seconds: Double = 5, _ condition: () -> Bool) async throws {
@@ -231,9 +242,29 @@ struct TmuxAttachmentTests {
     // A command the fake answers after the keys proves they have all been read.
     try await bridge.resize(to: TerminalSize(columns: 61, rows: 20, pixelWidth: 0, pixelHeight: 0))
     #expect(host.stream.keys(for: "%3") == Data("é😀\u{3}".utf8) + paste)
-    let keyLines = host.stream.lines.filter { $0.hasPrefix("send-keys") }
+    let keyLines = host.stream.lines.filter { $0.contains("send-keys") }
     #expect(keyLines.count == 3)
-    #expect(keyLines.first == "send-keys -t %3 -H c3 a9 f0 9f 98 80 03")
+    #expect(keyLines.first == "copy-mode -q -t %3 ; send-keys -t %3 -H c3 a9 f0 9f 98 80 03")
+    await bridge.release()
+  }
+
+  /// #128. The phone never shows a mode, because a control client hears the program's own
+  /// output, so a key typed into a pane the desk left in copy mode would vanish. `if-shell` on
+  /// `#{pane_in_mode}` answers a third block only when the pane is in a mode, measured on 3.7c and
+  /// 3.2a, and the queue counts a fixed number per line, so the leave is unconditional.
+  @Test("typing into a pane in a mode leaves it first, and each key line answers two blocks")
+  func typingLeavesAMode() async throws {
+    var pane = Host.shell()
+    pane.inMode = true
+    let host = Host(["%3": pane])
+    let bridge = try #require(
+      try await host.attacher.open(terminalID: "tmux:%3", size: Self.phone) as? TmuxAttachment)
+    try await bridge.send(text: "yes\r")
+    // The next command's answer is its own, so the key line took exactly its two blocks.
+    let answer = try await bridge.client.command("display-message -p -t %3 '#{pane_id} #{window_id}'")
+    #expect(answer == [[Data("%3 @1".utf8)]])
+    #expect(host.stream.keys(for: "%3") == Data("yes\r".utf8))
+    #expect(host.stream.lines.contains("copy-mode -q -t %3 ; send-keys -t %3 -H 79 65 73 0d"))
     await bridge.release()
   }
 
@@ -262,17 +293,103 @@ struct TmuxAttachmentTests {
     #expect(!host.stream.lines.contains { $0.hasPrefix("refresh-client") })
   }
 
-  @Test("a tmux that refuses window sizes, as one before 3.3 does, still opens and stops asking")
-  func noWindowSizes() async throws {
+  // MARK: Window sizes before tmux 3.3 (#115)
+
+  /// tmux 3.2a answers `refresh-client -C @W:CxR` with `bad size argument`. `resize-window` sizes
+  /// one window there, current or not, and leaves it at `window-size manual` until it is unset.
+  @Test("before 3.3 a window is sized with resize-window before the paint, and handed back unset")
+  func sizesBefore33() async throws {
     let host = Host()
     host.stream.refuseWindowSizes()
     let bridge = try await host.attacher.open(terminalID: "tmux:%3", size: Self.phone)
-    var output = bridge.output.makeAsyncIterator()
-    _ = try await read(&output, until: "H")
+    let opened = host.stream.lines
+    #expect(opened.first == Self.firstSizing("@1", "60x20"), "the 3.3 line, refused")
+    #expect(opened.dropFirst().first == Self.resize("@1", 60, 20), "sized before the paint")
+    #expect(opened.dropFirst(2).first?.hasPrefix("display-message -p -t %3 ") == true)
+    #expect(host.stream.size(of: "@1") == "60x20")
+    #expect(host.stream.isSizedByHand("@1"))
+
     try await bridge.resize(to: TerminalSize(columns: 40, rows: 30, pixelWidth: 0, pixelHeight: 0))
+    #expect(host.stream.lines.last == Self.resize("@1", 40, 30))
+    #expect(host.stream.size(of: "@1") == "40x30")
+
     await bridge.release()
-    let sizings = host.stream.lines.filter { $0.contains("refresh-client -C @") }
-    #expect(sizings == [Self.firstSizing("@1", "60x20")])
+    #expect(host.stream.lines.last == Self.handBackBefore33("@1"))
+    #expect(host.stream.size(of: "@1") == "150x43")
+    #expect(!host.stream.isSizedByHand("@1"), "tmux sizes the window again")
+    #expect(host.stream.lines.filter { $0.contains("refresh-client -C @") }.count == 1)
+    #expect(host.stream.closeCount == 1)
+  }
+
+  @Test("before 3.3, two controllers on one window: the newest size holds, and both gone unsets it")
+  func twoControllersBefore33() async throws {
+    let host = Host(["%3": Host.shell(), "%4": Host.shell()])
+    host.stream.refuseWindowSizes()
+    let attacher = host.attacher
+    let first = try await attacher.open(terminalID: "tmux:%3", size: Self.phone)
+    let second = try await attacher.open(
+      terminalID: "tmux:%4", size: TerminalSize(columns: 40, rows: 30, pixelWidth: 0, pixelHeight: 0))
+    #expect(host.stream.lines.contains(Self.resize("@1", 40, 30)))
+    #expect(host.stream.size(of: "@1") == "40x30")
+    await second.release()
+    #expect(host.stream.lines.last == Self.resize("@1", 60, 20), "the size still held goes back on")
+    #expect(host.stream.size(of: "@1") == "60x20")
+    #expect(host.stream.isSizedByHand("@1"))
+    await first.release()
+    #expect(host.stream.lines.last == Self.handBackBefore33("@1"))
+    #expect(host.stream.size(of: "@1") == "150x43")
+    #expect(!host.stream.isSizedByHand("@1"))
+    #expect(host.stream.lines.filter { $0.contains("refresh-client -C @") }.count == 1)
+  }
+
+  /// Once tmux has refused one `@W:` size, every later window's first line reads its own size
+  /// ahead of `resize-window`.
+  @Test("before 3.3, a window sized after the first refusal is never asked with refresh-client")
+  func anotherWindowBefore33() async throws {
+    let host = Host(["%3": Host.shell(), "%4": Host.shell(window: "@2")])
+    host.places["%4"] = "$0 @2 150x43"
+    host.stream.refuseWindowSizes()
+    let attacher = host.attacher
+    let first = try await attacher.open(terminalID: "tmux:%3", size: Self.phone)
+    let second = try await attacher.open(terminalID: "tmux:%4", size: Self.phone)
+    #expect(
+      host.stream.lines.contains(
+        "display-message -p -t @2 '#{window_width}x#{window_height}' ; " + Self.resize("@2", 60, 20)))
+    #expect(!host.stream.lines.contains { $0.contains("refresh-client -C @2") })
+    #expect(host.stream.size(of: "@2") == "60x20")
+    await second.release()
+    #expect(host.stream.lines.last == Self.handBackBefore33("@2"))
+    #expect(host.stream.size(of: "@2") == "150x43")
+    #expect(!host.stream.isSizedByHand("@2"))
+    await first.release()
+    #expect(host.stream.size(of: "@1") == "150x43")
+    #expect(!host.stream.isSizedByHand("@1"))
+  }
+
+  /// Both lines go out as 3.3's, and tmux refuses both. The window's own size comes from the
+  /// first, and the newest size is the one that holds.
+  @Test("before 3.3, two first sizes refused in flight still size the window and give it back")
+  func twoSizingsInFlightBefore33() async throws {
+    let host = Host(["%3": Host.shell(), "%4": Host.shell()])
+    host.stream.refuseWindowSizes()
+    let attacher = host.attacher
+    host.stream.hold(linesContaining: "refresh-client -C @1:")
+    async let first = attacher.open(terminalID: "tmux:%3", size: Self.phone)
+    async let second = attacher.open(
+      terminalID: "tmux:%4", size: TerminalSize(columns: 40, rows: 30, pixelWidth: 0, pixelHeight: 0))
+    try await poll { host.stream.lines.filter { $0.contains("refresh-client -C @1:") }.count == 2 }
+    let inFlight = host.stream.lines.filter { $0.contains("refresh-client -C @1:") }.count
+    host.stream.resumeHeld()
+    #expect(inFlight == 2, "both sizes were written before tmux answered either")
+    let bridges = try await [first, second]
+    // The two opens race, so the newest size is whichever line went second.
+    let newest = host.stream.lines.last { $0.contains("refresh-client -C @1:") }?
+      .components(separatedBy: "@1:").last
+    #expect(newest == "60x20" || newest == "40x30")
+    #expect(host.stream.size(of: "@1") == newest)
+    for bridge in bridges { await bridge.release() }
+    #expect(host.stream.size(of: "@1") == "150x43")
+    #expect(!host.stream.isSizedByHand("@1"))
   }
 
   /// Only tmux before 3.3 answers `bad size argument`; any other refusal is about one size.
@@ -305,7 +422,7 @@ struct TmuxAttachmentTests {
     // A command the fake answers after the key proves the key line has been read.
     try await bridge.resize(to: TerminalSize(columns: 61, rows: 20, pixelWidth: 0, pixelHeight: 0))
     let sized = try #require(host.stream.lines.firstIndex(of: Self.firstSizing("@1", "60x20")))
-    let typed = try #require(host.stream.lines.firstIndex { $0.hasPrefix("send-keys") })
+    let typed = try #require(host.stream.lines.firstIndex { $0.contains("send-keys") })
     #expect(sized < typed)
     await bridge.release()
   }
