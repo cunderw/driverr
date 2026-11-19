@@ -69,8 +69,21 @@ final class PaneAttachmentModel {
   /// `AttachmentFileName.remote(original:unique:)`.
   @ObservationIgnored private let makeUnique: @Sendable () -> UUID
 
-  /// Whether the composer is held (`PaneComposerHold`). STUB: not read yet.
-  @ObservationIgnored var isHandOffHeld = false
+  /// A hand-off is on the wire. See `handOver(_:run:)`.
+  @ObservationIgnored private var isHandingOver = false
+
+  /// Whether the composer is held (`PaneComposerHold`). The hand-off types the path into the
+  /// pane, which is typed text by another route: into Codex's picker it is no keys, and into
+  /// the trust prompt it is noise. An upload that lands while held keeps its path on the row
+  /// (`.uploaded`), and the hand-off runs when the hold ends (#109). `PaneComposerModel.hold`
+  /// writes it.
+  @ObservationIgnored var isHandOffHeld = false {
+    didSet {
+      guard oldValue, !isHandOffHeld, let path = phase?.hostPath else { return }
+      let run = generation
+      Task { await handOver(path, run: run) }
+    }
+  }
 
   init(
     place: PaneAttachmentPlace = .host,
@@ -218,8 +231,13 @@ final class PaneAttachmentModel {
   ///
   /// Nothing is handed over for a stale run, so a path cannot appear in the prompt after
   /// Remove. `settle` guards the phase write too. A cancellation writes nothing.
+  ///
+  /// Nothing goes while the composer is held, or while a hand-off for this path is already on
+  /// its way: a hold that ends twice in quick succession must not type the path twice.
   private func handOver(_ path: String, run: Int) async {
-    guard generation == run else { return }
+    guard generation == run, !isHandOffHeld, !isHandingOver else { return }
+    isHandingOver = true
+    defer { isHandingOver = false }
     do {
       try await handOff(path)
     } catch is CancellationError {

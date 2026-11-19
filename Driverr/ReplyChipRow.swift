@@ -273,10 +273,10 @@ struct FlowLayout: Layout {
   /// after another starts a new row, and an exact fit does not break. A chip wider than the
   /// limit gets a row of its own and overflows it, rather than leaving an empty row above.
   static func rows(of widths: [CGFloat], spacing: CGFloat, within limit: CGFloat) -> [[Int]] {
-    var rows: [[Int]] = [[]]
+    var rows: [[Int]] = []
     var x: CGFloat = 0
     for (index, width) in widths.enumerated() {
-      if x + width >= limit {  // STUB: a deliberately wrong rule
+      if rows.isEmpty || (x + width > limit && !rows[rows.count - 1].isEmpty) {
         rows.append([])
         x = 0
       }

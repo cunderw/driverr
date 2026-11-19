@@ -50,7 +50,10 @@ final class PaneComposerModel: Identifiable {
   /// redraw is refused too. What is typed stays.
   var hold: PaneComposerHold? {
     get { state.hold }
-    set { if state.hold != newValue { state.hold = newValue } }
+    set {
+      if state.hold != newValue { state.hold = newValue }
+      attachment.isHandOffHeld = newValue != nil
+    }
   }
 
   var isSending: Bool { state.isSending }
