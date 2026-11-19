@@ -516,8 +516,15 @@ struct TerminalScreen: View {
   /// Whether the composer may send typed text, from the pane's agent and the screen the chat
   /// read for a question, whatever the chat has loaded. See
   /// `PaneComposerHold.reason(agent:screen:)`.
+  ///
+  /// An open picker stays held while a restarted watch has no settled read, so the hold lifts
+  /// only on a read that shows the picker closed. See
+  /// `PaneComposerHold.reason(agent:screen:awaitingRead:previous:)`.
   private var composerHold: PaneComposerHold? {
-    PaneComposerHold.reason(agent: scene.currentPane?.agent, screen: screenForQuestion)
+    PaneComposerHold.reason(
+      agent: scene.currentPane?.agent, screen: screenForQuestion,
+      awaitingRead: watchesScreenForQuestion && screenModel?.hasReadForQuestion != true,
+      previous: composerModel?.hold)
   }
 
   /// Whether the chat reads the pane's screen for a question, by `PaneChatView`'s rule, so the

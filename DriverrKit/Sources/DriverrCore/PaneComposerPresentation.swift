@@ -320,11 +320,19 @@ public enum PaneComposerHold: Equatable, Sendable {
     }
   }
 
-  /// `reason(agent:screen:)`, for a watch that has not read the screen yet.
+  /// `reason(agent:screen:)` across a restart of the chat's watch. `awaitingRead` is whether
+  /// the watch runs and has not settled a read since it started; `previous` is the hold the
+  /// composer has now.
+  ///
+  /// The watch restarts on a pane switch back, on the app coming to the front, and on a new
+  /// pending call, and each restart has no screen for a moment. An open picker stays held
+  /// until a settled read says it closed. Released in between, Send would turn back on and a
+  /// waiting upload would type its path into the picker.
   public static func reason(
     agent: Agent?, screen: PaneScreen?, awaitingRead: Bool, previous: PaneComposerHold?
   ) -> PaneComposerHold? {
-    reason(agent: agent, screen: screen)  // STUB
+    if awaitingRead, previous == .pickerOpen { return .pickerOpen }
+    return reason(agent: agent, screen: screen)
   }
 
   /// The composer's line while held. One short sentence: the chat says how to answer.

@@ -237,7 +237,11 @@ final class PaneAttachmentModel {
   /// Nothing goes while the composer is held, or while a hand-off for this path is already on
   /// its way: a hold that ends twice in quick succession must not type the path twice.
   private func handOver(_ path: String, run: Int) async {
-    guard generation == run, !isHandOffHeld, !isHandingOver else { return }
+    // The phase check closes the last gap: a hand-off queued by a hold's end can run after
+    // another has already landed, and the row then reads `.handedOver`.
+    guard generation == run, !isHandOffHeld, !isHandingOver, phase?.hostPath == path else {
+      return
+    }
     isHandingOver = true
     defer { isHandingOver = false }
     do {
