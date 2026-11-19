@@ -442,5 +442,61 @@
         #expect(working.blockedPanes.isEmpty)
       }
     }
+
+    // MARK: Mirrors (#102 S5)
+
+    /// A herdr client in a tmux pane, and a tmux client in a herdr pane, both stood in for.
+    ///
+    /// The herdr client is `cat` behind a link named `herdr`, with no arguments, so its session
+    /// comes from `HERDR_SOCKET_PATH`. The tmux client is a real `tmux attach` under `script`,
+    /// which gives it a terminal, with a made-up `HERDR_PANE_ID`. Its stdin is the stream's
+    /// pipe, held open: `script` reads end-of-file as ^D, which ends the session's shell.
+    ///
+    /// Both carry `DRIVERR_PROBE_SECRET`, which must not come back from the host.
+    @Test("a herdr client in a pane and a client in a herdr pane both claim, and no secret leaves")
+    func mirrors() async throws {
+      try await withLiveServer { control, tmux in
+        let scratch = try LocalShell.temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: scratch) }
+        let herdr = scratch.appendingPathComponent("herdr")
+        try FileManager.default.createSymbolicLink(atPath: herdr.path, withDestinationPath: "/bin/cat")
+        let socket = "/tmp/driverr-probe/sessions/probe/herdr.sock"
+
+        let respawned = try await LocalShell.runner(
+          "\(shellQuoted(control.binaryPath)) respawn-pane -k -t \(shellQuoted("%1")) "
+            + shellQuoted(
+              "env HERDR_SOCKET_PATH=\(socket) DRIVERR_PROBE_SECRET=nope \(shellQuoted(herdr.path))"))
+        #expect(respawned.exitStatus == 0, "\(respawned.standardError)")
+
+        let client = try LocalShellStream(
+          command: "env HERDR_PANE_ID=w9:p9 HERDR_SOCKET_PATH=\(socket) DRIVERR_PROBE_SECRET=nope "
+            + "script -q /dev/null \(shellQuoted(control.binaryPath)) attach -t probe")
+        defer { Task { await client.close() } }
+
+        let expected: Set<MirrorClaim> = [
+          MirrorClaim(paneID: "tmux:%1", session: .named("probe")),
+          MirrorClaim(paneID: "w9:p9", session: .named("probe")),
+        ]
+        var tree = try await control.snapshot()
+        for _ in 0..<50 where tree.mirrorClaims != expected {
+          try await Task.sleep(for: .milliseconds(100))
+          tree = try await control.snapshot()
+        }
+        #expect(tree.mirrorClaims == expected)
+
+        // The read itself, for the client: the four variables come back and nothing else does,
+        // although the unfiltered environment holds the secret.
+        let pid = try #require(Int(try await tmux("list-clients -F '#{client_pid}'")))
+        let raw = try await LocalShell.runner("ps -wwE -o command= -p \(pid)")
+        #expect(raw.standardOutput.contains("DRIVERR_PROBE_SECRET=nope"), "the secret is there to leak")
+        let read = try await LocalShell.runner(TmuxProcessDetailsRead.command(forPIDs: [pid]))
+        #expect(read.standardOutput.contains("HERDR_PANE_ID=w9:p9"), "\(read.standardOutput)")
+        #expect(!read.standardOutput.contains("DRIVERR_PROBE_SECRET"))
+        #expect(!read.standardOutput.contains("PATH=/usr/bin"))
+        let details = TmuxProcessDetailsRead.details(from: read.standardOutput, forPIDs: [pid])
+        #expect(details[pid]?.environment.keys.sorted() == ["HERDR_PANE_ID", "HERDR_SOCKET_PATH"])
+        #expect(details[pid]?.arguments.contains("attach -t probe") == true)
+      }
+    }
   }
 #endif

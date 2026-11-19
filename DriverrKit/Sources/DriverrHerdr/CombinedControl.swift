@@ -135,6 +135,9 @@ public struct CombinedControl: HerdrControl {
   private let primaryIsTUI: Bool
   private let sides: [Side]
   private let memory = Memory()
+  /// The herdr session the TUI is bound to, which a `MirrorClaim` must name to hide its pane.
+  /// `nil` is the standard session, as it is for the TUI. See `bound(toSocketPath:)`.
+  private let socketPath: String?
 
   /// The TUI and a core, the shape this control first had.
   public init(tui: any HerdrControl, core: any HerdrControl) {
@@ -152,10 +155,13 @@ public struct CombinedControl: HerdrControl {
     self.init(primary: primary, primaryIsTUI: false, sides: sides)
   }
 
-  private init(primary: any HerdrControl, primaryIsTUI: Bool, sides: [Side]) {
+  private init(
+    primary: any HerdrControl, primaryIsTUI: Bool, sides: [Side], socketPath: String? = nil
+  ) {
     self.tui = primary
     self.primaryIsTUI = primaryIsTUI
     self.sides = sides
+    self.socketPath = socketPath
   }
 
   /// What serves a host, from what each discovery found. `nil` when nothing was found, and the
@@ -183,9 +189,11 @@ public struct CombinedControl: HerdrControl {
   public var binaryPath: String { tui.binaryPath }
 
   /// Binds the TUI side. `Host.herdrSocketPath` names a herdr session, which a core or a tmux
-  /// server is not.
+  /// server is not. The path is kept, because it says which session a mirror must show.
   public func bound(toSocketPath path: String?) -> any HerdrControl {
-    CombinedControl(primary: tui.bound(toSocketPath: path), primaryIsTUI: primaryIsTUI, sides: sides)
+    CombinedControl(
+      primary: tui.bound(toSocketPath: path), primaryIsTUI: primaryIsTUI, sides: sides,
+      socketPath: path)
   }
 
   /// The first stream a side has, never the TUI's. Only a core has one today. The TUI is

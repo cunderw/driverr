@@ -97,7 +97,12 @@ enum TmuxPaneFormat {
 /// because it is the user's arrangement.
 enum TmuxSnapshotMapper {
   /// `agents` is by raw pane id, from the process join. A pane not in it is a shell.
-  static func tree(from rows: [TmuxPaneRow], agents: [String: Agent] = [:]) -> SessionTree {
+  /// `mirrorClaims` are `TmuxMirrors`', carried on the tree for `CombinedControl`.
+  static func tree(
+    from rows: [TmuxPaneRow],
+    agents: [String: Agent] = [:],
+    mirrorClaims: Set<MirrorClaim> = []
+  ) -> SessionTree {
     let focusedSession = focusedSessionID(in: rows)
     var focusedPaneID: String?
 
@@ -154,7 +159,8 @@ enum TmuxSnapshotMapper {
         tabs: tabs
       )
     }
-    return SessionTree(workspaces: workspaces, focusedPaneID: focusedPaneID)
+    return SessionTree(
+      workspaces: workspaces, focusedPaneID: focusedPaneID, mirrorClaims: mirrorClaims)
   }
 
   /// The session someone is looking at: the attached one with the latest activity. `nil` when
