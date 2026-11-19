@@ -535,7 +535,9 @@ struct TmuxAttachmentTests {
     let host = Host()
     let other = FakeTmuxControlStream(panes: ["%3": moved], session: "$1")
     host.sessions["$1"] = other
-    let bridge = try await host.attacher.open(terminalID: "tmux:%3", size: Self.phone)
+    // Held, as `TmuxControl` holds it: a client finds the other session's client through it.
+    let attacher = host.attacher
+    let bridge = try await attacher.open(terminalID: "tmux:%3", size: Self.phone)
     var output = bridge.output.makeAsyncIterator()
     _ = try await read(&output, until: "H")
 
