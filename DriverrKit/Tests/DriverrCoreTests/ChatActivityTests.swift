@@ -58,6 +58,30 @@ struct ChatActivityTests {
     #expect(!activity.showsSpinner)
   }
 
+  /// A key such as Shift-Tab leaves the agent working, so its notice joins the working line,
+  /// spinner and all, rather than hiding it for the rest of the turn.
+  @Test("a key's notice on a working pane sits beside the working line")
+  func keyNoticeJoinsWorking() throws {
+    let status = PaneComposerStatus(
+      message: "Sent Shift-Tab", detail: nil, tone: .success, offersRetry: false,
+      isKeyNotice: true)
+    let activity = try #require(ChatActivity(header: header(.working), status: status))
+    #expect(activity.message == "Claude is working. · Sent Shift-Tab")
+    #expect(activity.tone == .progress)
+    #expect(activity.showsSpinner)
+    #expect(activity.isVerdict)
+  }
+
+  @Test("on a pane that is not working, a key's notice stands alone")
+  func keyNoticeAloneWhenQuiet() throws {
+    let status = PaneComposerStatus(
+      message: "Sent Shift-Tab", detail: nil, tone: .success, offersRetry: false,
+      isKeyNotice: true)
+    let activity = try #require(ChatActivity(header: header(.idle), status: status))
+    #expect(activity.message == "Sent Shift-Tab")
+    #expect(activity.tone == .success)
+  }
+
   /// Answering a blocked agent is the most common send.
   @Test("a verdict shows on a pane that is not working")
   func verdictOnAQuietPane() throws {

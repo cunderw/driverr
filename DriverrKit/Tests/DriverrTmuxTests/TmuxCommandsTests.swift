@@ -1,4 +1,5 @@
 import DriverrCore
+import DriverrHerdr
 import Foundation
 import Testing
 
@@ -119,6 +120,8 @@ struct TmuxCommandsTests {
     #expect(TmuxCommands.key(.esc) == (name: "Escape", isLiteral: false))
     #expect(TmuxCommands.key(.interrupt) == (name: "C-c", isLiteral: false))
     #expect(TmuxCommands.key(.tab) == (name: "Tab", isLiteral: false))
+    // tmux 3.7c writes ESC [ Z for it, the bytes that cycle Claude Code's mode.
+    #expect(TmuxCommands.key(.backTab) == (name: "BTab", isLiteral: false))
     #expect(TmuxCommands.key(.yes) == (name: "y", isLiteral: true))
     #expect(TmuxCommands.key(.digit7) == (name: "7", isLiteral: true))
     for key in PaneKey.allCases {
@@ -127,6 +130,15 @@ struct TmuxCommandsTests {
     #expect(
       TmuxCommands.keys(binary: tmux, pane: pane, keys: [.yes])
         == "tmux send-keys -t '%3' -l -- y")
+  }
+
+  /// DriverrHerdr spells the tmux prefix itself, because it cannot import this module. A real
+  /// tmux pane id must still pass, even beside a herdr too old to keep Shift.
+  @Test("Shift-Tab reaches a tmux pane id, whatever herdr runs beside it")
+  func shiftTabReachesATmuxPane() {
+    #expect(
+      HerdrAvailability.ready(version: "0.8.0", protocolVersion: 19)
+        .deliversShiftTab(toPane: TmuxID.pane("%3")))
   }
 
   @Test("a batched read prints a boundary with the pane's id before each capture")

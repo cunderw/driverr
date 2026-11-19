@@ -401,6 +401,35 @@ final class PaneComposerUITests: XCTestCase {
     require(app, "composer.stop", "Expected Stop to return once the confirm is cancelled")
   }
 
+  // MARK: - Shift-Tab, Claude Code's mode
+
+  /// The button is wiring: one tap sends Shift-Tab and says so. When it shows is
+  /// `PaneModeControlTests` and `ShiftTabReachTests`, in `swift test`.
+  func testTheModeButtonSendsShiftTab() {
+    let app = connectedHost()
+    treePaneRow(app, titled: "terminal wiring").tap()
+
+    let mode = require(app, "composer.mode", "Expected the mode button on a Claude pane")
+    XCTAssertEqual(mode.label, "Change mode", "VoiceOver has only the label for a glyph")
+    XCTAssertGreaterThanOrEqual(mode.frame.height, 44, "Under the 44 pt target: \(mode.frame)")
+    XCTAssertGreaterThanOrEqual(mode.frame.width, 44, "Under the 44 pt target: \(mode.frame)")
+    mode.tap()
+
+    // The pane is still working, so the notice joins that line rather than replacing it.
+    requireStatus(
+      app, saying: "Claude is working. · Sent Shift-Tab",
+      "Expected the key's notice beside the working line, not in its place")
+  }
+
+  /// At a permission prompt Claude Code binds Shift-Tab to approving, so the button is off.
+  func testTheModeButtonIsOffWhileThePaneIsBlocked() {
+    let app = connectedHost()
+    treePaneRow(app, titled: "needs a decision").tap()
+
+    let mode = require(app, "composer.mode", "Expected the mode button, drawn and off")
+    XCTAssertFalse(mode.isEnabled, "Shift-Tab would approve the blocked pane's request")
+  }
+
   // MARK: - Where Reply lands
 
   /// The Needs-you row is the Reply control. It opens the pane's own screen with the

@@ -3,7 +3,8 @@
 /// Drawn inside the scroll after the last turn, where the agent's next words will appear,
 /// not pinned over the composer, which would chase a reader scrolled up into history. A send
 /// verdict outranks the agent's state, and the two never stack, so the row does not grow and
-/// shrink under a thumb.
+/// shrink under a thumb. The one exception is a named key's notice on a working pane, which
+/// joins the working line on the same row: a key such as Shift-Tab leaves the agent working.
 public struct ChatActivity: Equatable, Sendable {
   public enum Tone: Equatable, Sendable {
     /// Something is happening and nobody has to do anything about it.
@@ -45,6 +46,18 @@ public struct ChatActivity: Equatable, Sendable {
   /// its chips, and an idle or finished pane has nothing in flight. The row is for what the
   /// transcript cannot show: something running, or a send that just happened.
   public init?(header: PaneComposerHeader, status: PaneComposerStatus?) {
+    // A key leaves the agent working, so its notice must not hide that for the rest of the
+    // turn. One row still: the notice follows the working line.
+    if let status, status.isKeyNotice, header.isWorking {
+      self.init(
+        message: "\(header.state) · \(status.message)",
+        detail: nil,
+        tone: .progress,
+        offersRetry: false,
+        isVerdict: true
+      )
+      return
+    }
     // A verdict first, whatever the pane is doing.
     if let status {
       self.init(

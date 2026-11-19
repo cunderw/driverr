@@ -68,4 +68,13 @@ struct PaneKeyTests {
       #expect(!key.accessibleName.isEmpty)
     }
   }
+
+  /// herdr's key name is the raw value, so this is what `pane send-keys` is given.
+  @Test("Shift-Tab is herdr's shift+tab, and says what it does")
+  func backTab() {
+    #expect(PaneKey.backTab.rawValue == "shift+tab")
+    #expect(PaneKey.backTab.label == "Shift-Tab")
+    #expect(PaneKey.backTab.accessibleName == "Shift Tab, change mode")
+    #expect(PaneKey.backTab.digitValue == nil)
+  }
 }

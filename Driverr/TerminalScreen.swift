@@ -1,4 +1,5 @@
 import DriverrCore
+import DriverrHerdr
 import DriverrSSH
 import DriverrTerm
 import SwiftUI
@@ -555,7 +556,11 @@ struct TerminalScreen: View {
           case .photos: scene.requestImageAttachment()
           case .files: scene.requestFileAttachment()
           }
-        }
+        },
+        // From the live pane, so the button turns off the moment the pane is blocked.
+        modeControl: PaneModeControl(
+          pane: pane,
+          deliversShiftTab: model.herdrAvailability?.deliversShiftTab(toPane: pane.id) == true)
       )
     }
   }
