@@ -106,10 +106,18 @@ public struct Pane: Identifiable, Hashable, Sendable {
   /// With no bound, a reader passes no `--lines` rather than guessing.
   public let viewportRows: Int?
   /// Whether this pane only shows another source of panes on the same host: a tmux pane whose
-  /// program is a herdr client, or a herdr pane whose program is a tmux client. The panes it
-  /// shows are listed on their own, so `SessionTree.hidingMirrors(keeping:)` leaves it out.
-  /// `CombinedControl` sets it from the tree's `MirrorClaim`s.
+  /// program is a herdr client or `hc attach`, or a herdr pane or core terminal whose program is
+  /// a tmux client. The panes it shows are listed on their own, so
+  /// `SessionTree.hidingMirrors(keeping:)` leaves it out. `CombinedControl` sets it from the
+  /// tree's `MirrorClaim`s.
   public let isMirror: Bool
+  /// The pid of the foreground process group's leader, for a core terminal on the core's own
+  /// computer, as the core reports it. `nil` for every other pane, including a core terminal on a
+  /// machine the core added, because a pid names nothing on another computer.
+  ///
+  /// `CombinedControl` matches it against the clients of the tmux server on the same host. See
+  /// `MirrorClaim.Kind.tmuxClient`.
+  public let foregroundPID: Int?
 
   public init(
     id: String,
@@ -121,7 +129,8 @@ public struct Pane: Identifiable, Hashable, Sendable {
     directory: String? = nil,
     isFocused: Bool = false,
     viewportRows: Int? = nil,
-    isMirror: Bool = false
+    isMirror: Bool = false,
+    foregroundPID: Int? = nil
   ) {
     self.id = id
     self.tabID = tabID
@@ -133,6 +142,7 @@ public struct Pane: Identifiable, Hashable, Sendable {
     self.isFocused = isFocused
     self.viewportRows = viewportRows
     self.isMirror = isMirror
+    self.foregroundPID = foregroundPID
   }
 
   /// Where this pane sorts against its siblings: its agent's urgency, or behind every
@@ -383,9 +393,8 @@ public struct SessionTree: Hashable, Sendable {
   /// `hello.core.id`, which is what another core's `machine.list` calls this one. Names and SSH
   /// targets cannot match them, because a machine's name is local to the core that added it.
   public let coreID: String?
-  /// The panes of this host that show another source of panes on it, and the herdr session each
-  /// needs the host to list before it is a duplicate. Only a tmux tree has any. See
-  /// `MirrorClaim`.
+  /// The panes of this host that show another source of panes on it, and what each needs the
+  /// host to list before it is a duplicate. Only a tmux tree has any. See `MirrorClaim`.
   public let mirrorClaims: Set<MirrorClaim>
 
   public init(

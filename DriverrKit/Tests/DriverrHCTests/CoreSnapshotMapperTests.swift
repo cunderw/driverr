@@ -101,6 +101,22 @@ struct CoreSnapshotMapperTests {
     #expect(tree.workspaces.filter { $0.machineCoreID == nil }.count == tree.workspaces.count - 1)
   }
 
+  /// A pid names a process on one computer, so only this core's own terminals carry one.
+  @Test("a terminal on this core carries its foreground pid, and one on an added machine none")
+  func foregroundPIDs() throws {
+    let json = #"""
+      {"terminals":[
+      {"address":"t1","foreground":{"argv":["tmux","attach"],"name":"tmux","pid":8000}},
+      {"address":"t2","foreground":null},
+      {"address":"box/t1","foreground":{"argv":["tmux","attach"],"name":"tmux","pid":8000}}]}
+      """#
+    let tree = CoreSnapshotMapper.tree(from: try decoded(json))
+    #expect(tree.pane(id: "core:t1")?.foregroundPID == 8000)
+    #expect(tree.pane(id: "core:t2")?.foregroundPID == nil)
+    #expect(tree.pane(id: "core:box/t1") != nil)
+    #expect(tree.pane(id: "core:box/t1")?.foregroundPID == nil)
+  }
+
   @Test("a machine whose id has not been read yet is still drawn, and carries none")
   func machineNotReadYet() throws {
     var list = try decoded(Self.captured)

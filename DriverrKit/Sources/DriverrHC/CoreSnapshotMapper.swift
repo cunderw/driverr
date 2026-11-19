@@ -174,7 +174,9 @@ enum CoreSnapshotMapper {
       agent: agent(of: terminal, sessions: sessions),
       terminalID: terminal.address,
       directory: directory(of: terminal),
-      viewportRows: terminal.rows
+      viewportRows: terminal.rows,
+      // A pid names a process on one computer only, so a terminal on an added machine has none.
+      foregroundPID: terminal.machine == nil ? terminal.foreground?.pid : nil
     )
   }
 

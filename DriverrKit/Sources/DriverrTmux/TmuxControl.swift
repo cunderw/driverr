@@ -112,15 +112,17 @@ public struct TmuxControl: HerdrControl {
     await backoff.reset()
   }
 
-  /// The panes, then the agents in them, then the panes that show herdr or that herdr shows.
+  /// The panes, then the agents in them, then the panes that show herdr or a herdr-core, or
+  /// that herdr or a core shows.
   ///
   /// **The process table is read only when there are panes**, so a host with tmux installed and
   /// no server costs one command a check, and `longestNoServerBackoff` spaces the checks out.
   /// `resetBackoff()` ends the gap.
   ///
-  /// **A host with no herdr process runs no command for mirrors.** The clients come with the
-  /// listing, and a process's details are read only when the table holds a `herdr`. See
-  /// `TmuxMirrors`.
+  /// **A host runs a command for mirrors only when a pane needs one.** The clients come with the
+  /// listing, and the core's foreground pids with its own read, so tmux in a core terminal costs
+  /// nothing. A process's details are read only when the table holds a `herdr`, or a pane's
+  /// foreground is `hc`. See `TmuxMirrors`.
   public func snapshot() async throws -> SessionTree {
     if await backoff.skip() { return .empty }
     let output = try await execute(
@@ -140,8 +142,15 @@ public struct TmuxControl: HerdrControl {
     return TmuxSnapshotMapper.tree(from: rows, agents: agents, mirrorClaims: claims)
   }
 
-  /// What `TmuxMirrors` makes of the herdr leaders and the clients. Nothing when the table holds
-  /// no herdr, when there is nobody to ask about, or when the read fails.
+  /// What `TmuxMirrors` makes of the herdr and hc leaders and the clients.
+  ///
+  /// - With a herdr-core process on the host, every client is a `.tmuxClient` claim, with no
+  ///   command.
+  /// - With a `herdr` process, the herdr leaders and the clients are read, as before.
+  /// - A pane that `hc` leads is read, with the exec channel's own core.
+  ///
+  /// Nothing when the table holds neither, or when there is nobody to ask about. A failed read
+  /// keeps the claims that needed none.
   ///
   /// **The exit status is ignored.** `grep` exits 1 for a process with none of the variables.
   private func mirrorClaims(
@@ -149,15 +158,29 @@ public struct TmuxControl: HerdrControl {
     clientPIDs: [Int],
     processes: [TmuxProcess]?
   ) async -> Set<MirrorClaim> {
-    guard let processes, processes.contains(where: TmuxMirrors.isHerdr) else { return [] }
-    let leaders = TmuxMirrors.herdrLeaders(rows: rows, processes: processes)
-    let pids = Array(Set(leaders.values).union(clientPIDs)).sorted()
+    guard let processes else { return [] }
+    let herdrRuns = processes.contains(where: TmuxMirrors.isHerdr)
+    let coreRuns = processes.contains(where: TmuxMirrors.isCore)
+    guard herdrRuns || coreRuns else { return [] }
+    var claims = Set(coreRuns ? clientPIDs.map { MirrorClaim(.tmuxClient(pid: $0)) } : [])
+    let herdrLeaders = herdrRuns ? TmuxMirrors.herdrLeaders(rows: rows, processes: processes) : [:]
+    let herdrClients = herdrRuns ? clientPIDs : []
+    let coreLeaders = coreRuns ? TmuxMirrors.coreLeaders(rows: rows, processes: processes) : [:]
+    let pids = Array(
+      Set(herdrLeaders.values).union(herdrClients).union(coreLeaders.values)
+    ).sorted()
     guard !pids.isEmpty,
-      let result = try? await run(TmuxProcessDetailsRead.command(forPIDs: pids))
-    else { return [] }
-    return TmuxMirrors.claims(
-      herdrLeaders: leaders, clientPIDs: clientPIDs,
-      details: TmuxProcessDetailsRead.details(from: result.standardOutput, forPIDs: pids))
+      let result = try? await run(
+        TmuxProcessDetailsRead.command(forPIDs: pids, readingOwnCore: !coreLeaders.isEmpty))
+    else { return claims }
+    let details = TmuxProcessDetailsRead.details(from: result.standardOutput, forPIDs: pids)
+    claims.formUnion(
+      TmuxMirrors.claims(herdrLeaders: herdrLeaders, clientPIDs: herdrClients, details: details))
+    claims.formUnion(
+      TmuxMirrors.coreAttachClaims(
+        coreLeaders: coreLeaders, details: details,
+        own: TmuxProcessDetailsRead.ownCoreEnvironment(from: result.standardOutput)))
+    return claims
   }
 
   /// The agent in each pane, by raw pane id. A failed process table leaves every pane a shell.
