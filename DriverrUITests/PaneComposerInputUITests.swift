@@ -16,9 +16,7 @@ final class PaneComposerInputUITests: PaneComposerUITestCase {
   /// The list is mined from the transcript's command turns, and the default fixture has
   /// none. The slow transcript, because the fake otherwise answers before the view is up.
   private func composerOnACommandTranscript() -> XCUIApplication {
-    XCUIDevice.shared.orientation = .portrait
-    let app = connectedHostApp(["-uiTestingSlashCommandTranscript", "-uiTestingSlowTranscript"])
-    require(app, "session.workspace", "Expected the session tree")
+    let app = connectedHost(["-uiTestingSlashCommandTranscript", "-uiTestingSlowTranscript"])
     treePaneRow(app, titled: "needs a decision").tap()
     require(app, "pane.chat", "Expected the pane to open on its conversation")
     return app
@@ -302,9 +300,7 @@ final class PaneComposerInputUITests: PaneComposerUITestCase {
   /// catalogue. The ranking is `SlashCommandCatalogTests` and the parse is
   /// `SkillCatalogTests`.
   func testTypingASlashOffersTheHostsInstalledSkillsWithTheirDescriptions() {
-    XCUIDevice.shared.orientation = .portrait
-    let app = connectedHostApp(["-uiTestingSkillCatalog", "-uiTestingSlowTranscript"])
-    require(app, "session.workspace", "Expected the session tree")
+    let app = connectedHost(["-uiTestingSkillCatalog", "-uiTestingSlowTranscript"])
     treePaneRow(app, titled: "needs a decision").tap()
     require(app, "pane.chat", "Expected the pane to open on its conversation")
 
@@ -480,10 +476,7 @@ extension PaneComposerInputUITests {
   /// `-uiTestingSlowUpload` stretches the fake upload to about 3.2 seconds. Without it the
   /// row finishes before the first assertion, and a build that never reported a byte passes.
   private func composerWithAPickedImage(_ extraArguments: [String] = []) -> XCUIApplication {
-    XCUIDevice.shared.orientation = .portrait
-    let app = connectedHostApp(
-      ["-uiTestingPickedImage", "-uiTestingSlowUpload"] + extraArguments)
-    require(app, "session.workspace", "Expected the session tree")
+    let app = connectedHost(["-uiTestingPickedImage", "-uiTestingSlowUpload"] + extraArguments)
     treePaneRow(app, titled: "needs a decision").tap()
     require(app, "pane.chat", "Expected the pane to open on its conversation")
     return app
