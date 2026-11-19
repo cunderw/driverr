@@ -83,3 +83,19 @@ public protocol SSHTransport: Sendable {
   /// requested disconnect is never reported as a loss.
   var disconnections: AsyncStream<AppError> { get async }
 }
+
+/// The scripted forms of `execChannel` and `execStream`. Each wraps its script with
+/// `LoginShell.posix`, so the user's login shell hands `sh` the exact script, fish included.
+/// Every command Driverr writes goes through one of these. Use the raw forms only for a
+/// command the user typed for their own shell.
+extension SSHTransport {
+  /// Runs a script to completion under `sh`. See `LoginShell`.
+  public var posixRunner: CommandRunner {
+    { [self] script in try await execChannel(command: LoginShell.posix(script)) }
+  }
+
+  /// Starts a script under `sh` and keeps both directions open. See `LoginShell`.
+  public func posixOpen(_ script: String) async throws -> any ExecStream {
+    try await execStream(command: LoginShell.posix(script))
+  }
+}

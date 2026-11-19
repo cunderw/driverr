@@ -414,9 +414,11 @@ struct ImageUploadStallTests {
 
     for await _ in closes { break }
     let log = await transport.streamLog
+    // The script goes to the login shell as one `sh -c` word. See `LoginShell`.
+    let opened = "sh -c 'head -c 100'"
     #expect(
       log == [
-        "unanswered: head -c 100", "open: head -c 100", "unanswered: close head -c 100", "close: head -c 100",
+        "unanswered: \(opened)", "open: \(opened)", "unanswered: close \(opened)", "close: \(opened)",
       ])
   }
 }
