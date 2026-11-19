@@ -77,7 +77,7 @@ public struct PaneComposerState: Equatable, Sendable {
   public init() {}
 
   /// Why typed text may not be sent now, or `nil`. Set from the pane's agent; see
-  /// `PaneComposerHold.reason(agent:)`. It keeps what is typed.
+  /// `PaneComposerHold.reason(agent:screen:)`. It keeps what is typed.
   public var hold: PaneComposerHold?
 
   public var isSending: Bool { phase == .sending }
@@ -259,7 +259,7 @@ public struct PaneComposerState: Equatable, Sendable {
 /// still go.
 ///
 /// A case per reason, so another reason is another case and another argument to
-/// `reason(agent:)`.
+/// `reason(agent:screen:)`.
 public enum PaneComposerHold: Equatable, Sendable {
   /// A blocked Claude Code with no session of its own and no named reason, which asks on its
   /// screen.
@@ -269,31 +269,43 @@ public enum PaneComposerHold: Equatable, Sendable {
   /// which is "No, exit" by default, so a sent message would end the agent.
   case agentAsksOnScreen
 
+  /// A Codex selection picker is open on the screen (#109). Pasted text is no keys to it, and
+  /// the Enter after it picks the highlighted option, so a sent message is lost and changes a
+  /// setting. The chat's chips answer it with a digit.
   case pickerOpen
 
-  /// The hold for a pane's agent, or `nil` when a send may go.
+  /// The hold for a pane's agent, or `nil` when a send may go. `screen` is the pane's
+  /// screen as the chat read it for a question, or `nil` while the chat is not reading it
+  /// (`PaneQuestionScreen.watches(agent:pendingCall:)`).
   ///
-  /// **The agent alone decides, never the chat's state.** The chat is loading before it knows
-  /// there is no file, and in a folder with an older session the directory match draws that
-  /// file as `.ready`. Neither says the agent has stopped asking.
+  /// **The agent alone decides `.agentAsksOnScreen`, never the chat's state.** The chat is
+  /// loading before it knows there is no file, and in a folder with an older session the
+  /// directory match draws that file as `.ready`. Neither says the agent has stopped asking.
   ///
   /// **A named reason is not held.** A pane whose status says it waits on a permission or a
   /// question (herdr-core, a tmux record) is answered as it was before.
   ///
-  /// Claude Code only, by `TranscriptAgent(of:)`, the rule the reader uses. Codex never reports
-  /// a session to tmux, and its picker is another reason with its own evidence.
+  /// **`.pickerOpen` needs the screen**, because herdr reports Codex's picker `idle` and its
+  /// title does not change. Codex only, and Claude Code only for the first reason, both by
+  /// `TranscriptAgent(of:)`, the rule the reader uses.
   public static func reason(agent: Agent?, screen: PaneScreen?) -> PaneComposerHold? {
-    guard let agent, agent.status == .blocked, agent.session == nil, agent.blockedKind == nil,
-      TranscriptAgent(of: agent) == .claude
-    else { return nil }
-    return .agentAsksOnScreen
+    guard let agent else { return nil }
+    switch TranscriptAgent(of: agent) {
+    case .claude
+    where agent.status == .blocked && agent.session == nil && agent.blockedKind == nil:
+      return .agentAsksOnScreen
+    case .codex where screen.flatMap(PaneQuestionScreen.init(screen:))?.kind == .codexPicker:
+      return .pickerOpen
+    default:
+      return nil
+    }
   }
 
-  /// The composer's line while held. One short sentence: the chat's notice says how to answer.
+  /// The composer's line while held. One short sentence: the chat says how to answer.
   public var message: String {
     switch self {
     case .agentAsksOnScreen: "Sending is off while the agent asks on its screen."
-    case .pickerOpen: ""
+    case .pickerOpen: "Sending is off while the agent's picker is open."
     }
   }
 }
@@ -583,12 +595,15 @@ extension ToolCall {
         // which would draw a blank line.
         question: question.question.isEmpty ? nil : question.question,
         // Each option's picker number, not its label. The picker ignores typed text, and a
-        // digit selects by position.
+        // digit selects by position. A picker that takes no digits gets the arrow keys from
+        // its cursor and Enter instead; see `PickerTab.cursor`.
         chips: question.options.indices.compactMap { at in
-          PaneKey.digit(question.optionNumbers[at]).map {
+          PaneKey.digit(question.optionNumbers[at]).map { digit in
             ReplyChip(
               label: question.options[at],
-              action: .key($0),
+              action: question.pickerTab?.cursor.map {
+                .keys(Self.moves(from: $0, to: question.optionNumbers[at]) + [.enter])
+              } ?? .key(digit),
               detail: question.optionDescriptions.indices.contains(at)
                 ? question.optionDescriptions[at] : nil
             )
@@ -600,6 +615,13 @@ extension ToolCall {
         pickerTab: question.pickerTab
       )
     }
+  }
+
+  /// The arrow keys that move a picker's cursor from one option to another, by number.
+  /// Claude Code's trust dialog wraps at its ends, so each move takes the short way and
+  /// never relies on the wrap.
+  static func moves(from cursor: Int, to option: Int) -> [PaneKey] {
+    Array(repeating: option > cursor ? .down : .up, count: abs(option - cursor))
   }
 
   /// Every chip this call offers, whatever question it belongs to. Only for callers that
