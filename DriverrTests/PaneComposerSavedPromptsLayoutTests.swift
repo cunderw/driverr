@@ -80,6 +80,40 @@ struct PaneComposerSavedPromptsLayoutTests {
     #expect(open == closed)
   }
 
+  /// The button joins the card's control row, which must not grow for it: beside Attach,
+  /// Shift-Tab and Stop, at the default size and the largest.
+  @Test("the saved prompts button does not make the card taller", arguments: [
+    DynamicTypeSize.large, .accessibility5,
+  ])
+  func theButtonKeepsTheCardHeight(size: DynamicTypeSize) async {
+    let working = Pane(
+      id: "w1:p2", tabID: "w1:t1", workspaceID: "w1", title: "working",
+      agent: Agent(name: "Claude", kind: "claude", status: .working)
+    )
+    let saved = await model(holding: 2)
+    func height(_ prompts: SavedPromptsModel?) -> Double {
+      var height: Double = 0
+      var state = PaneComposerState()
+      state.text = "x"
+      let bar = PaneComposerBar(
+        model: PreviewSupport.composer(for: working, in: state),
+        header: PaneComposerHeader(pane: working),
+        onLayoutProbe: { height = Double($0.height) },
+        onAttach: { _ in },
+        modeControl: .ready,
+        savedPrompts: prompts
+      )
+      .environment(\.dynamicTypeSize, size)
+      let window = HostedProbe.window(bar)
+      withExtendedLifetime(window) {}
+      return height
+    }
+    let without = height(nil)
+    let with = height(saved)
+    #expect(without > 0)
+    #expect(with == without, "with \(with), without \(without)")
+  }
+
   @Test("each row is at least 44 pt tall, and the list stops growing past four rows")
   func rowsAndCap() async {
     let one = await barHeight(prompts: 1)

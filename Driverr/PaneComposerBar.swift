@@ -76,8 +76,10 @@ struct PaneComposerBar: View {
   /// The height of one line of a saved prompt's name and of its preview, at the current text
   /// size. Scaled metrics rather than a measured row, because a height fed back from layout
   /// into this bar hangs the app (see `onLayoutProbe`).
-  @ScaledMetric(relativeTo: .callout) private var promptNameLine: CGFloat = 21
-  @ScaledMetric(relativeTo: .caption) private var promptPreviewLine: CGFloat = 16
+  /// Read off a capture: a described row measured about 51 pt at the default size. Larger
+  /// numbers made the half-row peek past the cap nearly a whole row.
+  @ScaledMetric(relativeTo: .callout) private var promptNameLine: CGFloat = 20
+  @ScaledMetric(relativeTo: .caption) private var promptPreviewLine: CGFloat = 14
 
   @Bindable var model: PaneComposerModel
 
@@ -711,6 +713,9 @@ struct PaneComposerBar: View {
       .buttonStyle(.bordered)
       .controlSize(.small)
       .disabled(!canSave)
+      // Off is the common state, with an empty field. In dark the disabled `.bordered` fill is
+      // a solid black capsule, the heaviest thing in the panel, so it is faded.
+      .opacity(canSave ? 1 : 0.5)
       .accessibilityLabel(PaneComposerCopy.savePrompt)
       .accessibilityIdentifier("composer.prompts.save")
       // A gap, or at the largest sizes the `xmark` touched the Save capsule.
