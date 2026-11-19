@@ -1451,6 +1451,9 @@ struct PaneChatView: View {
             capsuleStack(stop: stop, folds: true)
             ScrollView { capsuleStack(stop: stop, folds: true) }
               .scrollBounceBehavior(.basedOnSize)
+              // A scroll view reaches into the safe areas around it, so unclipped the stack
+              // scrolls up under the bar's buttons and draws down under the composer.
+              .clipped()
           }
         } else {
           capsuleStack(stop: stop, folds: false)
