@@ -87,6 +87,26 @@ final class NewAgentUITests: XCTestCase {
     requireGone(app, "newAgent.folder", "Cancel did not close the sheet")
   }
 
+  /// herdr's TUI answers a missing program after its pane is open. The sheet says so inline and
+  /// offers that pane, because a second start would open a second one.
+  func testAnAgentThatDidNotStartOffersItsOpenPane() {
+    let app = connectedHostApp(["-uiTestingAgentDidNotStart"])
+    openSheet(app)
+
+    waitFor(app, "newAgent.recent", "Expected the session's folders").tap()
+    scrollIntoReach(app, "newAgent.start").tap()
+
+    let error = scrollIntoReach(app, "newAgent.error")
+    XCTAssertTrue(error.label.contains("did not start"), "Unexpected failure: \(error.label)")
+    let open = scrollIntoReach(app, "newAgent.openPane")
+    XCTAssertTrue(open.label.contains("Open driverr"), "Unexpected button: \(open.label)")
+    open.tap()
+
+    requireGone(app, "newAgent.openPane", "Open did not take the sheet down", timeout: 15)
+    waitForPaneScene(app, "Expected the pane the start left open")
+    leavePaneScene(app)
+  }
+
   // MARK: - Helpers
 
   /// Waits for the seeded session, so the toolbar has its final buttons, then opens the sheet.

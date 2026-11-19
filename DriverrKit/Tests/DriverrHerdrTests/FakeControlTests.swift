@@ -553,3 +553,43 @@ struct FakeControlAgentStartTests {
     #expect(await control.agentLaunches.count == 1)
   }
 }
+
+@Suite("FakeControl agent start behaviours")
+struct FakeControlAgentStartBehaviourTests {
+  private let launch = AgentLaunch(kind: .claude, directory: "~/dev/app")
+
+  @Test("a slow start lists its pane after the delay")
+  func slow() async throws {
+    let control = FakeControl(
+      script: [.empty], canStartAgent: true, agentStart: .starts(after: .milliseconds(50)))
+    let clock = ContinuousClock()
+    let started = clock.now
+    let id = try await control.startAgent(launch)
+    #expect(clock.now - started >= .milliseconds(50))
+    #expect(try await control.snapshot().pane(id: id) != nil)
+  }
+
+  /// The pane stays listed, so the sheet's Open button has something to open.
+  @Test("a start that leaves its pane open lists the pane and names it in the failure")
+  func leavesPaneOpen() async throws {
+    let control = FakeControl(
+      script: [.empty], canStartAgent: true, agentStart: .leavesPaneOpen(reason: "claude: command not found"))
+    do {
+      _ = try await control.startAgent(launch)
+      Issue.record("expected a failure")
+    } catch AppError.agentDidNotStart(let paneID, let place, let reason) {
+      #expect(place == "app")
+      #expect(reason == "claude: command not found")
+      #expect(try await control.snapshot().pane(id: paneID) != nil)
+    }
+  }
+
+  @Test("a refused folder lists nothing")
+  func refusesFolder() async throws {
+    let control = FakeControl(script: [.empty], canStartAgent: true, agentStart: .refusesFolder)
+    await #expect(throws: AppError.directoryUnavailable(path: "~/dev/app")) {
+      try await control.startAgent(launch)
+    }
+    #expect(try await control.snapshot().isEmpty)
+  }
+}

@@ -229,6 +229,8 @@ struct AppEnvironment {
             tree: .empty,
             availability: .coreReady(version: "0.1.15"),
             canStartTerminal: true,
+            // A core starts agents too, so the empty state offers New Agent beside New Terminal.
+            canStartAgent: true,
             startFailure: emptyCoreStartFailure
           )
         }
@@ -270,7 +272,8 @@ struct AppEnvironment {
         // seed's panes and its blocked pair are unchanged inside it.
         if isDemoTranscript { return FakeControl(script: FakeControl.storeTourScript) }
         // Starts agents, so the host screen offers New Agent. See `FakeControl.startAgent`.
-        return FakeControl(script: FakeControl.blockingScript, canStartAgent: true)
+        return FakeControl(
+          script: FakeControl.blockingScript, canStartAgent: true, agentStart: agentStartBehaviour)
       },
       makeTranscriptReader: { _ in
         TranscriptReader(run: AppEnvironment.launchRunner)
@@ -370,6 +373,21 @@ struct AppEnvironment {
   )
 
   // MARK: - New Agent
+
+  /// How the seeded host answers a New Agent start. `-uiTestingSlowAgentStart` holds it long
+  /// enough to see the spinner, as herdr's TUI does while it waits for the agent.
+  /// `-uiTestingAgentDidNotStart` opens the pane and reports the agent missing, as herdr's TUI
+  /// does for a program that is not installed. `-uiTestingAgentFolderRefused` refuses the
+  /// folder. Otherwise the start answers at once.
+  static var agentStartBehaviour: FakeControl.AgentStartBehaviour {
+    let arguments = ProcessInfo.processInfo.arguments
+    if arguments.contains("-uiTestingAgentDidNotStart") {
+      return .leavesPaneOpen(reason: "timed out waiting for agent startup")
+    }
+    if arguments.contains("-uiTestingAgentFolderRefused") { return .refusesFolder }
+    if arguments.contains("-uiTestingSlowAgentStart") { return .starts(after: .seconds(4)) }
+    return .starts(after: .zero)
+  }
 
   /// The folders the New Agent sheet's browser lists, under the key fixture's home. The seeded
   /// session's pane folders are here, so a recent folder can be browsed too. `packages` holds
