@@ -41,6 +41,30 @@ struct AgentStopTests {
     #expect(tokyo.detail == "Resets tomorrow at \(Self.time("7:40 AM")).")
   }
 
+  @Test("the folded line keeps a live limit's reset time, and is the title otherwise")
+  func compactLine() {
+    #expect(
+      Self.notice(Self.limit, secondsBeforeReset: 3_600).compactLine
+        == "Resets at \(Self.time("5:40 PM"))")
+    #expect(
+      Self.notice(Self.limit, secondsBeforeReset: 3 * 86_400).compactLine
+        == "Resets on Sun, Sep 27 at \(Self.time("5:40 PM"))")
+    #expect(Self.notice(Self.limit, secondsBeforeReset: -60).compactLine == "Usage limit reset")
+    let noTime = AgentStopNotice(
+      stop: AgentStop(kind: .rateLimit, message: "You've hit your session limit"),
+      asOf: .distantFuture, timeZone: Self.chicago, locale: Self.enUS)
+    #expect(noTime.compactLine == "Usage limit reached")
+    let login = Self.notice(
+      AgentStop(kind: .loginExpired, message: "Login expired · Please run /login"),
+      secondsBeforeReset: 0)
+    #expect(login.compactLine == "Sign-in required")
+    let server = Self.notice(
+      AgentStop(kind: .serverError, message: "API Error: Can't reach the API server"),
+      secondsBeforeReset: 0)
+    #expect(server.compactLine == "API request failed")
+    #expect(Self.notice(AgentStop(kind: .other), secondsBeforeReset: 0).compactLine == "API error")
+  }
+
   @Test("a limit that resets days away does not print a bare time")
   func weeklyLimit() {
     let notice = Self.notice(Self.limit, secondsBeforeReset: 3 * 86_400)

@@ -234,6 +234,12 @@ struct PaneChatView: View {
   /// See `ChatCollectionView.Coordinator.applyInsets`.
   @State private var chatSlotTopInset: CGFloat = 0
 
+  /// Whether the stop notice is open, at accessibility sizes, where it folds. See
+  /// `floatingCapsules(for:)`.
+  @State private var isStopExpanded = false
+
+  @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
   /// Show the Screen capsule's vertical padding, 8 pt at the default text size.
   @ScaledMetric private var showScreenCapsulePadding: CGFloat = 8
 
@@ -462,6 +468,8 @@ struct PaneChatView: View {
       // The reader's state belongs to the old conversation; the coordinator reports the new
       // one within a layout pass.
       readerState = ChatReaderState()
+      // The next pane's stop, if it has one, opens folded.
+      isStopExpanded = false
     }
   }
 
@@ -1423,13 +1431,22 @@ struct PaneChatView: View {
   /// The stack hugs its capsules and carries no background or content shape, so the
   /// conversation around them still takes touches. First in VoiceOver's order, ahead of the
   /// conversation, as the pinned rows were.
+  ///
+  /// At accessibility sizes a stop folds to one capsule, and Show the Screen waits behind it
+  /// with the Continue opt-in, one tap away: unfolded, the three covered most of a phone's
+  /// chat (#107). With no stop, Show the Screen floats alone at every size.
   @ViewBuilder
   private func floatingCapsules(for transcript: Transcript) -> some View {
     let stop = floatingStop(in: transcript)
+    let folds = stop != nil && dynamicTypeSize.isAccessibilitySize
     if stop != nil || offersScreenCapsule {
       VStack(spacing: 0) {
-        if let stop { AgentStopRow(stop: stop, continueAtReset: continueAtReset) }
-        if offersScreenCapsule { showScreenCapsule }
+        if let stop {
+          AgentStopRow(
+            stop: stop, continueAtReset: continueAtReset,
+            expanded: folds ? $isStopExpanded : nil)
+        }
+        if offersScreenCapsule, !folds || isStopExpanded { showScreenCapsule }
       }
       .frame(maxWidth: ChatColumn.width)
       // The gutter, because the stack is not a cell and section insets do not reach it.

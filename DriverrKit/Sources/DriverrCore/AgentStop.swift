@@ -85,6 +85,13 @@ public struct AgentStopNotice: Hashable, Sendable {
   /// cannot drift.
   public let symbolName: String
 
+  /// The notice in one short line, for the folded capsule at accessibility text sizes.
+  ///
+  /// A live limit with a reset time keeps the reset time, `Resets at 5:40 PM`, because that is
+  /// the one fact the reader waits on, and the glyph says it is a limit. Every other stop is
+  /// its title. The full notice is one tap away, and VoiceOver reads `accessibilityLabel`.
+  public let compactLine: String
+
   public init(
     stop: AgentStop, asOf now: Date, timeZone: TimeZone = .current, locale: Locale = .current
   ) {
@@ -97,25 +104,31 @@ public struct AgentStopNotice: Hashable, Sendable {
       guard let resetsAt = stop.resetsAt else {
         title = "Usage limit reached"
         detail = Self.nonEmpty(stop.message)
+        compactLine = title
         return
       }
       let when = Self.resetPhrase(resetsAt, asOf: now, timeZone: timeZone, locale: locale)
       if isStale {
         title = "Usage limit reset"
         detail = "It reset \(when)."
+        compactLine = title
       } else {
         title = "Usage limit reached"
         detail = "Resets \(when)."
+        compactLine = "Resets \(when)"
       }
     case .loginExpired:
       title = "Sign-in required"
       detail = Self.nonEmpty(stop.message)
+      compactLine = title
     case .serverError:
       title = "API request failed"
       detail = Self.nonEmpty(stop.message)
+      compactLine = title
     case .other:
       title = "API error"
       detail = Self.nonEmpty(stop.message)
+      compactLine = title
     }
   }
 
