@@ -1222,6 +1222,7 @@ struct TranscriptPresentationTests {
       TranscriptNotice(absence: .agentNotSupported(agent: "Gemini"), agentStatus: nil),
       TranscriptNotice(absence: .paneHasNoDirectory, agentStatus: nil),
       TranscriptNotice(absence: .noSessionFiles(directory: "/p"), agentStatus: nil),
+      TranscriptNotice(absence: .noSessionFiles(directory: "/p"), agentStatus: .blocked),
     ]
     let symbols = Set(distinguishable.map(\.symbolName))
     #expect(symbols.count == distinguishable.count, "every notice must have its own symbol")
@@ -1245,13 +1246,31 @@ struct TranscriptPresentationTests {
 
   @Test(
     "a named session with no file yet shares the empty directory's glyph",
-    arguments: [AgentStatus.blocked, .idle, .unknown, nil])
+    arguments: [AgentStatus.idle, .unknown, nil])
   func aNamedSessionWithNoFileYetSharesTheWaitGlyph(status: AgentStatus?) {
     let named = TranscriptNotice(
       absence: .reportedSessionMissing(sessionID: "s", directory: "/p"), agentStatus: status)
     let empty = TranscriptNotice(absence: .noSessionFiles(directory: "/p"), agentStatus: status)
     #expect(named.symbolName == "text.bubble")
     #expect(named.symbolName == empty.symbolName)
+  }
+
+  /// Claude Code's folder-trust prompt reports blocked with no file, and Enter on it picks
+  /// "No, exit". The notice must not invite a message, and has no Retry (#122).
+  @Test(
+    "a blocked agent with no file yet is sent to the screen, not to the composer",
+    arguments: [
+      TranscriptAbsence.noSessionFiles(directory: "/home/x/project"),
+      .reportedSessionMissing(sessionID: "s", directory: "/home/x/project"),
+    ])
+  func aBlockedAgentWithNoFileIsSentToTheScreen(absence: TranscriptAbsence) {
+    let notice = TranscriptNotice(absence: absence, agentStatus: .blocked)
+    #expect(notice.title == "Waiting on its screen")
+    #expect(notice.message.contains(TranscriptNotice.showScreenTitle))
+    #expect(!notice.message.contains("Send a message"))
+    #expect(notice.offersScreen(inSubagentChat: false))
+    #expect(!notice.offersRetry)
+    #expect(notice.symbolName == "hand.raised")
   }
 
   /// A new Claude Code session is named before its file exists, and the file appears with

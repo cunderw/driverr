@@ -167,6 +167,15 @@ extension TranscriptAbsence {
     if case .agentNotSupported = self { return true }
     return false
   }
+
+  /// Whether this is the wait for a session's first file: the directory holds none, or the
+  /// agent named a session whose file is not written yet.
+  public var awaitsFirstFile: Bool {
+    switch self {
+    case .noSessionFiles, .reportedSessionMissing: true
+    default: false
+    }
+  }
 }
 
 extension TranscriptResolution {
@@ -287,10 +296,25 @@ public struct TranscriptNotice: Equatable, Sendable {
   /// `agentStatus` decides whether a missing file is a wait or a fault. A session's file is
   /// written with its first prompt, so an idle agent with no file is waiting. A working or
   /// finished agent has had its prompt, so a missing file is a fault. A blocked agent keeps
-  /// the wait, because a new Claude on its trust prompt reports blocked before any prompt
-  /// (`FakeControl.treeWithUnstartedAgent`). No default, so a call site cannot forget it.
+  /// the wait, but not its invitation to send: a new Claude on its folder-trust prompt
+  /// reports blocked before any prompt (`FakeControl.treeWithUnstartedAgent`). That prompt's
+  /// default choice is "No, exit", and a sent message presses Enter on it, so the notice
+  /// sends the reader to the screen instead. `PaneComposerHold` holds the send. No default,
+  /// so a call site cannot forget it.
   public init(absence: TranscriptAbsence, agentStatus: AgentStatus?) {
     let leftTheDirectory = "If this pane has left the directory the agent started in,"
+    if PaneComposerHold.reason(agentStatus: agentStatus, absence: absence) != nil {
+      // No retry: the watcher polls for the first file, and the pane's status changes when
+      // the prompt is answered.
+      self.init(
+        title: "Waiting on its screen",
+        message:
+          "The agent has not started its session. It is asking something on its screen. "
+          + "Use \(Self.showScreenTitle) to answer it.",
+        symbolName: "hand.raised"
+      )
+      return
+    }
     switch absence {
     case .noSessionFiles(let directory) where Self.hasHadAPrompt(agentStatus),
       .reportedSessionMissing(_, let directory) where Self.hasHadAPrompt(agentStatus):

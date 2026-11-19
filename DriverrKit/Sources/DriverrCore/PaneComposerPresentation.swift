@@ -76,11 +76,16 @@ public struct PaneComposerState: Equatable, Sendable {
 
   public init() {}
 
+  /// Why typed text may not be sent now, or `nil`. Set from the pane and its chat; see
+  /// `PaneComposerHold.reason(agentStatus:absence:)`. It keeps what is typed.
+  public var hold: PaneComposerHold?
+
   public var isSending: Bool { phase == .sending }
 
-  /// Nothing to send is a disabled button, not an error.
+  /// Nothing to send, or a hold, is a disabled button, not an error.
   public var canSend: Bool {
-    !isSending && !staged.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    hold == nil && !isSending
+      && !staged.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
   }
 
   public var failure: AppError? {
@@ -97,7 +102,8 @@ public struct PaneComposerState: Equatable, Sendable {
   /// Stages `text`, which was not typed: the reset alert's Continue sends a fixed word. What
   /// is typed stays staged, because `succeeded()` clears only the text it sent.
   public mutating func beginSending(text: String) -> Attempt? {
-    guard !isSending, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+    guard hold == nil, !isSending, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    else {
       return nil
     }
     return begin(.text(text))
@@ -120,7 +126,14 @@ public struct PaneComposerState: Equatable, Sendable {
   /// has since been edited.
   public mutating func beginRetry() -> Attempt? {
     guard case .failed = phase, let attempt else { return nil }
+    guard !isRetryHeld else { return nil }
     return begin(attempt)
+  }
+
+  /// Whether the hold stops a retry: a text retry presses the same Enter. A key retry goes.
+  private var isRetryHeld: Bool {
+    guard hold != nil, case .text = attempt else { return false }
+    return true
   }
 
   /// herdr took it, which is not the agent answering it.
@@ -192,7 +205,7 @@ public struct PaneComposerState: Equatable, Sendable {
         message: PaneComposerCopy.failed,
         detail: error.errorDescription ?? PaneComposerCopy.noAnswer,
         tone: .failure,
-        offersRetry: true
+        offersRetry: !isRetryHeld
       )
     }
   }
@@ -239,6 +252,37 @@ public struct PaneComposerState: Equatable, Sendable {
     self.attempt = attempt
     phase = .sending
     return attempt
+  }
+}
+
+/// Why the composer will not send typed text now. The typed text stays, and key presses
+/// still go.
+///
+/// A case per reason, so another reason is another case and another argument to
+/// `reason(agentStatus:absence:)`.
+public enum PaneComposerHold: Equatable, Sendable {
+  /// The agent has not started its session, and is blocked on a choice drawn on its screen.
+  ///
+  /// Claude Code's folder-trust prompt is the measured case (2.1.328, #122). It ignores typed
+  /// text, and Enter picks the highlighted choice, which is "No, exit" by default. A sent
+  /// message would end the agent.
+  case agentAsksOnScreen
+
+  /// The hold for a pane, or `nil` when a send may go. `absence` is why the chat has no
+  /// transcript, or `nil` when it has one or has not read yet.
+  public static func reason(
+    agentStatus: AgentStatus?, absence: TranscriptAbsence?
+  ) -> PaneComposerHold? {
+    guard agentStatus == .blocked, absence?.awaitsFirstFile == true else { return nil }
+    return .agentAsksOnScreen
+  }
+
+  /// The composer's line while held. Short, and it names the way to answer.
+  public var message: String {
+    switch self {
+    case .agentAsksOnScreen:
+      "Sending is off while the agent asks on its screen. Use \(TranscriptNotice.showScreenTitle)."
+    }
   }
 }
 
