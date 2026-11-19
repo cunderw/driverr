@@ -132,4 +132,89 @@ struct TmuxNeedsYouTests {
     #expect(asking.pane(id: "tmux:%1")?.agent?.blockedKind == .question)
     #expect(alerts.update(to: asking, isAppActive: false).announce.map(\.id) == ["tmux:%1"])
   }
+
+  // MARK: Codex (#102 S4b)
+
+  /// `%1` runs Codex, behind a foreground-group leader that is not Codex, in `/home/dev/app`.
+  private func codexHost(title: String) -> FakeTmuxHost {
+    FakeTmuxHost(
+      sessions: [
+        .init(
+          id: 0, name: "work", attached: 1,
+          windows: [
+            .init(
+              id: 0, index: 0, name: "codex", isActive: true,
+              panes: [
+                .init(id: 0, isActive: true),
+                .init(id: 1, title: title, command: "codex", path: "/home/dev/app"),
+              ])
+          ])
+      ],
+      processes: [
+        .init(pid: 5001, tty: "ttys100", command: "zsh"),
+        .init(pid: 6000, groupID: 6000, foregroundGroupID: 6000, tty: "ttys101", command: "sh"),
+        .init(
+          pid: 6001, groupID: 6000, foregroundGroupID: 6000, tty: "ttys101",
+          command: "/home/dev/.local/bin/codex"),
+      ]
+    )
+  }
+
+  @Test("a Codex asking for approval in tmux is announced once across the blink, carried by the card, and withdrawn when it works",
+    arguments: Shape.allCases)
+  func codexWaitingThenWorking(shape: Shape) async throws {
+    let host = codexHost(title: "[ ! ] Action Required | app")
+    let control = try control(shape, host: host)
+
+    let waiting = try await control.snapshot()
+    #expect(waiting.blockedPanes.map(\.id) == ["tmux:%1"])
+    let pane = try #require(waiting.pane(id: "tmux:%1"))
+    #expect(pane.agent?.kind == TranscriptAgent.codex.rawValue)
+    #expect(pane.agent?.status == .blocked)
+    #expect(pane.agent?.blockedKind == nil)
+    #expect(pane.agent?.session == nil)
+    #expect(pane.directory == "/home/dev/app")
+    #expect(waiting.loneBlockedPane?.id == "tmux:%1")
+    #expect(waiting.agentStatusCounts.blocked == 1)
+
+    var alerts = BlockedPaneAlerts()
+    #expect(alerts.update(to: waiting, isAppActive: false).announce.map(\.id) == ["tmux:%1"])
+
+    // The title blinks each second. The other frame is the same request, not a new one.
+    await host.setTitle(of: 1, "[ . ] Action Required | app")
+    let blinked = try await control.snapshot()
+    #expect(blinked.blockedPanes.map(\.id) == ["tmux:%1"])
+    #expect(blinked.pane(id: "tmux:%1")?.title == pane.title)
+    #expect(alerts.update(to: blinked, isAppActive: false).isEmpty)
+
+    guard case .request(let card) = try #require(reconcile(waiting).first) else {
+      Issue.record("no card was requested: \(reconcile(waiting))")
+      return
+    }
+    #expect(card.blocked?.paneID == "tmux:%1")
+    #expect(card.blockedCount == 1)
+    // The standing card still names the same pane in the other frame.
+    for action in reconcile(blinked, existing: [ExistingLiveActivity(activityID: UUID(), state: card)]) {
+      switch action {
+      case .update(_, let state): #expect(state.blocked?.paneID == "tmux:%1")
+      case .request, .end: Issue.record("the blink changed the card: \(action)")
+      }
+    }
+
+    // Approved at the desk: Codex works again.
+    await host.setTitle(of: 1, "⠙ app")
+    let working = try await control.snapshot()
+    #expect(working.pane(id: "tmux:%1")?.agent?.status == .working)
+    #expect(working.blockedPanes.isEmpty)
+    #expect(alerts.update(to: working, isAppActive: false).clear == ["tmux:%1"])
+
+    let standing = ExistingLiveActivity(activityID: UUID(), state: card)
+    guard case .update(_, let calm) = try #require(reconcile(working, existing: [standing]).first)
+    else {
+      Issue.record("the card was not updated: \(reconcile(working, existing: [standing]))")
+      return
+    }
+    #expect(calm.blocked == nil)
+    #expect(calm.blockedCount == 0)
+  }
 }

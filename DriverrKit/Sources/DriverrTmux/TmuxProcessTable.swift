@@ -59,13 +59,50 @@ enum TmuxProcessTable {
   /// The pids that may be this pane's agent, most likely first: the foreground group's leader,
   /// then its other members by pid.
   static func candidates(forPaneTTY paneTTY: String, in processes: [TmuxProcess]) -> [Int] {
+    foregroundGroup(forPaneTTY: paneTTY, in: processes).map(\.pid)
+  }
+
+  /// The processes behind `candidates(forPaneTTY:in:)`, in the same order, with their commands.
+  static func foregroundGroup(
+    forPaneTTY paneTTY: String, in processes: [TmuxProcess]
+  ) -> [TmuxProcess] {
     let tty = ttyName(ofPaneTTY: paneTTY)
     guard !tty.isEmpty else { return [] }
     let onTTY = processes.filter { $0.tty == tty && $0.foregroundGroupID > 0 }
     guard let foreground = onTTY.first?.foregroundGroupID else { return [] }
-    let group = onTTY.filter { $0.groupID == foreground }.map(\.pid).sorted()
-    let ordered = group.filter { $0 == foreground } + group.filter { $0 != foreground }
+    let group = onTTY.filter { $0.groupID == foreground }.sorted { $0.pid < $1.pid }
+    let ordered = group.filter { $0.pid == foreground } + group.filter { $0.pid != foreground }
     return Array(ordered.prefix(candidateLimit))
+  }
+
+  /// Whether a process is Codex, by its command's last path component.
+  ///
+  /// Codex keeps no record that names its process, so its name is the only signal. macOS `ps`
+  /// prints `comm` as the path it was started by, which for a symlinked install is the link,
+  /// such as `/home/dev/.local/bin/codex`, and `codex` when a shell found it on `PATH`. Linux
+  /// prints the bare name, which is not measured. On codex 0.164.0 on macOS one launch led the
+  /// foreground group and another was only a member of it, so every member is checked. A `node`
+  /// wrapper from an npm install is not measured, and does not match.
+  static func isCodex(_ process: TmuxProcess) -> Bool {
+    name(of: process) == "codex"
+  }
+
+  /// Whether a pane's foreground group, from `foregroundGroup(forPaneTTY:in:)`, is Codex.
+  ///
+  /// **Not when Claude leads the group.** Claude can start `codex mcp-server` as an MCP child in
+  /// its own group, and with Claude's record missing or unreadable that child would make a
+  /// Claude pane a Codex one. Claude's `comm` is `claude`, or its version string, `2.1.325`.
+  static func runsCodex(_ group: [TmuxProcess]) -> Bool {
+    if let leader = group.first, leader.pid == leader.groupID, !isCodex(leader) {
+      let leaderName = name(of: leader)
+      if leaderName == "claude" || TmuxSnapshotMapper.looksLikeVersion(leaderName) { return false }
+    }
+    return group.contains(where: isCodex)
+  }
+
+  /// A command's last path component.
+  private static func name(of process: TmuxProcess) -> String {
+    process.command.split(separator: "/").last.map(String.init) ?? ""
   }
 }
 

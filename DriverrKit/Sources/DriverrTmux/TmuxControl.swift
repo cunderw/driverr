@@ -6,7 +6,9 @@ import Foundation
 ///
 /// One exec channel per request, over the same `CommandRunner`. tmux has no `-F` listing for
 /// an agent, so the snapshot joins three reads: the panes, the host's process table and
-/// Claude Code's own record of each foreground process. See `TmuxProcessTable`.
+/// Claude Code's own record of each foreground process. Codex keeps no record, so a Codex pane
+/// comes from its process's name and its state from the pane's title. See `TmuxProcessTable`
+/// and `CodexTitle`.
 ///
 /// Ids are `TmuxID`'s: `tmux:%3` for a pane, `tmux:@2` for a window and `tmux:$1` for a
 /// session. They map to `Pane`, `Tab` and `Workspace` ids, so a tmux pane is told apart by its
@@ -129,7 +131,8 @@ public struct TmuxControl: HerdrControl {
     return TmuxSnapshotMapper.tree(from: rows, agents: agents)
   }
 
-  /// The agent in each pane, by raw pane id. A failure at any step leaves a pane a shell.
+  /// The agent in each pane, by raw pane id. A failed process table leaves every pane a shell.
+  /// A failed read of Claude's records leaves Claude's panes shells and still finds Codex.
   private func agents(
     forRows rows: [TmuxPaneRow],
     processTable: CommandResult?
@@ -145,21 +148,33 @@ public struct TmuxControl: HerdrControl {
     let pids = Array(Set(candidates.values.flatMap { $0 })).sorted()
     // **The exit status is ignored.** `cat` of the last pid's missing file exits 1, and the shell
     // reports only the last command's, so a host whose final pid has no record would read as a
-    // failure of the whole read.
-    guard !pids.isEmpty, let files = try? await run(ClaudeRecordFiles.command(forPIDs: pids))
-    else { return [:] }
+    // failure of the whole read. A read that throws costs Claude's panes and not Codex's.
+    let files = pids.isEmpty ? nil : try? await run(ClaudeRecordFiles.command(forPIDs: pids))
 
-    let contents = ClaudeRecordFiles.contents(of: files.standardOutput, forPIDs: pids)
+    let contents = files.map { ClaudeRecordFiles.contents(of: $0.standardOutput, forPIDs: pids) }
     var agents: [String: Agent] = [:]
     for (paneID, pids) in candidates {
       for pid in pids {
         // The record's own pid has to match, so another process's file is never taken.
-        guard let data = contents[pid], let record = ClaudeSessionRecord.parse(data),
+        guard let data = contents?[pid], let record = ClaudeSessionRecord.parse(data),
           record.pid == nil || record.pid == pid
         else { continue }
         agents[paneID] = record.agent
         break
       }
+    }
+
+    // Codex keeps no record of its process, so its name in the foreground group makes the agent
+    // and the pane's title says what it is doing. No session: the reader takes the newest rollout
+    // for the pane's directory, as it does for a herdr-core Codex. A Claude record wins.
+    for row in rows where agents[row.paneID] == nil {
+      let group = TmuxProcessTable.foregroundGroup(forPaneTTY: row.tty, in: processes)
+      guard TmuxProcessTable.runsCodex(group) else { continue }
+      agents[row.paneID] = Agent(
+        name: TranscriptAgent.codex.displayName,
+        kind: TranscriptAgent.codex.rawValue,
+        status: CodexTitle.status(of: row.title)
+      )
     }
     return agents
   }
