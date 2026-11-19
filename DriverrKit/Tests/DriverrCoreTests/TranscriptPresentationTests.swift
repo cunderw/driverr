@@ -1271,7 +1271,8 @@ struct TranscriptPresentationTests {
       .reportedSessionMissing(sessionID: "s", directory: "/home/x/project"),
     ])
   func aHeldPaneIsSentToTheScreen(absence: TranscriptAbsence) {
-    let notice = TranscriptNotice(absence: absence, agentStatus: .blocked, hold: .agentAsksOnScreen, answersBelow: false)
+    let notice = TranscriptNotice(
+      absence: absence, agentStatus: .blocked, hold: .agentAsksOnScreen, answersBelow: false)
     #expect(notice.title == "The agent is asking on its screen")
     #expect(notice.message.contains(TranscriptNotice.showScreenTitle))
     #expect(!notice.message.contains("Send a message"))
@@ -1326,10 +1327,12 @@ struct TranscriptPresentationTests {
         == TranscriptNotice(absence: absence, agentStatus: status))
     if !absence.awaitsFirstFile {
       #expect(
-        TranscriptNotice(absence: absence, agentStatus: status, hold: .agentAsksOnScreen, answersBelow: false)
+        TranscriptNotice(
+          absence: absence, agentStatus: status, hold: .agentAsksOnScreen, answersBelow: false)
           == TranscriptNotice(absence: absence, agentStatus: status))
       #expect(
-        TranscriptNotice(absence: absence, agentStatus: status, hold: .pickerOpen, answersBelow: true)
+        TranscriptNotice(
+          absence: absence, agentStatus: status, hold: .pickerOpen, answersBelow: true)
           == TranscriptNotice(absence: absence, agentStatus: status))
     }
   }

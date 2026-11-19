@@ -93,7 +93,9 @@ struct CodexPickerScreenTests {
         "Legacy balanced model for agentic coding.",
         "Legacy fast model for simpler tasks.",
       ])
-    #expect(question.pickerTab == PickerTab(index: 0, count: 1, submitsAfter: false))
+    #expect(
+      question.pickerTab
+        == PickerTab(index: 0, count: 1, submitsAfter: false, leavesNoRecord: true))
   }
 
   /// Its footer is `enter default · s session · esc back`, not the first stage's.
@@ -115,6 +117,15 @@ struct CodexPickerScreenTests {
     let first = try call(CodexPickerScreenFixture.modelStage1).replyChipGroups
     let second = try call(CodexPickerScreenFixture.modelStage2).replyChipGroups
     #expect(ReplyChipGroup.screenQuestionAdvanced(from: first, to: second))
+  }
+
+  /// Codex records nothing for the answer and herdr keeps the pane idle, so the picker going
+  /// is the only sign. Claude's picker keeps waiting for the transcript;
+  /// `PaneQuestionScreenTests` holds that.
+  @Test("a Codex picker leaving the screen is its answer landing")
+  func pickerGoing() throws {
+    let open = try call(CodexPickerScreenFixture.permissions).replyChipGroups
+    #expect(ReplyChipGroup.screenQuestionAdvanced(from: open, to: []))
   }
 
   @Test("a picker under a numbered reply reads only the picker's options")
@@ -139,7 +150,8 @@ struct CodexPickerScreenTests {
 
   @Test("the screen read says which picker it found")
   func kind() throws {
-    let read = try #require(PaneQuestionScreen(screen: screen(CodexPickerScreenFixture.permissions)))
+    let read = try #require(
+      PaneQuestionScreen(screen: screen(CodexPickerScreenFixture.permissions)))
     #expect(read.kind == .codexPicker)
   }
 

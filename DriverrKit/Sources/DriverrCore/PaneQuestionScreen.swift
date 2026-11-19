@@ -311,7 +311,7 @@ extension PaneQuestionScreen {
       options: options.map(\.label),
       optionDescriptions: options.map { $0.detail.isEmpty ? nil : $0.detail.joined(separator: " ") },
       // One question, and a digit picks its option with no Enter.
-      pickerTab: PickerTab(index: 0, count: 1, submitsAfter: false)
+      pickerTab: PickerTab(index: 0, count: 1, submitsAfter: false, leavesNoRecord: true)
     )
   }
 
@@ -469,15 +469,22 @@ public struct PickerTab: Hashable, Sendable {
   /// folder-trust dialog. A chip moves the cursor from here with the arrow keys and presses
   /// Enter (`ToolCall.replyChipGroups`). `nil` where a digit answers.
   public let cursor: Int?
+  /// Whether the agent records nothing when this picker is answered, so the picker leaving
+  /// the screen is the only sign the answer landed. True for Codex's pickers: herdr keeps the
+  /// pane `idle` and the rollout gains no turn (#109). See
+  /// `ReplyChipGroup.screenQuestionAdvanced(from:to:)`.
+  public let leavesNoRecord: Bool
 
   public init(
-    index: Int, count: Int, submitsAfter: Bool, checked: [Int] = [], cursor: Int? = nil
+    index: Int, count: Int, submitsAfter: Bool, checked: [Int] = [], cursor: Int? = nil,
+    leavesNoRecord: Bool = false
   ) {
     self.index = index
     self.count = count
     self.submitsAfter = submitsAfter
     self.checked = checked
     self.cursor = cursor
+    self.leavesNoRecord = leavesNoRecord
   }
 }
 
@@ -524,9 +531,14 @@ extension ReplyChipGroup {
   /// last answer landed, like a new transcript turn, so it retires the `Sent` notice. Both
   /// sides must come from the screen: a question the transcript takes over is the same
   /// question, and an answered call's evidence arrives through the transcript.
+  ///
+  /// One exception: a picker whose answer leaves no record (`PickerTab.leavesNoRecord`,
+  /// Codex's) going from the screen is its answer landing, because nothing else will say so.
   public static func screenQuestionAdvanced(from old: [ReplyChipGroup], to new: [ReplyChipGroup])
     -> Bool
   {
-    old.contains { $0.pickerTab != nil } && new.contains { $0.pickerTab != nil } && old != new
+    guard old.contains(where: { $0.pickerTab != nil }) else { return false }
+    if new.isEmpty { return old.contains { $0.pickerTab?.leavesNoRecord == true } }
+    return new.contains { $0.pickerTab != nil } && old != new
   }
 }
