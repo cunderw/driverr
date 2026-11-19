@@ -774,16 +774,17 @@ struct EmptyGlobCommandTests {
 
     let command = TranscriptCommands.subagentListCommand(directory: project.path, sessionID: "sess1")
     let result = try await scratch.run(command, shell: shell)
-    #expect(result.exitStatus == 0)
-    #expect(result.standardError == "")
     let list = TranscriptReader.subagentList(from: result.standardOutput, readAt: Date())
     // A failure here once read "0 rows, total 53" with exit 0 and empty stderr, and nobody
     // kept the output (#106). The comment keeps it, and how the shell ended, for next time.
+    // It is built first, so the exit and stderr expectations carry it too.
     let capture: Comment = """
       \(shell): \(result.ending), \(list.summaries.count) rows, total \(list.total)
       stdout: \(result.standardOutput)
       stderr: \(result.standardError)
       """
+    #expect(result.exitStatus == 0, capture)
+    #expect(result.standardError == "", capture)
     #expect(list.total == count + 1, capture)
     #expect(list.summaries.count == TranscriptCommands.subagentListLimit, capture)
     let ids = list.summaries.map(\.id)
