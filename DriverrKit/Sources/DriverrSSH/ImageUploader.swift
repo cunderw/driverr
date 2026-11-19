@@ -81,7 +81,8 @@ public final class ImageUploader: Sendable {
     do {
       stream = try await openingStream(within: idleDeadline, stalled: ImageUploadFailure.stalled) {
         [coordinator, command] in
-        try await coordinator.openStream(command: command.script)
+        // Through `sh`, so a fish login shell reads the script the way `/bin/sh` does.
+        try await coordinator.openStream(command: LoginShell.posix(command.script))
       }
     } catch {
       progressSignal.finish()

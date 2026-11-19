@@ -348,9 +348,10 @@ enum TranscriptCommands {
 
   /// Makes zsh treat a glob that matches nothing the way `sh` does.
   ///
-  /// The exec channel runs the login shell, which on a Mac is zsh. zsh's default `nomatch`
-  /// turns an empty `for f in *.jsonl` into `no matches found`, exit 1, and nothing after it
-  /// runs. `sh`, `bash` and `dash` pass the pattern through, which every loop here skips
+  /// The app sends these commands through `sh -c` (`LoginShell`), and `sh` can be zsh. A
+  /// caller can also hand one to the login shell raw, which on a Mac is zsh. zsh's default
+  /// `nomatch` turns an empty `for f in *.jsonl` into `no matches found`, exit 1, and nothing
+  /// after it runs. `sh`, `bash` and `dash` pass the pattern through, which every loop here skips
   /// with its `[ -f ]` or `[ -d ]` guard. Those shells have no `unsetopt` and discard the
   /// error. csh fails earlier, at `for … do`. It is the first statement of every command
   /// that globs; `EmptyGlobCommandTests` runs each one through all four shells.
