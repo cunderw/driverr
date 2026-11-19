@@ -792,6 +792,9 @@ struct PaneComposerBar: View {
         Button(PaneComposerCopy.deletePrompt, systemImage: "trash", role: .destructive) {
           saved.delete(prompt.id)
         }
+        // Lets the role colour the glyph as well as the word. Under the root accent tint the
+        // trash glyph drew in the accent beside a red word. See `interruptConfirm`.
+        .tint(Color?.none)
         .accessibilityIdentifier("composer.prompts.delete")
       } label: {
         Image(systemName: "ellipsis")
