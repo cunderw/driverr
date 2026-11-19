@@ -249,8 +249,14 @@ struct NewAgentModelTests {
     let pane = try #require(model.paneLeftOpen)
     #expect(pane.id == "w9:p1")
     #expect(pane.place == "app")
+    // A second tap would open a second pane. Start waits until the form changes.
+    #expect(!model.canStart)
+    await model.startAgent()
+    #expect(calls.started.count == 1)
     model.openPaneLeftOpen()
     #expect(calls.opened == ["w9:p1"])
+    model.form.prompt = "try again"
+    #expect(model.canStart)
   }
 
   @Test("Start cannot be tapped again while a start is out")

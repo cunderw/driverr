@@ -580,7 +580,9 @@ struct FakeControlAgentStartBehaviourTests {
     } catch AppError.agentDidNotStart(let paneID, let place, let reason) {
       #expect(place == "app")
       #expect(reason == "claude: command not found")
-      #expect(try await control.snapshot().pane(id: paneID) != nil)
+      // A shell is left, and no agent: the program never came up.
+      let pane = try #require(try await control.snapshot().pane(id: paneID))
+      #expect(pane.agent == nil)
     }
   }
 
