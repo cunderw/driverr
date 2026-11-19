@@ -53,7 +53,7 @@ struct CoreAgentLaunchTests {
     #expect(stream.methods == ["machine.exec", "terminal.run", "terminal.attach"])
 
     let exec = try #require(try stream.params(of: "machine.exec").first)
-    #expect(exec["line"] as? String == AgentLaunch.resolveCommand(for: "~/my app"))
+    #expect(exec["line"] as? String == LoginShell.posix(AgentLaunch.resolveCommand(for: "~/my app")))
     #expect(exec["on"] == nil, "the core's own machine, which is the SSH host")
 
     let run = try #require(try stream.params(of: "terminal.run").first)

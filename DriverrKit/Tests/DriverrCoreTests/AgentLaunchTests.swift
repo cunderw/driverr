@@ -60,13 +60,13 @@ struct AgentLaunchTests {
     #expect(launch.isTooLong)
   }
 
-  @Test("the folder is resolved under sh, with a leading ~ as $HOME")
+  @Test("the folder is resolved with a leading ~ as $HOME, and the joins add the sh -c")
   func resolveCommand() {
     #expect(
       AgentLaunch.resolveCommand(for: "~/my app")
-        == #"sh -c 'cd -- "$HOME"/'\''my app'\'' >/dev/null && printf '\'''\\'n%s'\\'n'\'' driverr-agent-folder && pwd -P'"#
+        == #"cd -- "$HOME"/'my app' >/dev/null && printf '\n%s\n' driverr-agent-folder && pwd -P"#
     )
-    #expect(AgentLaunch.resolveCommand(for: "/srv").hasPrefix("sh -c 'cd -- /srv >/dev/null"))
+    #expect(AgentLaunch.resolveCommand(for: "/srv").hasPrefix("cd -- /srv >/dev/null"))
   }
 
   @Test("the path is what follows the marker, whatever an rc file printed first")

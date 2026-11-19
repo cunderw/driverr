@@ -387,7 +387,9 @@ public struct CoreControl: HerdrControl {
     let answer = try await connection.call(
       "machine.exec",
       params: CoreExecParams(
-        line: AgentLaunch.resolveCommand(for: launch.directory), on: nil,
+        // The line reaches the machine's shell inside a call, past the app's joins, so it is
+        // wrapped here. See `LoginShell`.
+        line: LoginShell.posix(AgentLaunch.resolveCommand(for: launch.directory)), on: nil,
         timeout: Double(Self.execTimeout.components.seconds)),
       as: CoreExecResult.self,
       deadline: Self.execCallDeadline

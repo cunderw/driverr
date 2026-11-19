@@ -84,16 +84,16 @@ public struct AgentLaunch: Hashable, Sendable {
   /// The line that comes before the resolved path in `resolveCommand(for:)`'s output.
   static let resolveMarker = "driverr-agent-folder"
 
-  /// One shell command that prints the folder's absolute path, with symlinks resolved, after a
-  /// marker line.
+  /// One POSIX script that prints the folder's absolute path, with symlinks resolved, after a
+  /// marker line. The same `cd` as `DirectoryListing.command(for:)`. The marker is there
+  /// because an rc file can print first.
   ///
-  /// The same `cd` as `DirectoryListing.command(for:)`, under `sh -c` for the same reason: the
-  /// login shell may be fish. The marker is there because an rc file can print first.
+  /// **Not wrapped here.** An exec channel's runner already sends every command through
+  /// `LoginShell.posix` at the app's joins, so a fish login shell reads it as `sh` does. A
+  /// caller that bypasses those joins, such as a core's `machine.exec`, wraps it itself.
   public static func resolveCommand(for directory: String) -> String {
-    let script =
-      "cd -- \(DirectoryListing.cdArgument(directory)) >/dev/null && printf '\\n%s\\n' "
+    "cd -- \(DirectoryListing.cdArgument(directory)) >/dev/null && printf '\\n%s\\n' "
       + "\(resolveMarker) && pwd -P"
-    return "sh -c " + HookInstallCommands.loginShellQuoted(script)
   }
 
   /// The absolute path `resolveCommand(for:)` printed.
