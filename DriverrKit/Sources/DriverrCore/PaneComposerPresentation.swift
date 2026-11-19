@@ -223,6 +223,15 @@ public struct PaneComposerState: Equatable, Sendable {
     }
   }
 
+  /// Whether the `Sent` notice up now can age: it says it is waiting for the agent.
+  ///
+  /// Typed text, Enter, a digit and a key sequence wait for the agent. A named key and Ctrl-C
+  /// already say what they did, so they have no wait to age, and nothing needs to redraw them
+  /// on a clock. `false` in every phase other than `sent`.
+  public var sentNoticeAges: Bool {
+    phase == .sent && PaneComposerCopy.sentVerdict(for: sentKey) == PaneComposerCopy.sent
+  }
+
   /// `Sent`, and once it has waited long enough, how long for.
   ///
   /// Ageing changes the sentence, not the phase. Reverting to the header instead would put
@@ -234,7 +243,7 @@ public struct PaneComposerState: Equatable, Sendable {
     let verdict = PaneComposerCopy.sentVerdict(for: sentKey)
     // Only a reply that says it is waiting for the agent has a wait to age.
     guard
-      verdict == PaneComposerCopy.sent,
+      sentNoticeAges,
       let sentAt,
       case let waited = now.timeIntervalSince(sentAt),
       waited >= PaneComposerCopy.sentAgeThreshold

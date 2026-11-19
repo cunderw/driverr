@@ -34,9 +34,10 @@ final class PaneComposerModel: Identifiable {
   /// else.
   let attachment: PaneAttachmentModel
 
-  /// The moment the status line is rendered against. It ticks while a `Sent` notice waits,
-  /// so the notice's age advances on screen. Observed because its only job is to schedule
-  /// redraws.
+  /// The moment the status line is rendered against. It ticks while a `Sent` notice that can
+  /// age waits, so the notice's age advances on screen. A key's notice cannot age and does not
+  /// tick; see `PaneComposerState.sentNoticeAges`. Observed because its only job is to
+  /// schedule redraws.
   private(set) var asOf = Date.distantPast
 
   /// The staged reply. Writing to it is typing; see `PaneComposerState.text`.
@@ -62,7 +63,8 @@ final class PaneComposerModel: Identifiable {
   var canAttach: Bool { state.canAttach }
   var failure: AppError? { state.failure }
   /// What the bar says about the last attempt, read against the ticking clock so a reply
-  /// nothing has confirmed ages on screen rather than sitting at `Sent` for ever.
+  /// nothing has confirmed ages on screen rather than sitting at `Sent` for ever. A key's
+  /// notice does not age, so it reads the same at any clock.
   var status: PaneComposerStatus? { state.status(asOf: max(asOf, now())) }
 
   /// Resolved per send, because the link can go while the composer is on screen.
@@ -70,12 +72,13 @@ final class PaneComposerModel: Identifiable {
   @ObservationIgnored private let now: @MainActor () -> Date
   /// How long a send waits for herdr before it is called a failure.
   @ObservationIgnored private let sendDeadline: Duration
-  /// How often the `Sent` notice's age is redrawn while it waits.
+  /// How often the `Sent` notice's age is redrawn while it waits, for a notice that can age.
   @ObservationIgnored private let ageTick: Duration
   /// Told after every reply herdr took, so the connection re-reads the conversation and the
   /// screen. See `PaneComposerCache.onSent`.
   @ObservationIgnored private let onSent: @MainActor (String, PaneComposerState.Attempt) -> Void
-  /// The task advancing `asOf` while a `Sent` notice waits. See `startAgeing()`.
+  /// The task advancing `asOf` while a `Sent` notice that can age waits, or `nil`. A key's
+  /// notice leaves it `nil`. See `startAgeing()`.
   @ObservationIgnored private(set) var sentNotice: Task<Void, Never>?
 
   init(
@@ -227,7 +230,8 @@ final class PaneComposerModel: Identifiable {
         }
       }
       state.succeeded(at: now(), pane: pane)
-      startAgeing()
+      // A key's verdict never ages, so a tick would only redraw the same sentence (#112).
+      if state.sentNoticeAges { startAgeing() }
       // A text reply retires a settled attachment row, since the question it was staged for
       // has now gone. Keep the `isSettled` guard: `remove()` cancels an upload in flight,
       // and a reply sent mid-upload must not silently discard the photograph. A key press
@@ -294,17 +298,18 @@ final class PaneComposerModel: Identifiable {
     }
   }
 
-  /// Keeps the `Sent` notice's age moving while it waits.
+  /// Keeps the `Sent` notice's age moving while it waits. Only for a notice that can age:
+  /// `perform` does not start it for a key's notice.
   ///
-  /// It decides nothing. `paneChanged(to:)` and `transcriptAdvanced()` retire the notice,
-  /// because a clock is not evidence that the agent read the reply. It stops when the phase
-  /// leaves `sent`, so a settled composer holds no wake-up open.
+  /// It decides nothing. `paneChanged(to:)`, `transcriptAdvanced()`, typing and the next send
+  /// retire the notice, because a clock is not evidence that the agent read the reply. It
+  /// stops when the notice can no longer age, so a settled composer holds no wake-up open.
   private func startAgeing() {
     asOf = now()
     sentNotice = Task { [weak self, ageTick] in
       while !Task.isCancelled {
         try? await Task.sleep(for: ageTick)
-        guard !Task.isCancelled, let self, self.state.phase == .sent else { return }
+        guard !Task.isCancelled, let self, self.state.sentNoticeAges else { return }
         self.asOf = self.now()
       }
     }
