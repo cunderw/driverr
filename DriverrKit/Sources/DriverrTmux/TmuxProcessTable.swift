@@ -83,7 +83,7 @@ enum TmuxProcessTable {
   /// 0.164.0 on macOS, where Codex was a member of the foreground group and not its leader.
   /// A `node` wrapper from an npm install is not measured, and does not match.
   static func isCodex(_ process: TmuxProcess) -> Bool {
-    false
+    process.command.split(separator: "/").last == "codex"
   }
 }
 

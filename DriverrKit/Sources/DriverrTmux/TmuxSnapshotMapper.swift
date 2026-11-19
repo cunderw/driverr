@@ -197,9 +197,13 @@ enum TmuxSnapshotMapper {
   /// tmux's default pane title is the host's name, which says nothing, so a title that equals
   /// it is passed over. A command that is a version string is passed over too: Claude Code's
   /// process is named `2.1.325`.
+  ///
+  /// Codex's title carries its state, so it is read through `CodexTitle.display`, which drops
+  /// the state and keeps the label still while Codex blinks for attention.
   private static func title(of row: TmuxPaneRow, agent: Agent?, index: Int) -> String {
+    let isCodex = agent?.kind == TranscriptAgent.codex.rawValue
     if let title = nonEmpty(row.title), title != row.host, title != row.hostShort,
-      let stripped = nonEmpty(strippingLeadingSymbolRun(title))
+      let stripped = nonEmpty(isCodex ? CodexTitle.display(title) : strippingLeadingSymbolRun(title))
     {
       return stripped
     }
