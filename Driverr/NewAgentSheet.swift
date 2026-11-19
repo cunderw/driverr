@@ -336,6 +336,15 @@ struct FolderBrowserView: View {
         .accessibilityIdentifier("newAgent.browser.error")
       case .loaded(let listing):
         Section {
+          // First, not in a footer under 500 rows, where nobody would scroll to it.
+          if listing.isTruncated {
+            Text(
+              "Showing the first \(DirectoryListing.entryLimit) folders. Type a path on the form to reach the others."
+            )
+            .font(.footnote)
+            .foregroundStyle(.secondary)
+            .accessibilityIdentifier("newAgent.browser.truncated")
+          }
           if listing.names.isEmpty {
             Text("No folders inside.")
               .foregroundStyle(.secondary)
@@ -353,13 +362,6 @@ struct FolderBrowserView: View {
             .lineLimit(1)
             .truncationMode(.head)
             .accessibilityIdentifier("newAgent.browser.path")
-        } footer: {
-          if listing.isTruncated {
-            Text(
-              "Showing the first \(DirectoryListing.entryLimit) folders. Type a path on the form to reach the others."
-            )
-            .accessibilityIdentifier("newAgent.browser.truncated")
-          }
         }
       }
     }
