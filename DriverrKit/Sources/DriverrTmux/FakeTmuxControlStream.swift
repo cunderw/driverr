@@ -25,6 +25,8 @@ final class FakeTmuxControlStream: HerdrStream, @unchecked Sendable {
     var screen: [String]
     /// The normal screen, kept aside while a program holds the alternate one.
     var normal: [String]?
+    /// In copy mode or view mode, where typed keys are the mode's and never reach the program.
+    var inMode = false
   }
 
   let output: AsyncThrowingStream<Data, any Error>
@@ -240,10 +242,22 @@ final class FakeTmuxControlStream: HerdrStream, @unchecked Sendable {
         manualWindows.remove(words[4])
         return ([], false)
       }
+    case "copy-mode":
+      // `copy-mode -q -t %N`, which leaves any mode and does nothing to a pane in none.
+      guard words.count == 4, words[1] == "-q", let pane = Self.target(of: command) else {
+        return (["usage: copy-mode"], true)
+      }
+      return lock.withLock {
+        guard panes[pane] != nil else { return (["can't find pane: \(pane)"], true) }
+        panes[pane]?.inMode = false
+        return ([], false)
+      }
     case "send-keys":
-      guard let pane = Self.target(of: command), lock.withLock({ panes[pane] }) != nil else {
+      guard let pane = Self.target(of: command), let found = lock.withLock({ panes[pane] }) else {
         return (["can't find pane"], true)
       }
+      // Measured on 3.7c and 3.2a: keys sent to a pane in a mode never reach the program.
+      if found.inMode { return ([], false) }
       let hex = words.drop { $0 != "-H" }.dropFirst()
       let bytes = Data(hex.compactMap { UInt8($0, radix: 16) })
       lock.withLock { typed[pane, default: Data()].append(bytes) }

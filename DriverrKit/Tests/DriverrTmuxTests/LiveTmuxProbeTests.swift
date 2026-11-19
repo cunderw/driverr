@@ -595,6 +595,29 @@
     /// The rule `TmuxAttachment` stands on: output before the paint's last `%end` is already in
     /// the capture, and output after it is not. A pane counting as fast as it can shows a gap
     /// or a repeat at the cut if the rule is wrong.
+    /// #128, for the live terminal: the phone never shows the mode, so a key typed into a pane the
+    /// desk left in copy mode would vanish.
+    @Test("keys typed into a pane in copy mode arrive, and the output after them is heard")
+    func typingLeavesCopyMode() async throws {
+      try await withLiveServer { control, tmux in
+        _ = try await tmux("respawn-pane -k -t %1 cat")
+        let bridge = try await attacher(control).open(terminalID: "tmux:%1", size: Self.phone)
+        let collected = Collector(bridge.output)
+        #expect(await collected.eventually { $0.text.contains("\u{1B}[") }, "the first paint")
+        _ = try await tmux("copy-mode -t %1")
+        #expect(try await tmux("display-message -p -t %1 '#{pane_in_mode}'") == "1")
+
+        try await bridge.send(text: "typed-in-copy\r")
+        // `cat` echoes the line and prints it, so it shows twice.
+        #expect(
+          await collected.eventually {
+            $0.text.components(separatedBy: "typed-in-copy").count == 3
+          }, "output: \(collected.text)")
+        #expect(try await tmux("display-message -p -t %1 '#{pane_in_mode}'") == "0")
+        await bridge.release()
+      }
+    }
+
     @Test("a counting pane's numbers arrive once each and in order, across the paint")
     func ordering() async throws {
       try await withLiveServer { control, tmux in

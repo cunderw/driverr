@@ -242,9 +242,29 @@ struct TmuxAttachmentTests {
     // A command the fake answers after the keys proves they have all been read.
     try await bridge.resize(to: TerminalSize(columns: 61, rows: 20, pixelWidth: 0, pixelHeight: 0))
     #expect(host.stream.keys(for: "%3") == Data("é😀\u{3}".utf8) + paste)
-    let keyLines = host.stream.lines.filter { $0.hasPrefix("send-keys") }
+    let keyLines = host.stream.lines.filter { $0.contains("send-keys") }
     #expect(keyLines.count == 3)
-    #expect(keyLines.first == "send-keys -t %3 -H c3 a9 f0 9f 98 80 03")
+    #expect(keyLines.first == "copy-mode -q -t %3 ; send-keys -t %3 -H c3 a9 f0 9f 98 80 03")
+    await bridge.release()
+  }
+
+  /// #128. The phone never shows a mode, because a control client hears the program's own
+  /// output, so a key typed into a pane the desk left in copy mode would vanish. `if-shell` on
+  /// `#{pane_in_mode}` answers a third block only when the pane is in a mode, measured on 3.7c and
+  /// 3.2a, and the queue counts a fixed number per line, so the leave is unconditional.
+  @Test("typing into a pane in a mode leaves it first, and each key line answers two blocks")
+  func typingLeavesAMode() async throws {
+    var pane = Host.shell()
+    pane.inMode = true
+    let host = Host(["%3": pane])
+    let bridge = try #require(
+      try await host.attacher.open(terminalID: "tmux:%3", size: Self.phone) as? TmuxAttachment)
+    try await bridge.send(text: "yes\r")
+    // The next command's answer is its own, so the key line took exactly its two blocks.
+    let answer = try await bridge.client.command("display-message -p -t %3 '#{pane_id} #{window_id}'")
+    #expect(answer == [[Data("%3 @1".utf8)]])
+    #expect(host.stream.keys(for: "%3") == Data("yes\r".utf8))
+    #expect(host.stream.lines.contains("copy-mode -q -t %3 ; send-keys -t %3 -H 79 65 73 0d"))
     await bridge.release()
   }
 
