@@ -69,6 +69,9 @@ final class PaneAttachmentModel {
   /// `AttachmentFileName.remote(original:unique:)`.
   @ObservationIgnored private let makeUnique: @Sendable () -> UUID
 
+  /// Whether the composer is held (`PaneComposerHold`). STUB: not read yet.
+  @ObservationIgnored var isHandOffHeld = false
+
   init(
     place: PaneAttachmentPlace = .host,
     makeUpload: @escaping @MainActor (Data, String) -> (any ImageUploading)?,

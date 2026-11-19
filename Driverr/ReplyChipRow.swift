@@ -29,13 +29,19 @@ struct ReplyChipRow: View {
   /// their rows flush left inside it, and the words above and under them are centred.
   var alignment: HorizontalAlignment = .leading
 
-  private var textAlignment: TextAlignment { alignment == .center ? .center : .leading }
+  /// A group whose options have descriptions stays leading even under a notice: centred, a
+  /// list of chips with paragraphs under them reads as ragged, and the descriptions are what
+  /// is read. The trust prompt's flow row has none and centres.
+  private func alignment(for group: ReplyChipGroup) -> HorizontalAlignment {
+    group.describesItsOptions ? .leading : alignment
+  }
 
   var body: some View {
     // 16 between groups against 6 inside one, so a heading reads as belonging to the chips
     // below it.
     VStack(alignment: alignment, spacing: 16) {
       ForEach(groups) { group in
+        let alignment = self.alignment(for: group)
         VStack(alignment: alignment, spacing: 6) {
           // The picker's tab label, the agent's only short name for the question.
           if let header = group.header {
@@ -51,7 +57,7 @@ struct ReplyChipRow: View {
             Text(question)
               .font(.footnote)
               .foregroundStyle(Color.primary)
-              .multilineTextAlignment(textAlignment)
+              .multilineTextAlignment(alignment == .center ? .center : .leading)
               .fixedSize(horizontal: false, vertical: true)
               .accessibilityIdentifier("pane.chat.turn.pending.question.\(group.id)")
           }
@@ -76,7 +82,7 @@ struct ReplyChipRow: View {
                     Text(detail)
                       .font(.footnote)
                       .foregroundStyle(Color.primary)
-                      .multilineTextAlignment(textAlignment)
+                      .multilineTextAlignment(alignment == .center ? .center : .leading)
                       .fixedSize(horizontal: false, vertical: true)
                       .accessibilityIdentifier(
                         identifier(for: chip, in: group, kind: "detail"))
@@ -92,6 +98,9 @@ struct ReplyChipRow: View {
             }
           }
         }
+        // A leading group under a centred row spans it, so it starts at the edge rather than
+        // centring as a narrow block.
+        .frame(maxWidth: alignment == self.alignment ? nil : .infinity, alignment: .leading)
       }
       // Shown from the start and disabled until every question has an answer, so the reader
       // knows a Send is coming. Absent when no question is multi-select, because that call
@@ -255,50 +264,61 @@ private struct ReplySendButtonStyle: ButtonStyle {
 
 /// A left-aligned wrapping layout. `HStack` does not wrap, and the lazy grids use fixed
 /// columns rather than content width.
-private struct FlowLayout: Layout {
+struct FlowLayout: Layout {
   var spacing: CGFloat = 8
+
+  /// Which subviews go on which row, by index, for chips of `widths` within `limit`.
+  ///
+  /// One rule for measuring and placing, so the two cannot disagree. A chip that does not fit
+  /// after another starts a new row, and an exact fit does not break. A chip wider than the
+  /// limit gets a row of its own and overflows it, rather than leaving an empty row above.
+  static func rows(of widths: [CGFloat], spacing: CGFloat, within limit: CGFloat) -> [[Int]] {
+    var rows: [[Int]] = [[]]
+    var x: CGFloat = 0
+    for (index, width) in widths.enumerated() {
+      if x + width >= limit {  // STUB: a deliberately wrong rule
+        rows.append([])
+        x = 0
+      }
+      rows[rows.count - 1].append(index)
+      x += width + spacing
+    }
+    return rows
+  }
 
   func sizeThatFits(
     proposal: ProposedViewSize, subviews: Subviews, cache: inout ()
   ) -> CGSize {
-    let width = proposal.width ?? .infinity
-    var origin = CGPoint.zero
-    var rowHeight: CGFloat = 0
-    var maxWidth: CGFloat = 0
-    for subview in subviews {
-      let size = subview.sizeThatFits(.unspecified)
-      if origin.x + size.width > width, origin.x > 0 {
-        origin.x = 0
-        origin.y += rowHeight + spacing
-        rowHeight = 0
-      }
-      origin.x += size.width + spacing
-      rowHeight = max(rowHeight, size.height)
-      maxWidth = max(maxWidth, origin.x - spacing)
+    let sizes = subviews.map { $0.sizeThatFits(.unspecified) }
+    let rows = Self.rows(
+      of: sizes.map(\.width), spacing: spacing, within: proposal.width ?? .infinity)
+    let widths = rows.map { row in
+      row.map { sizes[$0].width }.reduce(0, +) + spacing * CGFloat(max(0, row.count - 1))
     }
-    return CGSize(width: maxWidth, height: origin.y + rowHeight)
+    let heights = rows.map { row in row.map { sizes[$0].height }.max() ?? 0 }
+    return CGSize(
+      width: widths.max() ?? 0,
+      height: heights.reduce(0, +) + spacing * CGFloat(max(0, rows.count - 1)))
   }
 
+  /// Rows break against the proposed width, as in `sizeThatFits`, not against the bounds.
+  /// The bounds are the reported width, the widest row, and a row that exactly fills it can
+  /// measure a hair over it after rounding, which once wrapped the last chip of a centred
+  /// block onto a row of its own.
   func placeSubviews(
     in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()
   ) {
-    // Rows break where `sizeThatFits` broke them: against the proposed width, not the
-    // bounds. The bounds are the reported width, the widest row, and a row that exactly
-    // fills it can measure a hair over it after rounding, which wrapped the last chip of a
-    // centred block onto a row of its own.
-    let limit = bounds.minX + (proposal.width ?? bounds.width)
-    var origin = bounds.origin
-    var rowHeight: CGFloat = 0
-    for subview in subviews {
-      let size = subview.sizeThatFits(.unspecified)
-      if origin.x + size.width > limit, origin.x > bounds.minX {
-        origin.x = bounds.minX
-        origin.y += rowHeight + spacing
-        rowHeight = 0
+    let sizes = subviews.map { $0.sizeThatFits(.unspecified) }
+    let rows = Self.rows(
+      of: sizes.map(\.width), spacing: spacing, within: proposal.width ?? .infinity)
+    var y = bounds.minY
+    for row in rows {
+      var x = bounds.minX
+      for index in row {
+        subviews[index].place(at: CGPoint(x: x, y: y), proposal: .unspecified)
+        x += sizes[index].width + spacing
       }
-      subview.place(at: origin, proposal: .unspecified)
-      origin.x += size.width + spacing
-      rowHeight = max(rowHeight, size.height)
+      y += (row.map { sizes[$0].height }.max() ?? 0) + spacing
     }
   }
 }
