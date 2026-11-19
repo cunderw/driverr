@@ -1435,24 +1435,27 @@ struct PaneChatView: View {
   /// At accessibility sizes a stop folds to one capsule, and Show the Screen waits behind it
   /// with the Continue opt-in, one tap away: unfolded, the three covered most of a phone's
   /// chat (#107). With no stop, Show the Screen floats alone at every size.
+  ///
+  /// Open at AX5 with the keyboard up, the stack is taller than the room between the bar and
+  /// the composer. The bar would then push it up under the status bar and the bar's buttons, so
+  /// a folding stack that does not fit scrolls inside the room instead. A stack that fits draws
+  /// as it would without the scroll view.
   @ViewBuilder
   private func floatingCapsules(for transcript: Transcript) -> some View {
     let stop = floatingStop(in: transcript)
     let folds = stop != nil && dynamicTypeSize.isAccessibilitySize
     if stop != nil || offersScreenCapsule {
-      VStack(spacing: 0) {
-        if let stop {
-          AgentStopRow(
-            stop: stop, continueAtReset: continueAtReset,
-            expanded: folds ? $isStopExpanded : nil)
+      Group {
+        if folds {
+          ViewThatFits(in: .vertical) {
+            capsuleStack(stop: stop, folds: true)
+            ScrollView { capsuleStack(stop: stop, folds: true) }
+              .scrollBounceBehavior(.basedOnSize)
+          }
+        } else {
+          capsuleStack(stop: stop, folds: false)
         }
-        if offersScreenCapsule, !folds || isStopExpanded { showScreenCapsule }
       }
-      .frame(maxWidth: ChatColumn.width)
-      // The gutter, because the stack is not a cell and section insets do not reach it.
-      .padding(.horizontal, chatGutter)
-      .padding(.top, 6)
-      .frame(maxWidth: .infinity)
       .accessibilitySortPriority(1)
       .background {
         // `onGeometryChange`, not `onAppear`: in a `NavigationStack` the first frame is laid
@@ -1464,6 +1467,23 @@ struct PaneChatView: View {
         }
       }
     }
+  }
+
+  /// The stop notice over Show the Screen, in the chat's column. See `floatingCapsules(for:)`.
+  private func capsuleStack(stop: AgentStop?, folds: Bool) -> some View {
+    VStack(spacing: 0) {
+      if let stop {
+        AgentStopRow(
+          stop: stop, continueAtReset: continueAtReset,
+          expanded: folds ? $isStopExpanded : nil)
+      }
+      if offersScreenCapsule, !folds || isStopExpanded { showScreenCapsule }
+    }
+    .frame(maxWidth: ChatColumn.width)
+    // The gutter, because the stack is not a cell and section insets do not reach it.
+    .padding(.horizontal, chatGutter)
+    .padding(.top, 6)
+    .frame(maxWidth: .infinity)
   }
 
   /// The stop the stop capsule shows, or `nil`. See `floatingCapsules(for:)`.
