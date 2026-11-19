@@ -82,6 +82,8 @@ public struct PaneComposerState: Equatable, Sendable {
 
   public var isSending: Bool { phase == .sending }
 
+  public var canAttach: Bool { true }  // STUB
+
   /// Nothing to send, or a hold, is a disabled button, not an error.
   public var canSend: Bool {
     hold == nil && !isSending

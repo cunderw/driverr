@@ -314,6 +314,49 @@ struct PaneComposerModelTests {
     #expect(model.status?.offersRetry == false)
   }
 
+  /// `CLIControl.sendKeys` runs one herdr call per key, so `Down` can land and `Enter` fail.
+  /// The cursor has then moved, and a Retry of the same arrows would wrap it onto
+  /// "No, exit". So a failed cursor answer offers no Retry; the next read of the screen draws
+  /// the chips again from where the cursor is.
+  @Test("a trust chip whose keys fail offers no Retry, so the old arrows cannot replay")
+  func trustChipKeysFail() async {
+    let control = FakeControl(screen: FakeControl.claudeTrustScreen)
+    await control.failNextSends(1, with: .herdrCommandFailed(reason: "pane gone"))
+    let model = composer(control)
+    await model.send(ReplyChip(label: "Yes, I trust this folder", action: .cursorTo(option: 2)))
+
+    #expect(model.state.failure == .herdrCommandFailed(reason: "pane gone"))
+    #expect(model.status?.offersRetry == false)
+    await model.retry()
+    #expect(await control.sent == [.keys(paneID: "w1:p2", keys: [.down, .enter])])
+  }
+
+  /// With no link there is nothing to read. An earlier failed text must not become what a
+  /// Retry repeats.
+  @Test("a trust chip with no link refuses, and Retry cannot resend an earlier text")
+  func trustChipNoLink() async {
+    let model = composer(nil)
+    model.text = "hello"
+    await model.send()
+    #expect(model.status?.offersRetry == true, "the failed text offers its own Retry")
+
+    await model.send(ReplyChip(label: "Yes, I trust this folder", action: .cursorTo(option: 2)))
+    #expect(model.state.failure == .notConnected(host: "this host"))
+    #expect(model.status?.offersRetry == false)
+  }
+
+  /// A read that fails says what failed, not that the question changed.
+  @Test("a trust chip whose screen read fails reports the link, not a changed question")
+  func trustChipReadFails() async {
+    let control = FakeControl(failure: .herdrCommandFailed(reason: "pane gone"))
+    let model = composer(control)
+    await model.send(ReplyChip(label: "Yes, I trust this folder", action: .cursorTo(option: 2)))
+
+    #expect(await control.sent.isEmpty)
+    #expect(model.state.failure == .herdrCommandFailed(reason: "pane gone"))
+    #expect(model.status?.offersRetry == false)
+  }
+
   @Test("a key goes over as a key, not as its name typed out")
   func sendsKeys() async {
     let control = FakeControl()

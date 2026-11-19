@@ -88,6 +88,21 @@ struct PaneComposerHoldTests {
     #expect(state.beginSending() == .text("yes"))
   }
 
+  /// An attachment's hand-off types its path into the pane, which is typed text by another
+  /// route: into Codex's picker it is no keys, and into the trust prompt it is noise. So a
+  /// hold turns attaching off (#109).
+  @Test("a hold turns attaching off, and its end turns it back on")
+  func attachHeld() {
+    var state = PaneComposerState()
+    #expect(state.canAttach)
+    state.hold = .pickerOpen
+    #expect(!state.canAttach)
+    state.hold = .agentAsksOnScreen
+    #expect(!state.canAttach)
+    state.hold = nil
+    #expect(state.canAttach)
+  }
+
   @Test("a hold lets a key press go, because a key is a deliberate answer")
   func keysGo() {
     var state = PaneComposerState()
