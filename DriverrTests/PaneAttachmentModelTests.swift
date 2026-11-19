@@ -374,7 +374,7 @@ import UIKit
     #expect(model.phase == .handedOver)
   }
 
- The
+  /// Remove means nothing is typed into the pane, a stronger claim than the row clearing. The
   /// generation check in `handOver` stops a late path.
   @Test func removingBeforeTheUploadLandsHandsNothingOver() async throws {
     let upload = StubUpload(
