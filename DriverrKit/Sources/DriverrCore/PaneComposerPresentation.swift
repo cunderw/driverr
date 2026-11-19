@@ -320,6 +320,13 @@ public enum PaneComposerHold: Equatable, Sendable {
     }
   }
 
+  /// `reason(agent:screen:)`, for a watch that has not read the screen yet.
+  public static func reason(
+    agent: Agent?, screen: PaneScreen?, awaitingRead: Bool, previous: PaneComposerHold?
+  ) -> PaneComposerHold? {
+    reason(agent: agent, screen: screen)  // STUB
+  }
+
   /// The composer's line while held. One short sentence: the chat says how to answer.
   public var message: String {
     switch self {

@@ -71,6 +71,8 @@ final class PaneAttachmentModel {
 
   /// A hand-off is on the wire. See `handOver(_:run:)`.
   @ObservationIgnored private var isHandingOver = false
+  /// The hand-off a hold's end queued last, kept so a test can wait for it.
+  @ObservationIgnored private(set) var handOverTask: Task<Void, Never>?
 
   /// Whether the composer is held (`PaneComposerHold`). The hand-off types the path into the
   /// pane, which is typed text by another route: into Codex's picker it is no keys, and into
@@ -81,7 +83,7 @@ final class PaneAttachmentModel {
     didSet {
       guard oldValue, !isHandOffHeld, let path = phase?.hostPath else { return }
       let run = generation
-      Task { await handOver(path, run: run) }
+      handOverTask = Task { await handOver(path, run: run) }
     }
   }
 

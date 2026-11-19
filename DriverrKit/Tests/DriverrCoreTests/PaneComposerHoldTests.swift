@@ -177,6 +177,31 @@ struct PaneComposerHoldTests {
         agent: claude, screen: Self.screen(CodexPickerScreenFixture.permissions)) == nil)
   }
 
+  /// The chat's watch restarts on a pane switch back, on the app coming to the front, and on
+  /// a new pending call, and each restart has no settled read for a moment. Releasing the
+  /// hold then would turn Send back on and type a waiting upload's path into the picker.
+  @Test("an open picker stays held while a restarted watch has not read the screen")
+  func pickerHeldUntilARead() {
+    #expect(
+      PaneComposerHold.reason(
+        agent: Self.codex, screen: nil, awaitingRead: true, previous: .pickerOpen)
+        == .pickerOpen)
+    // A settled read with no picker releases it.
+    #expect(
+      PaneComposerHold.reason(
+        agent: Self.codex, screen: Self.screen(CodexPickerScreenFixture.idleNumberedList),
+        awaitingRead: false, previous: .pickerOpen) == nil)
+    // Nothing held before, nothing held while waiting.
+    #expect(
+      PaneComposerHold.reason(agent: Self.codex, screen: nil, awaitingRead: true, previous: nil)
+        == nil)
+    // A settled read with the picker holds, whatever came before.
+    #expect(
+      PaneComposerHold.reason(
+        agent: Self.codex, screen: Self.screen(CodexPickerScreenFixture.permissions),
+        awaitingRead: false, previous: nil) == .pickerOpen)
+  }
+
   @Test("the picker's line is one short sentence of its own")
   func pickerLine() {
     let line = PaneComposerHold.pickerOpen.message

@@ -334,9 +334,11 @@ import UIKit
     model.isHandOffHeld = true
 
     model.attach(try pngBytes())
-    await waitFor("the upload to land") { model.phase?.hostPath == path }
-    // Given time for a hand-off to land, none did, and the path is still on the row.
-    try? await Task.sleep(for: .milliseconds(100))
+    // The hand-off runs in the same turn as the upload landing, so an unheld one shows as
+    // `.handedOver` and fails both checks below.
+    await waitFor("the upload to settle") {
+      model.phase?.hostPath == path || model.phase == .handedOver
+    }
     #expect(handed.get().isEmpty)
     #expect(model.phase == .uploaded(hostPath: path))
 
@@ -345,7 +347,34 @@ import UIKit
     #expect(handed.get() == [path])
   }
 
-  /// Remove means nothing is typed into the pane, a stronger claim than the row clearing. The
+  /// A hold that ends twice in one turn queues two hand-offs. The first lands, and the second
+  /// must find the path already handed over rather than type it again.
+  @Test func aHoldThatEndsTwiceHandsThePathOverOnce() async throws {
+    let path = "/home/x/.driverr/inbox/8f1c.png"
+    let handed = Mutex<[String]>([])
+    let model = PaneAttachmentModel(
+      makeUpload: { _, _ in
+        StubUpload(outcome: .success(ImageUploadOutcome(hostPath: path, bytesSent: 100)))
+      },
+      handOff: { handed.append($0) }
+    )
+    model.isHandOffHeld = true
+    model.attach(try pngBytes())
+    await waitFor("the upload to settle") {
+      model.phase?.hostPath == path || model.phase == .handedOver
+    }
+
+    model.isHandOffHeld = false
+    model.isHandOffHeld = true
+    model.isHandOffHeld = false
+    // The last queued hand-off runs after the first, so both have run once it has.
+    await model.handOverTask?.value
+
+    #expect(handed.get() == [path])
+    #expect(model.phase == .handedOver)
+  }
+
+ The
   /// generation check in `handOver` stops a late path.
   @Test func removingBeforeTheUploadLandsHandsNothingOver() async throws {
     let upload = StubUpload(
