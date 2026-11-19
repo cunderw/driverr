@@ -30,6 +30,25 @@ public enum TranscriptAgent: String, Hashable, Sendable, CaseIterable {
     guard names.count > 1 else { return last }
     return names.dropLast().joined(separator: ", ") + " and " + last
   }
+
+  /// Which reader an agent gets, or `nil`.
+  ///
+  /// The integration's token wins, then the pane's `kind`, matched whole. Only with no token
+  /// at all is the display name matched, by prefix against every supported token, so
+  /// `"Claude Code"` and `"Codex CLI"` both reach their reader. `TranscriptReader` and
+  /// `PaneComposerHold` both ask this, so they agree on which agent is Claude.
+  public init?(of agent: Agent) {
+    if let token = agent.session?.agent ?? agent.kind, !token.isEmpty {
+      guard let known = TranscriptAgent(rawValue: token.lowercased()) else { return nil }
+      self = known
+      return
+    }
+    let name = agent.name.lowercased()
+    guard let known = Self.allCases.first(where: { name.hasPrefix($0.rawValue) }) else {
+      return nil
+    }
+    self = known
+  }
 }
 
 /// One candidate session file on the host.

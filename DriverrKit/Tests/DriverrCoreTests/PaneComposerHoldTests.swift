@@ -31,7 +31,30 @@ struct PaneComposerHoldTests {
     "any other status lets the send go",
     arguments: [AgentStatus.idle, .working, .done, .error, .unknown])
   func otherStatuses(status: AgentStatus) {
-    #expect(PaneComposerHold.reason(agent: Agent(name: "Claude", kind: "claude", status: status)) == nil)
+    let agent = Agent(name: "Claude", kind: "claude", status: status)
+    #expect(PaneComposerHold.reason(agent: agent) == nil)
+  }
+
+  /// herdr-core and a tmux record can say what a blocked Claude waits on. Those panes keep
+  /// today's composer.
+  @Test(
+    "a blocked Claude that names what it waits on lets the send go",
+    arguments: [AgentBlockedKind.permission, .question, .auth])
+  func namedReason(kind: AgentBlockedKind) {
+    let agent = Agent(name: "Claude", kind: "claude", status: .blocked, blockedKind: kind)
+    #expect(PaneComposerHold.reason(agent: agent) == nil)
+  }
+
+  /// `TranscriptAgent(of:)`, the reader's rule: the kind is matched whole, any case.
+  @Test(
+    "a kind that only starts with claude is not Claude, and the kind's case does not matter")
+  func claudeByTheReadersRule() {
+    let helper = Agent(name: "Claude helper", kind: "claude-helper", status: .blocked)
+    #expect(TranscriptAgent(of: helper) == nil)
+    #expect(PaneComposerHold.reason(agent: helper) == nil)
+    let upper = Agent(name: "Claude", kind: "CLAUDE", status: .blocked)
+    #expect(TranscriptAgent(of: upper) == .claude)
+    #expect(PaneComposerHold.reason(agent: upper) == .agentAsksOnScreen)
   }
 
   @Test("a blocked Codex, or no agent, lets the send go")

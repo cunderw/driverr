@@ -261,7 +261,8 @@ public struct PaneComposerState: Equatable, Sendable {
 /// A case per reason, so another reason is another case and another argument to
 /// `reason(agent:)`.
 public enum PaneComposerHold: Equatable, Sendable {
-  /// A blocked Claude Code with no session of its own, which asks on its screen.
+  /// A blocked Claude Code with no session of its own and no named reason, which asks on its
+  /// screen.
   ///
   /// Claude Code's folder-trust prompt is the measured case (2.1.328, #122): it writes no
   /// record, so no session, and it ignores typed text. Enter picks the highlighted choice,
@@ -274,9 +275,13 @@ public enum PaneComposerHold: Equatable, Sendable {
   /// there is no file, and in a folder with an older session the directory match draws that
   /// file as `.ready`. Neither says the agent has stopped asking.
   ///
-  /// Claude Code only. Codex never reports a session to tmux, and its picker is another
-  /// reason with its own evidence.
+  /// **A named reason is not held.** A pane whose status says it waits on a permission or a
+  /// question (herdr-core, a tmux record) is answered as it was before.
+  ///
+  /// Claude Code only, by `TranscriptAgent(of:)`, the rule the reader uses. Codex never reports
+  /// a session to tmux, and its picker is another reason with its own evidence.
   public static func reason(agent: Agent?) -> PaneComposerHold? {
+    // PREVIOUS GUARD, for the round-2 red run.
     guard let agent, agent.status == .blocked, agent.session == nil,
       (agent.kind ?? agent.name.lowercased()).hasPrefix(TranscriptAgent.claude.rawValue)
     else { return nil }

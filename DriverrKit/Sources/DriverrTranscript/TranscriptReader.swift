@@ -30,12 +30,6 @@ public struct TranscriptReader: Sendable {
     self.now = now
   }
 
-  /// The agents this build has a reader for, keyed by herdr's token. One lookup answers
-  /// both "can I read this" and "which reader", so a Codex pane cannot get Claude's parser.
-  static func supported(_ token: String) -> TranscriptAgent? {
-    TranscriptAgent(rawValue: token.lowercased())
-  }
-
   // MARK: - Which file
 
   /// Which session file is this pane's, or the reason there is no answer.
@@ -522,17 +516,9 @@ public struct TranscriptReader: Sendable {
     }
   }
 
-  /// Which reader this pane's agent gets, or `nil`.
-  ///
-  /// The integration's token wins, then the pane's `kind`. Only with no token at all is the
-  /// display name matched, by prefix against every supported token, so `"Claude Code"` and
-  /// `"Codex CLI"` both reach their reader.
+  /// Which reader this pane's agent gets, or `nil`. The rule is `TranscriptAgent(of:)`.
   private func agent(of agent: Agent) -> TranscriptAgent? {
-    if let token = agent.session?.agent ?? agent.kind, !token.isEmpty {
-      return Self.supported(token)
-    }
-    let name = agent.name.lowercased()
-    return TranscriptAgent.allCases.first { name.hasPrefix($0.rawValue) }
+    TranscriptAgent(of: agent)
   }
 
   /// What one `listCommand` came back with. Internal so `listing(from:)` can be tested.
