@@ -317,16 +317,16 @@ struct DirectoryListingShellTests {
       process.executableURL = URL(fileURLWithPath: "/bin/sh")
       process.arguments = ["-c", command]
       process.environment = ["HOME": home.path, "PATH": "/usr/bin:/bin"].merging(extra) { $1 }
-      let output = Pipe()
-      let error = Pipe()
-      process.standardOutput = output
-      process.standardError = error
+      let outputPipe = Pipe()
+      let errorPipe = Pipe()
+      process.standardOutput = outputPipe
+      process.standardError = errorPipe
       // Both pipes are read while the child runs: a listing past the pipe buffer would
       // otherwise block it, and it would never exit. Waits on the termination handler rather
       // than `waitUntilExit()`, so no cooperative thread blocks (CLAUDE.md, "Never block a
       // cooperative thread in a Kit test").
-      async let standardOutput = Self.drain(output)
-      async let standardError = Self.drain(error)
+      async let standardOutput = Self.drain(outputPipe)
+      async let standardError = Self.drain(errorPipe)
       let status: Int32
       do {
         status = try await withCheckedThrowingContinuation { continuation in
@@ -335,8 +335,8 @@ struct DirectoryListingShellTests {
         }
       } catch {
         // The drains end when the write sides close, which `run()` never got to do.
-        try? output.fileHandleForWriting.close()
-        try? error.fileHandleForWriting.close()
+        try? outputPipe.fileHandleForWriting.close()
+        try? errorPipe.fileHandleForWriting.close()
         throw error
       }
       return CommandResult(
