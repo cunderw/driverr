@@ -138,6 +138,9 @@ public actor FakeTmuxHost {
   public private(set) var clients: [Int]
   /// What `tmux -V` prints. `nil` is a host with no tmux, and every command says so.
   public var version: String?
+  /// The exec channel's own environment, which `hc connect` would see. The process details read
+  /// prints its `HC_SESSION` and `HC_SOCKET` when asked.
+  public var channelEnvironment: [String: String] = [:]
   /// Every command line this host was given, in order.
   public private(set) var commands: [String] = []
   /// What typed into each pane, by tmux's id (`%3`).
@@ -170,6 +173,9 @@ public actor FakeTmuxHost {
   public func setSessions(_ sessions: [Session]) { self.sessions = sessions }
   public func setProcesses(_ processes: [Process]) { self.processes = processes }
   public func setClients(_ clients: [Int]) { self.clients = clients }
+  public func setChannelEnvironment(_ environment: [String: String]) {
+    channelEnvironment = environment
+  }
   /// Writes, or with `nil` deletes, Claude Code's record for a pid.
   public func setRecord(pid: Int, _ text: String?) { records[pid] = text }
 
@@ -391,8 +397,8 @@ public actor FakeTmuxHost {
   }
 
   /// `TmuxProcessDetailsRead`'s script, which this shell cannot parse, answered as a host would:
-  /// each pid's boundary, its `args`, and only the four variables of its environment. `nil` for
-  /// any other script, which runs as usual.
+  /// the channel's own core variables when it asks, then each pid's boundary, its `args`, and only
+  /// the six variables of its environment. `nil` for any other script, which runs as usual.
   ///
   /// The script must be exactly the one for the pids its boundaries name, so a change to the
   /// command that drops the filter has to change this too.
@@ -401,8 +407,17 @@ public actor FakeTmuxHost {
     let pids = script.components(separatedBy: prefix).dropFirst().compactMap { part in
       Int(part.prefix(while: \.isNumber))
     }
-    guard !pids.isEmpty, script == TmuxProcessDetailsRead.script(forPIDs: pids) else { return nil }
+    let readingOwnCore = script.contains(TmuxProcessDetailsRead.ownCoreMarker)
+    guard !pids.isEmpty,
+      script == TmuxProcessDetailsRead.script(forPIDs: pids, readingOwnCore: readingOwnCore)
+    else { return nil }
     var output = ""
+    if readingOwnCore {
+      output += "\n\(TmuxProcessDetailsRead.ownCoreMarker)\n"
+      for name in TmuxProcessDetailsRead.coreVariables {
+        if let value = channelEnvironment[name] { output += "\(name)=\(value)\n" }
+      }
+    }
     for pid in pids {
       output += "\n\(TmuxProcessDetailsRead.marker) \(pid)\n"
       guard let process = processes.first(where: { $0.pid == pid }) else { continue }

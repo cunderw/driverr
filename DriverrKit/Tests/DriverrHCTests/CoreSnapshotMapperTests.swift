@@ -101,6 +101,27 @@ struct CoreSnapshotMapperTests {
     #expect(tree.workspaces.filter { $0.machineCoreID == nil }.count == tree.workspaces.count - 1)
   }
 
+  /// A pid names a process on one computer, so only this core's own terminals carry one, and
+  /// only for a tmux client, so a shell's every command is not a new tree.
+  @Test("a terminal on this core running tmux carries its pid; an added machine's and others none")
+  func foregroundPIDs() throws {
+    let json = #"""
+      {"terminals":[
+      {"address":"t1","foreground":{"argv":["/opt/homebrew/bin/tmux","attach"],"name":"tmux","pid":8000}},
+      {"address":"t2","foreground":null},
+      {"address":"t3","foreground":{"argv":["/usr/bin/nvim"],"name":"nvim","pid":8100}},
+      {"address":"t4","foreground":{"argv":["tmux","new"],"pid":8200}},
+      {"address":"box/t1","foreground":{"argv":["tmux","attach"],"name":"tmux","pid":8000}}]}
+      """#
+    let tree = CoreSnapshotMapper.tree(from: try decoded(json))
+    #expect(tree.pane(id: "core:t1")?.foregroundPID == 8000)
+    #expect(tree.pane(id: "core:t2")?.foregroundPID == nil)
+    #expect(tree.pane(id: "core:t3")?.foregroundPID == nil)
+    #expect(tree.pane(id: "core:t4")?.foregroundPID == 8200, "argv alone names tmux")
+    #expect(tree.pane(id: "core:box/t1") != nil)
+    #expect(tree.pane(id: "core:box/t1")?.foregroundPID == nil)
+  }
+
   @Test("a machine whose id has not been read yet is still drawn, and carries none")
   func machineNotReadYet() throws {
     var list = try decoded(Self.captured)
