@@ -43,9 +43,10 @@ struct CoreEventFeedFlakeProbeTests {
   }
 
   /// `sessionSignals`, with the status event arriving inside the pacer's gap after an earlier
-  /// signal, as it does when the fixed `quiet()` sleep does not outlast subscribing's last fire.
-  /// The status's change and the read's change then go out as ONE signal, and a wait for two
-  /// never ends.
+  /// signal. The status's change and the read's change then go out as ONE signal, and a wait for
+  /// two never ends. On CI, a fixed `quiet()` that does not outlast subscribing's last fire is one
+  /// way to get here; a listener task starved past the gap, with the stream's one-element buffer,
+  /// is another. This probe measures only the first.
   @Test("probe: the status arrives inside the pacer gap of an earlier signal")
   func sessionSignalsInsideTheGap() async throws {
     let home = "/home/x"
