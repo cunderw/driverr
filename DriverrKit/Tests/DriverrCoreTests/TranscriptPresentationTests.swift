@@ -1224,7 +1224,10 @@ struct TranscriptPresentationTests {
       TranscriptNotice(absence: .noSessionFiles(directory: "/p"), agentStatus: nil),
       TranscriptNotice(
         absence: .noSessionFiles(directory: "/p"), agentStatus: .blocked,
-        hold: .agentAsksOnScreen),
+        hold: .agentAsksOnScreen, answersBelow: false),
+      TranscriptNotice(
+        absence: .noSessionFiles(directory: "/p"), agentStatus: .idle, hold: .pickerOpen,
+        answersBelow: true),
     ]
     let symbols = Set(distinguishable.map(\.symbolName))
     #expect(symbols.count == distinguishable.count, "every notice must have its own symbol")
@@ -1268,7 +1271,7 @@ struct TranscriptPresentationTests {
       .reportedSessionMissing(sessionID: "s", directory: "/home/x/project"),
     ])
   func aHeldPaneIsSentToTheScreen(absence: TranscriptAbsence) {
-    let notice = TranscriptNotice(absence: absence, agentStatus: .blocked, hold: .agentAsksOnScreen)
+    let notice = TranscriptNotice(absence: absence, agentStatus: .blocked, hold: .agentAsksOnScreen, answersBelow: false)
     #expect(notice.title == "The agent is asking on its screen")
     #expect(notice.message.contains(TranscriptNotice.showScreenTitle))
     #expect(!notice.message.contains("Send a message"))
@@ -1276,6 +1279,35 @@ struct TranscriptPresentationTests {
     #expect(notice.offersScreen(inSubagentChat: false))
     #expect(!notice.offersRetry)
     #expect(notice.symbolName == "hand.raised")
+  }
+
+  /// The dialog read off the screen gets chips under the notice, which then says so (#109).
+  @Test("a held pane whose question is answered below says so, and still names the screen")
+  func aHeldPaneWithChips() {
+    let notice = TranscriptNotice(
+      absence: .noSessionFiles(directory: "/home/x/project"), agentStatus: .blocked,
+      hold: .agentAsksOnScreen, answersBelow: true)
+    #expect(notice.title == "The agent is asking on its screen")
+    #expect(notice.message.hasPrefix("Answer it below or with \(TranscriptNotice.showScreenTitle)."))
+    #expect(notice.message.contains("would press Enter on its current choice"))
+    #expect(notice.symbolName == "hand.raised")
+  }
+
+  /// A new Codex has no rollout until its first prompt, and `/model` can be that first thing.
+  /// The trust prompt's words are not reused: this is a picker, and Enter picks its highlight.
+  @Test("a fresh Codex with its picker open gets the picker's own notice", arguments: [true, false])
+  func anOpenPicker(answersBelow: Bool) {
+    let notice = TranscriptNotice(
+      absence: .noSessionFiles(directory: "/home/x/project"), agentStatus: .idle,
+      hold: .pickerOpen, answersBelow: answersBelow)
+    #expect(notice.title == "A picker is open on the agent's screen")
+    #expect(notice.message.contains("would pick its highlighted option"))
+    #expect(notice.message.contains(TranscriptNotice.showScreenTitle))
+    #expect(notice.message.hasPrefix("Choose an option below") == answersBelow)
+    #expect(!notice.message.contains("Send a message"))
+    #expect(notice.offersScreen(inSubagentChat: false))
+    #expect(!notice.offersRetry)
+    #expect(notice.symbolName == "list.bullet.circle")
   }
 
   /// No hold, or an absence that is not a wait for a file, is the notice it always was.
@@ -1290,11 +1322,14 @@ struct TranscriptPresentationTests {
     ])
   func anUnheldPaneGetsTheOrdinaryNotice(status: AgentStatus?, absence: TranscriptAbsence) {
     #expect(
-      TranscriptNotice(absence: absence, agentStatus: status, hold: nil)
+      TranscriptNotice(absence: absence, agentStatus: status, hold: nil, answersBelow: false)
         == TranscriptNotice(absence: absence, agentStatus: status))
     if !absence.awaitsFirstFile {
       #expect(
-        TranscriptNotice(absence: absence, agentStatus: status, hold: .agentAsksOnScreen)
+        TranscriptNotice(absence: absence, agentStatus: status, hold: .agentAsksOnScreen, answersBelow: false)
+          == TranscriptNotice(absence: absence, agentStatus: status))
+      #expect(
+        TranscriptNotice(absence: absence, agentStatus: status, hold: .pickerOpen, answersBelow: true)
           == TranscriptNotice(absence: absence, agentStatus: status))
     }
   }

@@ -164,7 +164,7 @@ struct PaneComposerModelTests {
     let control = FakeControl()
     let model = composer(control)
     model.text = "yes"
-    model.hold = PaneComposerHold.reason(agent: pane.agent)
+    model.hold = PaneComposerHold.reason(agent: pane.agent, screen: nil)
     #expect(model.hold == .agentAsksOnScreen)
 
     #expect(!model.canSend)

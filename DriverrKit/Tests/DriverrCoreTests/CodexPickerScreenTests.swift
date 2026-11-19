@@ -76,4 +76,78 @@ struct CodexPickerScreenTests {
       transcript.questionCall(
         screen: screen(CodexPickerScreenFixture.idleNumberedList), agentStatus: .idle) == nil)
   }
+
+  // MARK: - The other measured pickers
+
+  @Test("the first stage of /model reads with no transcript at all")
+  func modelStage1WithNoTranscript() throws {
+    let call = try #require(
+      Transcript.questionCall(
+        in: nil, screen: screen(CodexPickerScreenFixture.modelStage1), agentStatus: .idle))
+    let question = try #require(call.questions.first)
+    #expect(question.question == "Select Model and Effort")
+    #expect(question.options == ["GPT-6-Luna", "GPT-5.6-Terra (current)", "GPT-5.6-Luna"])
+    #expect(
+      question.optionDescriptions == [
+        "Fast and affordable model for easier tasks.",
+        "Legacy balanced model for agentic coding.",
+        "Legacy fast model for simpler tasks.",
+      ])
+    #expect(question.pickerTab == PickerTab(index: 0, count: 1, submitsAfter: false))
+  }
+
+  /// Its footer is `enter default · s session · esc back`, not the first stage's.
+  @Test("the second stage of /model reads under its own footer")
+  func modelStage2() throws {
+    let question = try #require(try call(CodexPickerScreenFixture.modelStage2).questions.first)
+    #expect(question.question == "Select Reasoning Level for GPT-5.6-Terra")
+    #expect(
+      question.options == [
+        "Low", "Medium (default) (current)", "High", "Extra high", "More reasoning…",
+      ])
+    #expect(question.optionNumbers == [1, 2, 3, 4, 5])
+  }
+
+  /// A digit on the first stage opens the second. The chat reseeds its chips and retires the
+  /// `Sent` notice on that, as it does for Claude's next tab.
+  @Test("the second stage of /model is a new question")
+  func modelAdvances() throws {
+    let first = try call(CodexPickerScreenFixture.modelStage1).replyChipGroups
+    let second = try call(CodexPickerScreenFixture.modelStage2).replyChipGroups
+    #expect(ReplyChipGroup.screenQuestionAdvanced(from: first, to: second))
+  }
+
+  @Test("a picker under a numbered reply reads only the picker's options")
+  func pickerUnderNumberedList() throws {
+    let question = try #require(
+      try call(CodexPickerScreenFixture.permissionsUnderNumberedList).questions.first)
+    #expect(question.question == "Update Model Permissions")
+    #expect(question.options == ["Ask for approval", "Approve for me", "Full Access", "Read Only"])
+  }
+
+  /// herdr reports a Codex picker `idle`, and the screen is read on any status for it. Claude's
+  /// picker is read only on a `blocked` pane; `PaneQuestionScreenTests` keeps that rule.
+  @Test(
+    "a Codex picker reads whatever herdr says",
+    arguments: [AgentStatus.idle, .done, .unknown, .blocked, .working])
+  func anyStatus(status: AgentStatus) {
+    #expect(
+      Transcript.questionCall(
+        in: nil, screen: screen(CodexPickerScreenFixture.permissions), agentStatus: status)
+        != nil)
+  }
+
+  @Test("the screen read says which picker it found")
+  func kind() throws {
+    let read = try #require(PaneQuestionScreen(screen: screen(CodexPickerScreenFixture.permissions)))
+    #expect(read.kind == .codexPicker)
+  }
+
+  /// The chat's waiting line names the call. Claude's picker is `AskUserQuestion`; Codex's has
+  /// no tool name, so the line is the plain sentence.
+  @Test("the waiting line over a Codex picker names no tool")
+  func waitingLine() throws {
+    let notice = try call(CodexPickerScreenFixture.permissions).pendingNotice(agentStatus: .idle)
+    #expect(notice.label == TranscriptChatCopy.pendingQuestion)
+  }
 }

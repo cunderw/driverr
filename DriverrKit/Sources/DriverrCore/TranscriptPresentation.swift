@@ -298,7 +298,10 @@ public struct TranscriptNotice: Equatable, Sendable {
   /// Claude Code's folder-trust prompt that choice is "No, exit" (#122). The same signal as
   /// the hold, so the two never disagree. No Retry: the watcher still polls for the file.
   /// Every other pane gets `init(absence:agentStatus:)`.
-  public init(absence: TranscriptAbsence, agentStatus: AgentStatus?, hold: PaneComposerHold?) {
+  public init(
+    absence: TranscriptAbsence, agentStatus: AgentStatus?, hold: PaneComposerHold?,
+    answersBelow: Bool
+  ) {
     guard hold == .agentAsksOnScreen, absence.awaitsFirstFile else {
       self.init(absence: absence, agentStatus: agentStatus)
       return

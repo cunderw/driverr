@@ -30,6 +30,14 @@
 /// from 1 up to the `Type something` row. A screen too short to show all of that answers `nil`
 /// too: an option whose number is not on screen cannot be offered as a digit.
 public struct PaneQuestionScreen: Hashable, Sendable {
+  public enum Kind: Hashable, Sendable {
+    case claudeQuestion
+    case claudeTrust
+    case codexPicker
+  }
+
+  public let kind: Kind = .claudeQuestion
+
   /// The question on the active tab, with `pickerTab` set.
   public let question: PendingQuestion
 
@@ -236,15 +244,26 @@ public struct PickerTab: Hashable, Sendable {
   /// toggles, so the keys have to start from these.
   public let checked: [Int]
 
-  public init(index: Int, count: Int, submitsAfter: Bool, checked: [Int] = []) {
+  public let cursor: Int?
+
+  public init(
+    index: Int, count: Int, submitsAfter: Bool, checked: [Int] = [], cursor: Int? = nil
+  ) {
     self.index = index
     self.count = count
     self.submitsAfter = submitsAfter
     self.checked = checked
+    self.cursor = cursor
   }
 }
 
 extension Transcript {
+  public static func questionCall(
+    in transcript: Transcript?, screen: PaneScreen?, agentStatus: AgentStatus?
+  ) -> ToolCall? {
+    transcript?.questionCall(screen: screen, agentStatus: agentStatus)
+  }
+
   /// The call the chat's chips answer: the transcript's own pending question, or else one
   /// read off the pane's screen.
   ///
@@ -281,4 +300,14 @@ extension ReplyChipGroup {
   {
     old.contains { $0.pickerTab != nil } && new.contains { $0.pickerTab != nil } && old != new
   }
+}
+
+extension PaneQuestionScreen {
+  public static func watches(agent: Agent?, pendingCall: ToolCall?) -> Bool {
+    agent?.status == .blocked && pendingCall?.asksItsOwnQuestions != true
+  }
+}
+
+public enum ClaudeTrustPrompt {
+  public static func isShowing(_ lines: [String]) -> Bool { false }
 }

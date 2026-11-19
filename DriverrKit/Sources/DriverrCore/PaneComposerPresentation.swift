@@ -269,6 +269,8 @@ public enum PaneComposerHold: Equatable, Sendable {
   /// which is "No, exit" by default, so a sent message would end the agent.
   case agentAsksOnScreen
 
+  case pickerOpen
+
   /// The hold for a pane's agent, or `nil` when a send may go.
   ///
   /// **The agent alone decides, never the chat's state.** The chat is loading before it knows
@@ -280,7 +282,7 @@ public enum PaneComposerHold: Equatable, Sendable {
   ///
   /// Claude Code only, by `TranscriptAgent(of:)`, the rule the reader uses. Codex never reports
   /// a session to tmux, and its picker is another reason with its own evidence.
-  public static func reason(agent: Agent?) -> PaneComposerHold? {
+  public static func reason(agent: Agent?, screen: PaneScreen?) -> PaneComposerHold? {
     guard let agent, agent.status == .blocked, agent.session == nil, agent.blockedKind == nil,
       TranscriptAgent(of: agent) == .claude
     else { return nil }
@@ -291,6 +293,7 @@ public enum PaneComposerHold: Equatable, Sendable {
   public var message: String {
     switch self {
     case .agentAsksOnScreen: "Sending is off while the agent asks on its screen."
+    case .pickerOpen: ""
     }
   }
 }
