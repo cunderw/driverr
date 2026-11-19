@@ -277,14 +277,16 @@ public enum PaneComposerHold: Equatable, Sendable {
   /// Claude Code only. Codex never reports a session to tmux, and its picker is another
   /// reason with its own evidence.
   public static func reason(agent: Agent?) -> PaneComposerHold? {
-    agent == nil ? nil : .agentAsksOnScreen  // NAIVE for #122 guards' red run
+    guard let agent, agent.status == .blocked, agent.session == nil,
+      (agent.kind ?? agent.name.lowercased()).hasPrefix(TranscriptAgent.claude.rawValue)
+    else { return nil }
+    return .agentAsksOnScreen
   }
 
   /// The composer's line while held. One short sentence: the chat's notice says how to answer.
   public var message: String {
     switch self {
-    case .agentAsksOnScreen:
-      "Sending is off while the agent asks on its screen. Use \(TranscriptNotice.showScreenTitle)."
+    case .agentAsksOnScreen: "Sending is off while the agent asks on its screen."
     }
   }
 }
