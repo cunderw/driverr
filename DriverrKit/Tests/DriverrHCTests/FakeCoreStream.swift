@@ -58,7 +58,7 @@ final class FakeCoreStream: HerdrStream, @unchecked Sendable {
   ///
   /// For a reply that is wrong for one call only. Swapping `replies` from the test's own task
   /// races with whatever else is calling, and the call that lands one tick late gets the old
-  /// answer.
+  /// answer. Set before the first call that needs one: the test writes it without the lock.
   var queued: [String: [Reply]] = [:]
 
   /// What `file.read` answers, by path. A path with no entry is a file that is not there.

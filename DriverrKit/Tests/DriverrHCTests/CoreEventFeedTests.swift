@@ -369,10 +369,9 @@ struct CoreEventFeedTests {
     let control = control(Streams(stream), heartbeatTick: .milliseconds(50))
     _ = try await control.snapshot()
 
-    for _ in 0..<30 {
-      stream.emit(#"{"jsonrpc":"2.0","method":"heartbeat","params":{"seq":0}}"#)
-      try await Task.sleep(for: .milliseconds(10))
-    }
+    // Nothing is sent, so nine ticks later the connection closes. Any of them would have asked
+    // again, if an unreadable document were asked for again.
+    try await waitUntil("the close") { stream.closes == 1 }
     #expect(stream.calls(of: "doc.get") == 1)
   }
 
@@ -404,8 +403,9 @@ struct CoreEventFeedTests {
     }
   }
 
-  /// `/clear`'s status has been signalled by the time the read lands, and the new id is what a
-  /// chat needs to hear.
+  /// `/clear`'s status is signalled before the read lands, and the new id is what a chat needs
+  /// to hear. The read is held until a signal has already shown the status with the old id, so
+  /// the tree can show the new id only through a signal the read itself raised.
   @Test("a session id that moved reaches the screen by its own signal")
   func sessionSignals() async throws {
     let home = "/home/x"
@@ -424,15 +424,17 @@ struct CoreEventFeedTests {
     let signalled = SignalledTree()
     let listener = try signalled.follow(control)
     defer { listener.cancel() }
+    let session = { signalled.value?.pane(id: "core:t1")?.agent?.session?.identifier }
 
-    stream.files = [
-      path: .late(#"{"text":"{\"pid\":101,\"sessionId\":\"after\"}"}"#, delay: .milliseconds(100))
-    ]
-    stream.event("status", on: "t1", #"{"status":{"app":"claude-code","state":"idle"}}"#)
-
-    try await waitUntil("a signal that shows the new id") {
-      signalled.value?.pane(id: "core:t1")?.agent?.session?.identifier == "after"
+    stream.files = [path: record("after")]
+    stream.holdsReplies = true
+    stream.event("status", on: "t1", #"{"status":{"app":"claude-code","state":"working"}}"#)
+    try await waitUntil("a signal that shows the status, with the old id") {
+      status(signalled.value ?? .empty) == .working && session() == "before"
     }
+
+    stream.flushHeld()
+    try await waitUntil("a signal that shows the new id") { session() == "after" }
   }
 
   @Test("a connection that dies signals, and the read that follows subscribes on a new one")
