@@ -399,7 +399,9 @@ final class LookUITests: XCTestCase {
           target.swipeDown()
         }
       case "sleep":
-        usleep(UInt32((Double(value) ?? 1) * 1_000_000))
+        // `Thread.sleep`, not `usleep`: Darwin's `usleep` rejects 1_000_000 µs or more with
+        // `EINVAL` and returns at once, so `sleep:3` waited nothing.
+        Thread.sleep(forTimeInterval: Double(value) ?? 1)
       case "shot":
         shotIndex += 1
         attach("\(pad(shotIndex))-\(value)")
