@@ -7,6 +7,7 @@ import Testing
 import UIKit
 
 @testable import Driverr
+@testable import DriverrTmux
 
 /// The terminal scene: one presentation per host, with the pane it shows a value inside it
 /// rather than a new presentation.
@@ -2858,6 +2859,142 @@ struct TerminalSceneModelTests {
     let controlled = try #require(scene.session(for: .pane(id: "tmux:%7")))
     controlled.attach({ _ in }, visibleText: { "$ ls" })
     #expect(scene.visibleLines(for: .pane(id: "tmux:%7"), last: 6) == nil)
+  }
+
+  // MARK: - A tmux pane, through the real attacher
+  //
+  // #118. The tests above stand a `FakeCoreAttacher` in for tmux. These run the real
+  // `TmuxControl` and `TmuxAttacher`, through `CombinedControl` and `ConnectionModel`, against a
+  // scripted control client, so the wiring from a scene to tmux's own commands is covered above
+  // the kit tier. No view is laid out, so the step from a view to its first size report is not.
+
+  /// A connected host whose tmux holds `%3` in window `@2` of session `$1`, as
+  /// `FakeTmuxHost.seeded()` lists it, and a scene on that pane's terminal.
+  ///
+  /// `FakeTmuxHost` answers the listing. Locating the pane is answered here, because
+  /// `FakeTmuxHost` does not print `TmuxAttacher.placeFormat`. Every control client is the one
+  /// returned stream, whose `onActivity` wakes `waitUntilSignalled`.
+  private func tmuxScene() async -> (
+    TerminalSceneModel, FakeSSHTransport, FakeTmuxControlStream
+  ) {
+    let seeded = FakeTmuxHost.seeded().runner
+    let run: CommandRunner = { command in
+      if command.contains("display-message -p -t '%3'") {
+        return CommandResult(standardOutput: "$1 @2 150x43\n", standardError: "", exitStatus: 0)
+      }
+      return try await seeded(command)
+    }
+    // A two-row shell with the cursor after its prompt, as `TmuxAttachmentTests` builds one.
+    var state = TmuxPaneState()
+    state.height = 2
+    state.cursorColumn = 2
+    state.cursorRow = 1
+    state.scrollBottom = 1
+    let stream = FakeTmuxControlStream(
+      panes: [
+        "%3": .init(
+          window: "@2", session: "$1", state: state, history: ["old one"],
+          screen: ["$ ls", "$ "])
+      ],
+      session: "$1",
+      onActivity: { Waker.signalShared() }
+    )
+    let tmux = TmuxControl(binaryPath: "tmux", run: run, open: { _ in stream })
+    let control = CombinedControl.joining(
+      tui: FakeControl(), sides: [.init(prefix: TmuxID.prefix, control: tmux)])
+    let (scene, transport) = await makeScene(
+      initialTarget: .pane(id: "tmux:%3"),
+      surface: .terminal,
+      herdr: control,
+      openSettlingWindow: .zero,
+      responder: { _ in nil }
+    )
+    return (scene, transport, stream)
+  }
+
+  /// Starts the scene unless `started`, reports the size a view would measure, and waits for
+  /// tmux's paint.
+  ///
+  /// The size comes first because a tmux pane's first attach waits for one; see
+  /// `theFirstAttachWaitsForTheMeasuredSize`.
+  private func paintedTmuxPane(
+    _ scene: TerminalSceneModel, started: Bool = false
+  ) async throws -> (TerminalSession, PaintedOutput) {
+    if !started {
+      scene.start()
+      await scene.settle()
+    }
+    let session = try #require(scene.currentSession)
+    session.resize(to: Self.measured)
+    let painted = PaintedOutput()
+    session.attach { painted.append($0) }
+    await waitUntil("tmux's paint never reached the screen") { painted.text.contains("$ ls") }
+    return (session, painted)
+  }
+
+  @Test("a tmux pane opens through the real attacher, not a shell or herdr's bridge, and paints")
+  func aTmuxPaneOpensThroughTheRealAttacherAndPaints() async throws {
+    let (scene, transport, stream) = await tmuxScene()
+    scene.start()
+    await scene.settle()
+    // Checked before the size, so a pane that went anywhere but the attacher fails here and
+    // does not wait out the time limit for a paint.
+    #expect(await transport.lastPTYSize == nil, "no shell")
+    try #require(await transport.streamLog.isEmpty, "no herdr bridge")
+
+    let (_, painted) = try await paintedTmuxPane(scene, started: true)
+    #expect(painted.text.contains("old one"), "the paint carries the pane's history")
+
+    stream.emit(FakeTmuxControlStream.output("%3", "fresh\r\n"))
+    await waitUntil("output after the paint never reached the screen") {
+      painted.text.contains("fresh")
+    }
+    await scene.settle()
+    #expect(scene.role(for: .pane(id: "tmux:%3")) == .controller)
+    #expect(scene.notice == nil)
+  }
+
+  @Test("typing in a tmux pane reaches it as send-keys")
+  func typingInATmuxPaneReachesSendKeys() async throws {
+    let (scene, _, stream) = await tmuxScene()
+    let (session, _) = try await paintedTmuxPane(scene)
+
+    session.send(text: "hi\r")
+    await waitUntilSignalled("the keys never reached tmux") {
+      stream.keys(for: "%3").count >= 3
+    }
+    #expect(String(decoding: stream.keys(for: "%3"), as: UTF8.self) == "hi\r")
+  }
+
+  @Test("the size the view measured sizes the tmux window before the paint")
+  func theMeasuredSizeSizesTheTmuxWindow() async throws {
+    let (scene, _, stream) = await tmuxScene()
+    _ = try await paintedTmuxPane(scene)
+
+    // The first sizing line reads the window's own size, to hand it back later. See
+    // `TmuxAttachmentTests.controllerPaint`.
+    #expect(
+      stream.lines.first
+        == "display-message -p -t @2 '#{window_width}x#{window_height}' ; refresh-client -C @2:52x48"
+    )
+    #expect(stream.size(of: "@2") == "52x48")
+  }
+
+  @Test("leaving a tmux pane gives its window back and closes its control client")
+  func leavingATmuxPaneClosesItsControlClient() async throws {
+    let (scene, _, stream) = await tmuxScene()
+    _ = try await paintedTmuxPane(scene)
+    try #require(stream.closeCount == 0)
+
+    // What `TerminalPresenter.endPresentation` does, less the parts with no tmux in them.
+    scene.model.session?.stopLiveUpdates()
+    scene.close()
+    await waitUntilSignalled("the control client was never closed") { stream.closeCount >= 1 }
+    await scene.settle()
+
+    #expect(stream.closeCount == 1)
+    #expect(stream.size(of: "@2") == FakeTmuxControlStream.windowSize, "the window is the desk's again")
+    #expect(scene.notice == nil)
   }
 
   /// The visible half of the rule above. An ended former core observer's frame is as garbled
