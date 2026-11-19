@@ -1629,19 +1629,20 @@ final class PaneChatUITests: XCTestCase {
 
   /// The same pane blocked, as Claude Code is on its folder-trust prompt, whose Enter picks
   /// "No, exit" (#122). The notice sends the reader to the screen, and the composer keeps the
-  /// typed text with Send off. A UI test because the hold is wired from the pane screen's
-  /// chat state into the bar; `PaneComposerHoldTests` and `PaneComposerModelTests` cover the
-  /// rule and the refusal.
+  /// typed text with Send off. A UI test because the hold is wired from the pane screen into
+  /// the bar and the notice; `PaneComposerHoldTests` and `PaneComposerModelTests` cover the
+  /// rule and the refusal. The slow transcript keeps the chat loading after the pane opens,
+  /// which must not lift the hold.
   func testATrustPromptHoldsTheComposerAndPointsToTheScreen() {
     XCUIDevice.shared.orientation = .portrait
-    let app = connectedHostApp(["-uiTestingTrustPrompt"])
+    let app = connectedHostApp(["-uiTestingTrustPrompt", "-uiTestingSlowTranscript"])
     require(app, "session.workspace", "Expected the session tree")
 
     tapPane(app, titled: "needs a decision")
 
     let notice = require(app, "pane.chat.notice", "Expected the trust-prompt notice")
     XCTAssertTrue(
-      notice.label.contains("It is asking something on its screen"),
+      notice.label.contains("A message sent from here would press Enter"),
       "The notice must send the reader to the screen, got '\(notice.label)'"
     )
     XCTAssertFalse(notice.label.contains("Send a message below"), "got '\(notice.label)'")
