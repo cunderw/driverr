@@ -1,3 +1,4 @@
+import DriverrCore
 import Foundation
 
 /// One row of `ps`, as far as the pane-to-agent join needs it.
@@ -77,14 +78,22 @@ enum ClaudeRecordFiles {
   /// One command that prints each pid's record after a boundary line. A missing file prints
   /// nothing and no error.
   ///
-  /// Plain sequenced commands, not a `for` loop, so a login shell that is not POSIX still
-  /// runs it. The pids are integers Driverr parsed, so nothing reaches the shell as syntax.
+  /// The records are in Claude Code's configuration directory,
+  /// `${CLAUDE_CONFIG_DIR:-$HOME/.claude}`, as `AgentIntegration.claudeCode` resolves it. That
+  /// expression is POSIX and the exec channel hands the command to the login shell, which may
+  /// be fish, so the script runs under `sh -c`, quoted as `HookInstallCommands` quotes its own.
+  /// The variable only counts if it reaches a non-interactive SSH shell.
+  ///
+  /// Plain sequenced commands, which `FakeTmuxHost` reads. The pids are integers Driverr
+  /// parsed, so nothing reaches the shell as syntax.
   static func command(forPIDs pids: [Int]) -> String {
-    pids.map { pid in
+    let directory = AgentIntegration.claudeCode.configDirectory
+    let script = pids.map { pid in
       "printf '\\n%s\\n' '\(marker) \(pid)'; "
-        + #"cat "$HOME/.claude/sessions/\#(pid).json" 2>/dev/null"#
+        + "cat \(directory)/sessions/\(pid).json 2>/dev/null"
     }
     .joined(separator: "; ")
+    return "sh -c " + HookInstallCommands.loginShellQuoted(script)
   }
 
   /// The text after each boundary, by pid. A pid the command did not ask for is dropped.

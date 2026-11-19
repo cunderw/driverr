@@ -1,4 +1,5 @@
 import DriverrCore
+import Foundation
 import Testing
 
 @testable import DriverrTmux
@@ -65,6 +66,26 @@ struct FakeTmuxHostTests {
     let went = try await host.runner("tmux send-keys -t '%99' Up; tmux send-keys -t '%1' Down")
     #expect(went.exitStatus == 0)
     #expect(await host.input["%1"] == [.key("Down")])
+  }
+
+  @Test("a record is read from Claude Code's directory under sh -c, and from nowhere else")
+  func recordPath() async throws {
+    let host = FakeTmuxHost.seeded()
+    let path = #""${CLAUDE_CONFIG_DIR:-$HOME/.claude}"/sessions/5002.json"#
+    let read = try await host.runner("sh -c 'cat \(path)'")
+    #expect(read.exitStatus == 0)
+    #expect(ClaudeSessionRecord.parse(Data(read.standardOutput.utf8))?.status == "waiting")
+
+    // A reader that ignores CLAUDE_CONFIG_DIR finds nothing.
+    let home = try await host.runner(#"sh -c 'cat "$HOME/.claude/sessions/5002.json"'"#)
+    #expect(home.exitStatus == 1)
+    #expect(home.standardOutput.isEmpty)
+    // The login shell may be fish, which cannot read `${…:-…}`.
+    let bare = try await host.runner("cat \(path)")
+    #expect(bare.exitStatus == 127)
+    #expect(bare.standardOutput.isEmpty)
+    // `sh -c` runs its script as one line, and the host records only the line it was given.
+    #expect(await host.commands.count == 3)
   }
 
   @Test("an unquoted $1 is not the pane it looks like, so the fake finds nothing")

@@ -780,9 +780,10 @@ extension ToolRun {
 /// An `AskUserQuestion` with parsed options is the exception. It is the agent asking the
 /// reader by definition, so it outranks `AgentStatus`, which can lag a question or miss it.
 ///
-/// A herdr-core agent can also say what it is blocked on. A question or a sign-in is not a
-/// permission prompt, so the synthesised Approve/Deny pair is not offered for either: `y` is
-/// not an answer to them. With no kind, which is every TUI pane, blocked reads as permission.
+/// A herdr-core report or a Claude Code session record can also say what an agent is blocked
+/// on. A question or a sign-in is not a permission prompt, so the synthesised Approve/Deny pair
+/// is not offered for either: `y` is not an answer to them. With no kind, which is every TUI
+/// pane, blocked reads as permission.
 public struct PendingToolCallNotice: Hashable, Sendable {
   /// The row's words, naming the call.
   public let label: String

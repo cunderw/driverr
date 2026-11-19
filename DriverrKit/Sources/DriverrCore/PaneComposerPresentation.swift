@@ -412,7 +412,8 @@ public struct PaneComposerHeader: Equatable, Sendable {
     }
   }
 
-  /// What a blocked agent is waiting for, when it said. Only a herdr-core agent can.
+  /// What a blocked agent is waiting for, when it said. A herdr-core report or a Claude Code
+  /// session record can.
   private static func blockedState(_ name: String, on kind: AgentBlockedKind?) -> String {
     switch kind {
     case .permission: "\(name) is waiting for permission."
