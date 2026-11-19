@@ -1,8 +1,7 @@
+#if DEBUG
 import DriverrCore
 import DriverrHerdr
 import Foundation
-
-@testable import DriverrTmux
 
 /// A scripted `tmux -C`: it answers the commands `TmuxAttacher` writes, in tmux's block format,
 /// and writes whatever notification a test hands it.
@@ -12,6 +11,9 @@ import Foundation
 /// **Window sizes are modelled as tmux 3.7c keeps them with a desk attached that views none of
 /// the windows**: `refresh-client -C @W:CxR` sizes `@W`, and `@W:` alone hands it back without
 /// changing its size. Every window starts at `150x43`.
+///
+/// In `Sources` under `#if DEBUG`, as `FakeTmuxHost` is, so `DriverrTests` can drive the real
+/// `TmuxAttacher` through a scene with it.
 final class FakeTmuxControlStream: HerdrStream, @unchecked Sendable {
   struct Pane {
     var window: String
@@ -44,9 +46,14 @@ final class FakeTmuxControlStream: HerdrStream, @unchecked Sendable {
   private var freshOutput: [String: String] = [:]
   /// Pane output written ahead of a window size's reply.
   private var sizingOutput: (pane: String, text: String)?
+  /// Called after every write and every close, for a waiter that cannot observe this class.
+  private let onActivity: (@Sendable () -> Void)?
 
-  init(panes: [String: Pane], session: String = "$0") {
+  init(
+    panes: [String: Pane], session: String = "$0", onActivity: (@Sendable () -> Void)? = nil
+  ) {
     self.panes = panes
+    self.onActivity = onActivity
     (output, continuation) = AsyncThrowingStream.makeStream(of: Data.self, throwing: (any Error).self)
     // What tmux writes at attach: the attach line's own blocks, which nobody asked for.
     continuation.yield(Data("%begin 1 1 0\n%end 1 1 0\n%session-changed \(session) main\n".utf8))
@@ -110,11 +117,13 @@ final class FakeTmuxControlStream: HerdrStream, @unchecked Sendable {
     for line in String(decoding: data, as: UTF8.self).split(separator: "\n") {
       run(String(line))
     }
+    onActivity?()
   }
 
   func close() async {
     lock.withLock { closes += 1 }
     continuation.finish()
+    onActivity?()
   }
 
   private func run(_ line: String) {
@@ -246,3 +255,4 @@ final class FakeTmuxControlStream: HerdrStream, @unchecked Sendable {
     ].map { $0 + "." }.joined()
   }
 }
+#endif
