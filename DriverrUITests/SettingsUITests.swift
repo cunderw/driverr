@@ -147,12 +147,28 @@ final class SettingsUITests: XCTestCase {
     )
   }
 
-  /// Settings are theme, font, size, wrap and Live Activities, and nothing else, so a sixth
-  /// section fails a test rather than passing a review.
+  /// The tmux resize toggle defaults on with a fresh `InMemorySettingsStore`. Never tapped here;
+  /// `SettingsMutationUITests` owns the flip.
+  func testSettingsOffersTheTmuxResizeToggle() {
+    let app = openSettings()
+    let toggle = scrollIntoReach(app, "settings.tmuxresize")
+    XCTAssertTrue(toggle.exists, "Expected a tmux resize toggle on the settings screen")
+    XCTAssertEqual(
+      app.switches["settings.tmuxresize"].value as? String,
+      "1",
+      "Resizing must default on: a tmux pane at the desk's width does not fit a phone.\n"
+        + "Tree was:\n\(app.debugDescription)"
+    )
+  }
+
+  /// Settings are theme, font, size, wrap, tmux resize and Live Activities, and nothing else,
+  /// so a seventh section fails a test rather than passing a review.
   func testSettingsOffersNothingElse() {
     let app = openSettings()
     // In the form's order, because the walk only swipes forward.
-    for header in ["Preview", "Theme", "Font", "Font Size", "Pane Screen", "Live Activities"] {
+    for header in [
+      "Preview", "Theme", "Font", "Font Size", "Pane Screen", "tmux", "Live Activities",
+    ] {
       var seen = app.staticTexts[header].exists
       for _ in 0..<5 where !seen {
         app.swipeUp()
@@ -164,8 +180,8 @@ final class SettingsUITests: XCTestCase {
     for absent in ["Advanced", "Terminal", "Behavior", "Behaviour", "Bell", "Scrollback"] {
       XCTAssertFalse(
         app.staticTexts[absent].exists,
-        "Settings grew a '\(absent)' section. Driverr has five settings, and a "
-          + "sixth has to argue its case in its own issue."
+        "Settings grew a '\(absent)' section. Driverr has six settings, and a "
+          + "seventh has to argue its case in its own issue."
       )
     }
   }
@@ -270,6 +286,26 @@ final class SettingsMutationUITests: XCTestCase {
       app.switches["settings.liveactivities"].value as? String,
       "0",
       "Expected Live Activities to still be off on the way back in.\nTree was:\n"
+        + "\(app.debugDescription)"
+    )
+  }
+
+  /// Resizing stays off on the next visit, or the phone would size the desk's window for
+  /// somebody who said no. `setSwitch`, as above.
+  func testTmuxResizeChoicePersistsAcrossSettingsVisits() {
+    let app = launchApp()
+    openSettings(app)
+
+    scrollIntoReach(app, "settings.tmuxresize")
+    setSwitch(app, "settings.tmuxresize", on: false)
+    require(app, "settings.done", "Expected a way out of settings").tap()
+
+    openSettings(app)
+    scrollIntoReach(app, "settings.tmuxresize")
+    XCTAssertEqual(
+      app.switches["settings.tmuxresize"].value as? String,
+      "0",
+      "Expected tmux resizing to still be off on the way back in.\nTree was:\n"
         + "\(app.debugDescription)"
     )
   }

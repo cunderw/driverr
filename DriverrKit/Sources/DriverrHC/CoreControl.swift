@@ -69,7 +69,7 @@ public struct CoreControl: HerdrControl {
     Self.availability(for: await link.established().handshake)
   }
 
-  public func attachCommand(for pane: Pane) -> String {
+  public func attachCommand(for pane: Pane) -> String? {
     "\(shellQuoted(binaryPath)) attach \(shellQuoted(pane.terminalID ?? pane.id))"
   }
 

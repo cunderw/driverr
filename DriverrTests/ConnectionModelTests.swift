@@ -1123,7 +1123,7 @@ private struct GatedHerdrControl: HerdrControl {
     try await inner.snapshot()
   }
 
-  func attachCommand(for pane: Pane) -> String {
+  func attachCommand(for pane: Pane) -> String? {
     inner.attachCommand(for: pane)
   }
 

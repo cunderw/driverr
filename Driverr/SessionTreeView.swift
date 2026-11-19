@@ -34,6 +34,10 @@ struct SessionTreeView: View {
   /// what a TUI host gets. A callback, for `onReply`'s reason: the start ends in a presentation.
   var onStartTerminal: (() -> Void)?
 
+  /// Whether tmux is the only thing serving this host, so an empty tree names tmux and not
+  /// herdr.
+  var servesOnlyTmux = false
+
   /// Only the rename row is a text input in this tree, so this focus cannot bind to
   /// anything else.
   @FocusState private var isRenameFieldFocused: Bool
@@ -297,9 +301,13 @@ struct SessionTreeView: View {
       "This host's terminals are shown under another connected host."
     case .nothingOpen:
       // A core has terminals and no workspaces, so the sentence follows who can start one.
-      onStartTerminal == nil
-        ? "herdr is running here, but has no workspaces open."
-        : "No terminals are open here."
+      if servesOnlyTmux {
+        "tmux has no sessions open here."
+      } else if onStartTerminal == nil {
+        "herdr is running here, but has no workspaces open."
+      } else {
+        "No terminals are open here."
+      }
     }
   }
 

@@ -4,7 +4,8 @@ import SwiftUI
 import UIKit
 
 /// The complete global settings screen: theme, font, font size, whether a captured pane
-/// screen wraps its long lines, and whether Driverr draws Live Activities.
+/// screen wraps its long lines, whether an open tmux pane's window takes this screen's size,
+/// and whether Driverr draws Live Activities.
 ///
 /// That is the whole surface (CLAUDE.md, "Not a config surface"). There is no "Advanced"
 /// section for another setting to hide in.
@@ -98,6 +99,23 @@ struct SettingsView: View {
           Text("Pane Screen")
         } footer: {
           Text(PaneScreenCopy.wrapFooter)
+        }
+
+        // Without it a tmux pane draws at the desk's width, which a phone cannot show. The
+        // identifier is on the `Toggle`, as above.
+        Section {
+          Toggle(
+            TmuxResizeCopy.title,
+            isOn: Binding(
+              get: { model.settings.resizesTmuxWindows },
+              set: { model.setResizesTmuxWindows($0) }
+            )
+          )
+          .accessibilityIdentifier("settings.tmuxresize")
+        } header: {
+          Text(TmuxResizeCopy.header)
+        } footer: {
+          Text(TmuxResizeCopy.footer)
         }
 
         // A Live Activity is drawn outside the app, so this is the only way to refuse one.

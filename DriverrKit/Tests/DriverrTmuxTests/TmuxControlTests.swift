@@ -78,8 +78,8 @@ struct TmuxControlSnapshotTests {
   func noServer() async throws {
     let host = FakeTmuxHost(sessions: [])
     #expect(try await TmuxControl(run: host.runner).snapshot() == .empty)
-    // Nothing to join, so nothing else is asked.
-    #expect(await host.commands.count == 2)
+    // Nothing to join, so not even the process table is asked.
+    #expect(await host.commands.count == 1)
     #expect(await !host.commands.contains { $0.contains(".claude/sessions/") })
   }
 
@@ -150,7 +150,7 @@ struct TmuxControlSnapshotTests {
     let control = TmuxControl(run: { _ in
       CommandResult(standardOutput: "", standardError: "sh: tmux: command not found", exitStatus: 127)
     })
-    await #expect(throws: AppError.herdrNotInstalled) { try await control.snapshot() }
+    await #expect(throws: AppError.tmuxNotInstalled) { try await control.snapshot() }
   }
 
   @Test("a transport that fails is a channel failure")
@@ -620,7 +620,6 @@ struct TmuxControlActionTests {
   func startTerminal() async throws {
     let host = FakeTmuxHost.seeded()
     let control = TmuxControl(run: host.runner)
-    #expect(control.canStartTerminal)
     let id = try await control.startTerminal()
     #expect(id == "tmux:%4")
     let tree = try await control.snapshot()
@@ -646,16 +645,6 @@ struct TmuxControlActionTests {
     await #expect(throws: AppError.herdrResponseUnreadable) { try await control.startTerminal() }
   }
 
-  @Test("the stand-in attach command is read-only, at the desk's size, on the pane's session")
-  func attach() async throws {
-    let control = TmuxControl(binaryPath: "/opt/homebrew/bin/tmux", run: FakeTmuxHost.seeded().runner)
-    let pane = try #require(try await control.snapshot().pane(id: "tmux:%3"))
-    #expect(
-      control.attachCommand(for: pane)
-        == "/opt/homebrew/bin/tmux -u attach-session -t '$1' -f read-only,ignore-size")
-    let stray = Pane(id: "tmux:%3", tabID: "x", workspaceID: "x", title: "")
-    #expect(control.attachCommand(for: stray) == "/opt/homebrew/bin/tmux -u attach-session -f read-only,ignore-size")
-  }
 }
 
 @Suite("TmuxControl discovery")

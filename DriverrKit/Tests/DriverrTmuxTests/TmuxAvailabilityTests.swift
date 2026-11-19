@@ -86,7 +86,7 @@ struct TmuxAvailabilityTests {
 
     let none = TmuxControl(run: FakeTmuxHost(version: nil).runner)
     #expect(await none.tmuxAvailability() == .notInstalled)
-    #expect(await none.availability() == .notInstalled)
+    #expect(await none.availability() == .tmuxNotInstalled)
   }
 
   @Test("a transport that throws is not installed")

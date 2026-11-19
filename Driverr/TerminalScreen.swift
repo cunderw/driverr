@@ -1208,11 +1208,12 @@ struct TerminalScreen: View {
         scene.takeOver()
       }
     case .failed(let error)?:
-      // With a Retry, because most opens fail transiently.
+      // With a Retry, because most opens fail transiently. Not for a pane whose terminal
+      // Driverr cannot show at all, where a second attempt would only fail again.
       noticeBar(
         error.errorDescription ?? "The pane could not be opened.",
         textIdentifier: "terminal.error",
-        action: "Retry",
+        action: error == .paneTerminalUnavailable ? nil : "Retry",
         actionIdentifier: "terminal.error.retry"
       ) {
         scene.retryOpen()
@@ -1309,7 +1310,7 @@ struct TerminalScreen: View {
   private func noticeBar(
     _ message: String,
     textIdentifier: String,
-    action: String,
+    action: String?,
     actionIdentifier: String,
     perform: @escaping () -> Void
   ) -> some View {
@@ -1317,10 +1318,12 @@ struct TerminalScreen: View {
       Text(message)
         .font(.footnote)
         .accessibilityIdentifier(textIdentifier)
-      HStack {
-        Spacer()
-        Button(action: perform) { BorderedButtonLabel(action) }
-          .accessibilityIdentifier(actionIdentifier)
+      if let action {
+        HStack {
+          Spacer()
+          Button(action: perform) { BorderedButtonLabel(action) }
+            .accessibilityIdentifier(actionIdentifier)
+        }
       }
     }
     .buttonStyle(.bordered)

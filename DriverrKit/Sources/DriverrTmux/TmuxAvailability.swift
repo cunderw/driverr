@@ -53,8 +53,8 @@ public struct TmuxVersion: Hashable, Comparable, Sendable {
 /// A tmux with no server is `.ready`: the first `new-session` starts one, so there is nothing
 /// for the user to start first. The snapshot of such a host is an empty tree.
 ///
-/// Not a case of `HerdrAvailability` yet. Wiring it in is the next slice's work, and
-/// `TmuxControl.availability()` stands in for it until then.
+/// `asHerdrAvailability` maps it to `HerdrAvailability`'s tmux cases, which is what the app
+/// reads.
 public enum TmuxAvailability: Equatable, Sendable {
   case ready(version: String)
   case notInstalled
@@ -68,18 +68,8 @@ public enum TmuxAvailability: Equatable, Sendable {
     return false
   }
 
-  public var message: String {
-    switch self {
-    case .ready(let version):
-      "tmux \(version)"
-    case .notInstalled:
-      "tmux isn't installed on this host. Install tmux \(TmuxVersion.minimum.text) or newer, then try again."
-    case .tooOld(let version):
-      "tmux \(version) is older than the \(TmuxVersion.minimum.text) that Driverr needs. Update tmux."
-    case .unreadable:
-      "tmux is installed here, but this version of Driverr can't read its version."
-    }
-  }
+  /// What to tell the user. The words are `HerdrAvailability`'s, so the two cannot drift.
+  public var message: String { asHerdrAvailability.message }
 
   /// The version line's answer.
   static func from(_ result: CommandResult) -> TmuxAvailability {
@@ -93,18 +83,15 @@ public enum TmuxAvailability: Equatable, Sendable {
       ? .ready(version: version.text) : .tooOld(version: version.text)
   }
 
-  /// This answer in `HerdrAvailability`'s terms, because `HerdrControl.availability()` can say
-  /// nothing else yet.
-  ///
-  /// **A stand-in.** `.ready` carries the newest herdr protocol, which tmux does not speak.
-  /// The next slice adds tmux cases to `HerdrAvailability` and deletes this.
-  var asHerdrAvailability: HerdrAvailability {
+  /// This answer in `HerdrAvailability`'s terms, which is what `HerdrControl.availability()`
+  /// returns and what the app reads.
+  public var asHerdrAvailability: HerdrAvailability {
     switch self {
-    case .ready(let version):
-      .ready(version: version, protocolVersion: HerdrProtocol.lastVerified)
-    case .notInstalled: .notInstalled
-    case .tooOld(let version): .tooOld(version: version, protocolVersion: 0)
-    case .unreadable: .statusUnreadable(version: nil)
+    case .ready(let version): .tmuxReady(version: version)
+    case .notInstalled: .tmuxNotInstalled
+    case .tooOld(let version):
+      .tmuxTooOld(version: version, minimumVersion: TmuxVersion.minimum.text)
+    case .unreadable: .tmuxUnreadable
     }
   }
 }

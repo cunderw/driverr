@@ -108,7 +108,9 @@ struct HostDetailView: View {
     Form {
       if let model {
         connectionSection(model)
-        if case .connected = model.phase, model.herdrAvailability?.isReady == false {
+        // Also beside tmux's panes when herdr is there and not ready, so a stopped server
+        // still offers its way to start.
+        if case .connected = model.phase, model.herdrAvailability?.offersShellInBody == true {
           shellSection(model)
         }
         if case .connected = model.phase {
@@ -126,7 +128,8 @@ struct HostDetailView: View {
               // Opens the pane's own screen with its composer focused. The request goes to the
               // root, which shows the pane scene.
               onReply: { pane in presenter.reply(host: host, model: model, pane: pane) },
-              onStartTerminal: terminalStart(model, session)
+              onStartTerminal: terminalStart(model, session),
+              servesOnlyTmux: model.herdrAvailability?.servesOnlyTmux == true
             )
             .task {
               session.startLiveUpdates()
@@ -194,9 +197,12 @@ struct HostDetailView: View {
         }
       }
       // Open Shell in the toolbar, because a shell is a main task here, not plumbing behind
-      // the pill. Only when herdr is ready: otherwise `shellSection` already shows the same
-      // button in the body.
-      if let model, model.phase == .connected, model.herdrAvailability?.isReady == true {
+      // the pill. Only when `shellSection` does not already show the same button in the body:
+      // see `HerdrAvailability.offersShellInBody`, which includes a herdr that is not ready
+      // beside tmux's panes.
+      if let model, model.phase == .connected,
+        model.herdrAvailability?.offersShellInBody == false
+      {
         ToolbarItem(placement: .topBarTrailing) {
           // Not a push. See CLAUDE.md: on iPad, do not push from `HostDetailView`, because a
           // second push from the split view's detail column pops back to the host list.
@@ -273,7 +279,9 @@ struct HostDetailView: View {
     _ model: ConnectionModel,
     _ session: SessionModel
   ) -> (() -> Void)? {
-    guard session.canStartTerminal, model.herdrAvailability?.coreRefusal == nil else { return nil }
+    guard session.canStartTerminal, model.herdrAvailability?.coreRefusal == nil,
+      model.herdrAvailability?.herdrProblemBesideTmux == nil
+    else { return nil }
     return {
       Task {
         guard let id = await session.startTerminal(), isOnScreen, model.session === session
@@ -447,11 +455,17 @@ struct HostDetailView: View {
       Button {
         presenter.present(host: host, model: model)
       } label: {
-        Label(Self.shellActionLabel(for: model.herdrAvailability), systemImage: "terminal")
+        Label(
+          Self.shellActionLabel(
+            for: model.herdrAvailability?.herdrProblemBesideTmux ?? model.herdrAvailability),
+          systemImage: "terminal")
       }
       .accessibilityIdentifier("connect.shell")
     } footer: {
-      Text("No herdr here, so there are no panes to show — but this is still an ordinary SSH host.")
+      // Not beside tmux's panes, which are shown below.
+      if model.herdrAvailability?.isReady == false {
+        Text("No panes to show here, but this is still an ordinary SSH host.")
+      }
     }
   }
 
@@ -463,7 +477,8 @@ struct HostDetailView: View {
     // `.statusUnreadable` belongs here: a session is already running, so offering to start
     // one would be the wrong next step.
     case .notInstalled, .tooOld, .ready, .statusUnreadable, .coreReady, .combined,
-      .coreIncompatible, .readyWithCoreRefused, nil:
+      .coreIncompatible, .readyWithCoreRefused, .tmuxReady, .tmuxNotInstalled, .tmuxTooOld,
+      .tmuxUnreadable, .withTmux, nil:
       "Open Shell"
     }
   }
@@ -572,6 +587,11 @@ struct HostDetailView: View {
           RowProblemLabel(refusal, systemImage: "exclamationmark.triangle")
             .accessibilityIdentifier("herdr.coreRefused")
         }
+        // A herdr that is not ready beside tmux's panes, in its own words.
+        if let herdr = availability.herdrProblemBesideTmux {
+          RowProblemLabel(herdr.message, systemImage: "exclamationmark.triangle")
+            .accessibilityIdentifier("herdr.unavailable")
+        }
       } else {
         // A glyph, so the line reads as a problem at a glance under a green "Connected".
         RowProblemLabel(availability.message, systemImage: "exclamationmark.triangle")
@@ -580,7 +600,7 @@ struct HostDetailView: View {
     } else {
       HStack(spacing: 6) {
         ProgressView().controlSize(.mini)
-        Text("Looking for herdr…").font(.footnote)
+        Text("Looking for herdr and tmux…").font(.footnote)
       }
       .accessibilityIdentifier("herdr.checking")
     }

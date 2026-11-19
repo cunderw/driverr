@@ -16,16 +16,66 @@ import Foundation
 ///
 /// **Polls, because nothing subscribes.** tmux's control mode reports only the attached
 /// session's panes, so `changes` is `nil` and `needsPolling` is `true`. Control mode is for
-/// the live terminal, in a later slice.
+/// the live terminal only. See `TmuxAttacher`.
 public struct TmuxControl: HerdrControl {
   /// How to reach `tmux` on the host. Discovery may set an absolute path, because an SSH exec
   /// channel's non-login shell may lack Homebrew on `PATH`. See `discovering(run:)`.
   public let binaryPath: String
   private let run: CommandRunner
+  private let backoff = NoServerBackoff()
+  /// What opens a pane's live terminal, or `nil` with no way to start a long-lived command.
+  private let attacher: TmuxAttacher?
 
-  public init(binaryPath: String = "tmux", run: @escaping CommandRunner) {
+  /// - Parameter open: starts a long-lived command, for the control clients the live terminal
+  ///   runs. `nil` leaves this control without a terminal.
+  /// - Parameter resizesWindow: whether the phone may size the desk's tmux window to its own
+  ///   while a pane is open. Asked at each open, so a change reaches the next one.
+  public init(
+    binaryPath: String = "tmux",
+    run: @escaping CommandRunner,
+    open: StreamRunner? = nil,
+    resizesWindow: @escaping @Sendable () async -> Bool = { true }
+  ) {
     self.binaryPath = binaryPath
     self.run = run
+    attacher = open.map {
+      TmuxAttacher(
+        binary: "\(shellQuoted(binaryPath)) -u", run: run, open: $0, resizesWindow: resizesWindow)
+    }
+  }
+
+  /// The most polls in a row that skip a tmux with no server, counted in ticks, as
+  /// `CombinedControl.longestTUIBackoff` does for a TUI with no session. The gap doubles from
+  /// one poll, so the checks fall on polls 1, 3, 6, 11, 20 and then every eleventh.
+  ///
+  /// A judgement, not a measurement. A session started at the desk shows within it, and a host
+  /// whose tmux is only installed is asked once in eleven polls instead of every one.
+  static let longestNoServerBackoff = 10
+
+  /// A struct cannot remember, and this control is copied into every model that reads it, so
+  /// every copy shares one schedule.
+  private actor NoServerBackoff {
+    private var ticksToSkip = 0
+    private var gap = 0
+
+    /// Whether this poll is one to skip, counted off.
+    func skip() -> Bool {
+      guard ticksToSkip > 0 else { return false }
+      ticksToSkip -= 1
+      return true
+    }
+
+    /// What a listing found. An empty one means no server, because a tmux server exits with its
+    /// last session.
+    func listed(empty: Bool) {
+      gap = empty ? min(max(gap * 2, 1), TmuxControl.longestNoServerBackoff) : 0
+      ticksToSkip = gap
+    }
+
+    func reset() {
+      ticksToSkip = 0
+      gap = 0
+    }
   }
 
   /// The command every call starts with: the binary, and `-u`.
@@ -39,7 +89,7 @@ public struct TmuxControl: HerdrControl {
 
   // MARK: Availability
 
-  /// What this host has, in `HerdrControl`'s terms. See `tmuxAvailability()` for the real one.
+  /// What this host has, in `HerdrControl`'s terms: one of `HerdrAvailability`'s tmux cases.
   public func availability() async -> HerdrAvailability {
     await tmuxAvailability().asHerdrAvailability
   }
@@ -55,17 +105,25 @@ public struct TmuxControl: HerdrControl {
 
   // MARK: Snapshot
 
-  public func snapshot() async throws -> SessionTree {
-    async let listing = execute(TmuxCommands.listPanes(binary: binary), allowingNoServer: true)
-    // The process table only adds agents, so a host that will not answer it still has a tree.
-    async let processTable = try? run(TmuxProcessTable.command)
+  public func resetBackoff() async {
+    await backoff.reset()
+  }
 
-    let output = try await listing
-    // Awaited whether or not it is used, so a host's commands do not depend on a race.
-    let processes = await processTable
+  /// The panes, and then the agents in them.
+  ///
+  /// **The process table is read only when there are panes**, so a host with tmux installed and
+  /// no server costs one command a check, and `longestNoServerBackoff` spaces the checks out.
+  /// `resetBackoff()` ends the gap.
+  public func snapshot() async throws -> SessionTree {
+    if await backoff.skip() { return .empty }
+    let output = try await execute(
+      TmuxCommands.listPanes(binary: binary), allowingNoServer: true)
     let rows = TmuxPaneFormat.rows(from: output)
+    await backoff.listed(empty: rows.isEmpty)
     guard !rows.isEmpty else { return .empty }
 
+    // The process table only adds agents, so a host that will not answer it still has a tree.
+    let processes = try? await run(TmuxProcessTable.command)
     let agents = await agents(forRows: rows, processTable: processes)
     try Task.checkCancellation()
     return TmuxSnapshotMapper.tree(from: rows, agents: agents)
@@ -108,14 +166,16 @@ public struct TmuxControl: HerdrControl {
 
   // MARK: Terminal
 
-  /// A PTY command that shows this pane's session, read-only and at the desk's size.
+  /// `nil`: no command shows one tmux pane and leaves the desk alone.
   ///
-  /// **A stand-in.** It shows the session's current pane, not necessarily this one. The live
-  /// terminal slice opens a pane through `paneAttacher(for:)` and this goes.
-  public func attachCommand(for pane: Pane) -> String {
-    let session = TmuxID.raw(of: pane.workspaceID).map(shellQuoted)
-    guard let session else { return "\(binary) attach-session -f read-only,ignore-size" }
-    return TmuxCommands.attach(binary: binary, session: session)
+  /// `attach-session -t %N` makes that pane's window current in its session, so the desk's
+  /// view moves with the phone, and attaching to the session alone shows whichever pane is
+  /// current there. The live terminal opens a pane through `paneAttacher(for:)` instead.
+  public func attachCommand(for pane: Pane) -> String? { nil }
+
+  /// The control-mode attacher, for a tmux pane. See `TmuxAttacher`.
+  public func paneAttacher(for paneID: String) -> (any PaneAttacher)? {
+    TmuxID.isTmux(paneID) ? attacher : nil
   }
 
   // MARK: Input
@@ -202,7 +262,8 @@ public struct TmuxControl: HerdrControl {
     )
   }
 
-  public var canStartTerminal: Bool { true }
+  /// Whether a window started here can be shown: only with a way to open its terminal.
+  public var canStartTerminal: Bool { attacher != nil }
 
   /// Opens a window in the most recently used session, or a session when no server runs, and
   /// returns the id of its pane.
@@ -213,6 +274,8 @@ public struct TmuxControl: HerdrControl {
     } catch AppError.herdrCommandFailed(let reason) where Self.isNoServer(reason) {
       output = try await execute(TmuxCommands.newSession(binary: binary))
     }
+    // The server may be new, so the next snapshot asks rather than answering from the gap.
+    await backoff.reset()
     let raw = output.trimmingCharacters(in: .whitespacesAndNewlines)
     guard let id = TmuxID.validRaw(raw, kind: .pane) else { throw AppError.herdrResponseUnreadable }
     return TmuxID.pane(id)
@@ -262,12 +325,9 @@ public struct TmuxControl: HerdrControl {
   }
 
   /// Maps a non-zero exit to an `AppError`. 127 is the shell's "command not found".
-  ///
-  /// `herdrNotInstalled` is the nearest case today, and says herdr. The wiring slice gives a
-  /// tmux host its own wording.
   static func failure(exitStatus: Int, standardError: String) -> AppError {
     let detail = standardError.trimmingCharacters(in: .whitespacesAndNewlines)
-    if exitStatus == 127 || detail.contains("command not found") { return .herdrNotInstalled }
+    if exitStatus == 127 || detail.contains("command not found") { return .tmuxNotInstalled }
     return .herdrCommandFailed(reason: detail.isEmpty ? "tmux exited with \(exitStatus)." : detail)
   }
 }

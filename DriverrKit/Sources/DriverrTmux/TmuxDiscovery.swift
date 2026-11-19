@@ -33,11 +33,16 @@ extension TmuxControl {
   }
 
   /// Finds tmux on the host and returns a control bound to it, or `nil` when it cannot be
-  /// found. Whether that tmux is new enough is `tmuxAvailability()`'s answer.
-  public static func discovering(run: @escaping CommandRunner) async -> TmuxControl? {
+  /// found. Whether that tmux is new enough is `tmuxAvailability()`'s answer. `open` and
+  /// `resizesWindow` are `init`'s.
+  public static func discovering(
+    run: @escaping CommandRunner,
+    open: StreamRunner? = nil,
+    resizesWindow: @escaping @Sendable () async -> Bool = { true }
+  ) async -> TmuxControl? {
     guard let result = try? await run(discoveryCommand),
       let path = discoveredPath(in: result.standardOutput)
     else { return nil }
-    return TmuxControl(binaryPath: path, run: run)
+    return TmuxControl(binaryPath: path, run: run, open: open, resizesWindow: resizesWindow)
   }
 }

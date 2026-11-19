@@ -1,5 +1,6 @@
 #if os(macOS)
   import DriverrCore
+  import DriverrHerdr
   import Foundation
   import Testing
 
@@ -116,6 +117,191 @@
 
         try await control.perform(.close, on: split.allPanes[1].id)
         #expect(try await control.snapshot().allPanes.count == 1)
+      }
+    }
+
+    // MARK: The live terminal (#102 S3)
+
+    /// A throwaway server with a session `probe`, 150x44, holding two windows: `@0` current with
+    /// `%0`, and `@1` with `%1`. No desk is attached.
+    private func withLiveServer(
+      resizes: Bool = true,
+      _ body: (TmuxControl, _ tmux: @escaping (String) async throws -> String) async throws -> Void
+    ) async throws {
+      try await withThrowaway { plain in
+        let control = TmuxControl(
+          binaryPath: plain.binaryPath, run: LocalShell.runner, open: LocalShell.streamRunner,
+          resizesWindow: { resizes })
+        let tmux: (String) async throws -> String = { arguments in
+          let result = try await LocalShell.runner(
+            "\(shellQuoted(plain.binaryPath)) -u \(arguments)")
+          #expect(result.exitStatus == 0, "tmux \(arguments): \(result.standardError)")
+          return result.standardOutput.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        _ = try await tmux("new-session -d -s probe -x 150 -y 44")
+        _ = try await tmux("new-window -d -t probe")
+        let panes = try await tmux("list-panes -a -F '#{pane_id}'")
+        #expect(panes == "%0\n%1")
+        try await body(control, tmux)
+      }
+    }
+
+    private func sizes(_ tmux: (String) async throws -> String) async throws -> String {
+      try await tmux("list-windows -a -F '#{window_id}:#{window_width}x#{window_height}'")
+        .replacingOccurrences(of: "\n", with: " ")
+    }
+
+    /// Everything a viewer's output has said, and how it ended.
+    private final class Collector: @unchecked Sendable {
+      private let lock = NSLock()
+      private var bytes = Data()
+      private var ending: String?
+
+      init(_ stream: AsyncThrowingStream<Data, any Error>) {
+        Task {
+          do {
+            for try await chunk in stream { lock.withLock { bytes.append(chunk) } }
+            lock.withLock { ending = "finished" }
+          } catch {
+            lock.withLock { ending = "\(error)" }
+          }
+        }
+      }
+
+      var text: String { lock.withLock { String(decoding: bytes, as: UTF8.self) } }
+      var end: String? { lock.withLock { ending } }
+
+      /// Whether `condition` came true within `seconds`. Callers `#expect` it, so a timeout fails.
+      func eventually(_ seconds: Double = 5, _ condition: (Collector) -> Bool) async -> Bool {
+        let deadline = Date().addingTimeInterval(seconds)
+        while Date() < deadline {
+          if condition(self) { return true }
+          try? await Task.sleep(for: .milliseconds(20))
+        }
+        return condition(self)
+      }
+    }
+
+    private static let phone = TerminalSize(columns: 60, rows: 20, pixelWidth: 0, pixelHeight: 0)
+
+    private func attacher(_ control: TmuxControl) throws -> any PaneAttacher {
+      try #require(control.paneAttacher(for: "tmux:%0"))
+    }
+
+    /// Measured on 3.7c with no desk attached. The attach line sets the client's own size to the
+    /// current window's, so the attach changes nothing; `@W:` then sizes only the pane's window,
+    /// and `@W:` with no size hands it back to the client's own size. With a desk attached, a
+    /// window the desk is not viewing keeps the phone's size instead, until the desk views it
+    /// (measured by hand; a desk needs a terminal, which this suite does not start).
+    @Test("a controller sizes only its pane's window, and hands it back on release")
+    func sizing() async throws {
+      try await withLiveServer { control, tmux in
+        let attacher = try attacher(control)
+        let before = try await sizes(tmux)
+        #expect(before == "@0:150x44 @1:150x44")
+
+        let other = try await attacher.open(terminalID: "tmux:%1", size: Self.phone)
+        let otherOpen = try await sizes(tmux)
+        #expect(otherOpen == "@0:150x44 @1:60x20", "the current window is left alone")
+        await other.release()
+        let otherReleased = try await sizes(tmux)
+        #expect(otherReleased == "@0:150x44 @1:150x44")
+
+        let current = try await attacher.open(terminalID: "tmux:%0", size: Self.phone)
+        let currentOpen = try await sizes(tmux)
+        #expect(currentOpen == "@0:60x20 @1:150x44")
+        try await current.resize(to: TerminalSize(columns: 50, rows: 18, pixelWidth: 0, pixelHeight: 0))
+        let resized = try await sizes(tmux)
+        #expect(resized == "@0:50x18 @1:150x44")
+        await current.release()
+        let released = try await sizes(tmux)
+        #expect(released == "@0:150x44 @1:150x44", "the current window comes back")
+      }
+    }
+
+    @Test("with resizing off no window changes size")
+    func resizingOff() async throws {
+      try await withLiveServer(resizes: false) { control, tmux in
+        let attacher = try attacher(control)
+        let current = try await attacher.open(terminalID: "tmux:%0", size: Self.phone)
+        let other = try await attacher.open(terminalID: "tmux:%1", size: Self.phone)
+        try await current.send(text: "true\r")
+        try await current.resize(to: TerminalSize(columns: 50, rows: 18, pixelWidth: 0, pixelHeight: 0))
+        let open = try await sizes(tmux)
+        #expect(open == "@0:150x44 @1:150x44")
+        await current.release()
+        await other.release()
+        let released = try await sizes(tmux)
+        #expect(released == "@0:150x44 @1:150x44")
+      }
+    }
+
+    /// The rule `TmuxAttachment` stands on: output before the paint's last `%end` is already in
+    /// the capture, and output after it is not. A pane counting as fast as it can shows a gap
+    /// or a repeat at the cut if the rule is wrong.
+    @Test("a counting pane's numbers arrive once each and in order, across the paint")
+    func ordering() async throws {
+      try await withLiveServer { control, tmux in
+        _ = try await tmux(
+          "respawn-pane -k -t %0 'i=0; while [ $i -lt 200000 ]; do i=$((i+1)); echo n$i; done; sleep 30'")
+        try await Task.sleep(for: .milliseconds(100))
+        let bridge = try await attacher(control).open(terminalID: "tmux:%0", size: Self.phone)
+        let collected = Collector(bridge.output)
+        #expect(await collected.eventually(20) { $0.text.contains("n200000") })
+        await bridge.release()
+
+        let plain = collected.text.replacingOccurrences(
+          of: "\u{1B}\\[[0-9;?]*[A-Za-z]", with: "\n", options: .regularExpression)
+        let numbers = plain.split(whereSeparator: \.isNewline).compactMap { line -> Int? in
+          guard line.hasPrefix("n") else { return nil }
+          return Int(line.dropFirst())
+        }
+        let first = try #require(numbers.first)
+        #expect(numbers.count > 1000, "the paint and the stream both carried numbers")
+        #expect(numbers == Array(first..<(first + numbers.count)), "no repeat and no gap")
+        #expect(numbers.last == 200000)
+      }
+    }
+
+    @Test("typed bytes reach the pane as typed: UTF-8, quotes, a backslash, a semicolon")
+    func typing() async throws {
+      try await withLiveServer { control, tmux in
+        _ = try await tmux("respawn-pane -k -t %0 cat")
+        let bridge = try await attacher(control).open(terminalID: "tmux:%0", size: Self.phone)
+        let collected = Collector(bridge.output)
+        let text = #"é ✓ "it's" \ ; $HOME 😀"#
+        try await bridge.send(text: text + "\r")
+        #expect(await collected.eventually { $0.text.contains(text) })
+        let screen = try await tmux("capture-pane -p -t %0")
+        #expect(screen.contains(text), "screen: \(screen)")
+        await bridge.release()
+      }
+    }
+
+    @Test("a pane closed at the desk ends cleanly, as does the session's last one")
+    func paneClosed() async throws {
+      try await withLiveServer { control, tmux in
+        let attacher = try attacher(control)
+        let first = Collector(try await attacher.open(terminalID: "tmux:%0", size: Self.phone).output)
+        let second = Collector(try await attacher.observe(terminalID: "tmux:%1", size: Self.phone).output)
+        _ = try await tmux("kill-pane -t %1")
+        #expect(await second.eventually { $0.end != nil })
+        #expect(second.end == "finished")
+        #expect(first.end == nil)
+        _ = try await tmux("kill-session -t probe")
+        #expect(await first.eventually { $0.end != nil })
+        #expect(first.end == "finished")
+      }
+    }
+
+    @Test("a client detached at the desk, with its pane still there, is .streamEnded")
+    func clientDetached() async throws {
+      try await withLiveServer { control, tmux in
+        let collected = Collector(
+          try await attacher(control).open(terminalID: "tmux:%0", size: Self.phone).output)
+        _ = try await tmux("detach-client -s probe")
+        #expect(await collected.eventually { $0.end != nil })
+        #expect(collected.end == "\(TerminalCloseReason.streamEnded)")
       }
     }
 

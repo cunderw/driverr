@@ -148,10 +148,13 @@ public struct Pane: Identifiable, Hashable, Sendable {
   ///
   /// Not `agent?.session?.identifier`: restarting Claude in an unmoved pane changes it.
   ///
+  /// **Not a terminal id that is the pane's own id.** A tmux pane's is, and tmux reuses `%3`
+  /// after its server restarts, so it witnesses nothing the id does not.
+  ///
   /// `nil` when herdr reports neither, and the pane is then not remembered. See
   /// `ConnectionModel.noteLastPane`.
   public var sessionWitness: String? {
-    if let terminalID, !terminalID.isEmpty { return terminalID }
+    if let terminalID, !terminalID.isEmpty, terminalID != id { return terminalID }
     if let directory, !directory.isEmpty { return directory }
     return nil
   }

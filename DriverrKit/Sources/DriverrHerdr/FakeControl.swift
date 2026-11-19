@@ -119,8 +119,10 @@ public actor FakeControl: HerdrControl {
     return availabilityOverride
   }
 
+  /// For a core pane or a tmux pane, the two kinds that open through an attacher. `tmux:` is
+  /// `DriverrTmux.TmuxID.prefix`, spelled here because this module cannot import that one.
   public nonisolated func paneAttacher(for paneID: String) -> (any PaneAttacher)? {
-    CorePaneID.isCore(paneID) ? attacher : nil
+    CorePaneID.isCore(paneID) || paneID.hasPrefix("tmux:") ? attacher : nil
   }
 
   public nonisolated func imageUploader(
@@ -139,7 +141,7 @@ public actor FakeControl: HerdrControl {
 
   public nonisolated let canStartTerminal: Bool
 
-  public nonisolated func attachCommand(for pane: Pane) -> String {
+  public nonisolated func attachCommand(for pane: Pane) -> String? {
     // The same command and branch `CLIControl` produces. Every seeded pane has a terminal
     // id, so only a test-built pane reaches the fallback.
     if let terminalID = pane.terminalID {

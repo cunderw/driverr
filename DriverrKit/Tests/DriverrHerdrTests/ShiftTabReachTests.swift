@@ -65,6 +65,45 @@ struct ShiftTabReachTests {
         .deliversShiftTab(toPane: "tmux:%3"))
   }
 
+  /// tmux beside herdr wraps the herdr answer, and that answer still decides for a TUI pane.
+  @Test("beside tmux, the herdr answer it wraps decides")
+  func withTmuxUnwraps() {
+    #expect(
+      HerdrAvailability.withTmux(.ready(version: "0.9.5", protocolVersion: 22), tmuxVersion: "3.7c")
+        .deliversShiftTab(toPane: "w1:p1"))
+    #expect(
+      HerdrAvailability.withTmux(.ready(version: "0.8.2", protocolVersion: 20), tmuxVersion: "3.4")
+        .deliversShiftTab(toPane: "w1:p1"))
+    #expect(
+      !HerdrAvailability.withTmux(
+        .ready(version: "0.8.0", protocolVersion: 19), tmuxVersion: "3.7c"
+      ).deliversShiftTab(toPane: "w1:p1"))
+    #expect(
+      HerdrAvailability.withTmux(
+        .combined(herdrVersion: "0.9.5", coreVersion: "0.1.21"), tmuxVersion: "3.7c"
+      ).deliversShiftTab(toPane: "w1:p1"))
+    #expect(
+      !HerdrAvailability.withTmux(.serverNotRunning(version: "0.9.5"), tmuxVersion: "3.7c")
+        .deliversShiftTab(toPane: "w1:p1"))
+    // The tmux pane on the same host gets it whatever herdr says.
+    #expect(
+      HerdrAvailability.withTmux(.serverNotRunning(version: "0.9.5"), tmuxVersion: "3.7c")
+        .deliversShiftTab(toPane: "tmux:%3"))
+  }
+
+  /// On a host where tmux alone answers, a tmux pane gets it and a herdr pane id reaches nothing.
+  @Test("a tmux-only host reaches its tmux panes and no herdr pane")
+  func tmuxOnlyHost() {
+    #expect(HerdrAvailability.tmuxReady(version: "3.7c").deliversShiftTab(toPane: "tmux:%3"))
+    let tmuxOnly: [HerdrAvailability] = [
+      .tmuxReady(version: "3.7c"), .tmuxNotInstalled,
+      .tmuxTooOld(version: "2.7", minimumVersion: "3.2"), .tmuxUnreadable,
+    ]
+    for availability in tmuxOnly {
+      #expect(!availability.deliversShiftTab(toPane: "w1:p1"), "\(availability)")
+    }
+  }
+
   @Test("no answer, or an unusable one, reaches nothing")
   func notReady() {
     let unusable: [HerdrAvailability] = [

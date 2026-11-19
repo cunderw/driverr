@@ -55,6 +55,12 @@ final class SettingsModel {
     update { $0.liveActivities = on }
   }
 
+  /// Whether an open tmux pane's window takes this screen's size. `TmuxControl` reads the stored
+  /// value at each open, so the next pane opened follows a change.
+  func setResizesTmuxWindows(_ on: Bool) {
+    update { $0.resizesTmuxWindows = on }
+  }
+
   func growFont() { update { $0.growFont() } }
   func shrinkFont() { update { $0.shrinkFont() } }
 

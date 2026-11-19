@@ -19,8 +19,9 @@ conversation to have after the code exists.
 Two things are settled and not up for relitigation:
 
 - **Driverr is not a configuration surface.** Global settings are theme, font, font size,
-  whether a captured pane screen wraps its long lines, and whether Driverr draws Live
-  Activities. A sixth one still has to argue its case, in an issue, before the code exists.
+  whether a captured pane screen wraps its long lines, whether Driverr draws Live
+  Activities, and whether an open tmux pane's window takes the phone's size. A seventh one
+  still has to argue its case, in an issue, before the code exists.
 - **Driverr is free and has no backend.** It talks directly to the machines you name.
 
 ## Filing an issue

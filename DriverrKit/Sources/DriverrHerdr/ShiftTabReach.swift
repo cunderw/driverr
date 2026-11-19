@@ -29,7 +29,8 @@ extension HerdrAvailability {
   ///
   /// A core pane always gets it: a viewer writes `CSI Z` itself, whatever the TUI beside it.
   /// So does a tmux pane. A TUI pane needs protocol 20. `.combined` carries the TUI's version
-  /// and no protocol number, so there the version decides.
+  /// and no protocol number, so there the version decides. `.withTmux` defers to the herdr
+  /// answer it wraps.
   public func deliversShiftTab(toPane paneID: String) -> Bool {
     if CorePaneID.isCore(paneID) || paneID.hasPrefix(ShiftTabFloor.tmuxPanePrefix) {
       return true
@@ -39,8 +40,12 @@ extension HerdrAvailability {
       return protocolVersion >= ShiftTabFloor.protocolVersion
     case .combined(let herdrVersion, _):
       return ShiftTabFloor.isReached(byVersion: herdrVersion)
+    case .withTmux(let herdr, _):
+      // tmux beside herdr changes nothing for a herdr pane; the herdr answer decides.
+      return herdr.deliversShiftTab(toPane: paneID)
     case .coreReady, .serverNotRunning, .notInstalled, .tooOld, .statusUnreadable,
-      .coreIncompatible:
+      .coreIncompatible, .tmuxReady, .tmuxNotInstalled, .tmuxTooOld, .tmuxUnreadable:
+      // A herdr pane id on a host where tmux alone answers has no herdr to reach.
       return false
     }
   }

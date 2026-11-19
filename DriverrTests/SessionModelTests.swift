@@ -176,7 +176,7 @@ private actor PushingControl: HerdrControl {
     return try read.get()
   }
 
-  nonisolated func attachCommand(for pane: Pane) -> String { "" }
+  nonisolated func attachCommand(for pane: Pane) -> String? { "" }
   func availability() async -> HerdrAvailability { .coreReady(version: "0.1.15") }
   func sendText(paneID: String, text: String) async throws {}
   func submitText(paneID: String, text: String) async throws {}

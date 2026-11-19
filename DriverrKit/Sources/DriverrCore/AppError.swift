@@ -30,6 +30,14 @@ public enum AppError: Error, Hashable, Sendable, LocalizedError {
   /// herdr is not on the host, or not where Driverr looked. Never rendered like a wrong
   /// password, because the next action is entirely different.
   case herdrNotInstalled
+  /// A tmux Driverr found stopped running as a command. Its own case, because the herdr one
+  /// would send the user to install herdr on a host that never needed it.
+  case tmuxNotInstalled
+  /// Driverr has no way to show this pane's terminal yet. Not retryable: asking again opens
+  /// the same nothing.
+  ///
+  /// A tmux pane, until the live tmux terminal lands. Its chat and its composer still work.
+  case paneTerminalUnavailable
   /// herdr ran and refused, or failed. Carries what herdr itself said.
   case herdrCommandFailed(reason: String)
   /// The host was reached and the SSH handshake completed, but herdr never answered.
@@ -78,6 +86,10 @@ public enum AppError: Error, Hashable, Sendable, LocalizedError {
       // An SSH exec channel runs a non-login shell, so this does not say "login shell's
       // PATH": a user would find herdr there and conclude Driverr is broken.
       "herdr is not installed on this host, or isn't on the PATH this connection uses."
+    case .tmuxNotInstalled:
+      "tmux is not installed on this host, or isn't on the PATH this connection uses."
+    case .paneTerminalUnavailable:
+      "Driverr can't show this pane's terminal yet."
     case let .herdrCommandFailed(reason):
       reason
     case let .herdrDidNotAnswer(host):
@@ -104,7 +116,8 @@ public enum AppError: Error, Hashable, Sendable, LocalizedError {
     case .keyImportFailed: false
     // Retrying a missing binary or an unreadable protocol changes nothing. A failed command
     // may succeed next time.
-    case .herdrNotInstalled, .herdrResponseUnreadable: false
+    case .herdrNotInstalled, .tmuxNotInstalled, .herdrResponseUnreadable: false
+    case .paneTerminalUnavailable: false
     case .herdrCommandFailed: true
     // The far side stopped answering, which a second attempt can clear.
     case .herdrDidNotAnswer: true

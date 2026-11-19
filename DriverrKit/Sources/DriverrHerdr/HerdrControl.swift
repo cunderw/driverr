@@ -29,7 +29,11 @@ public protocol HerdrControl: Sendable {
   ///
   /// Returned as a string, because attaching needs a PTY, which the app opens. Takes the
   /// whole `Pane`, because the command depends on it. See `CLIControl.attachCommand(for:)`.
-  func attachCommand(for pane: Pane) -> String
+  ///
+  /// `nil` when no command can show this pane: a tmux pane, whose terminal opens through
+  /// `paneAttacher(for:)` once it opens at all. `TerminalSceneModel` then shows
+  /// `AppError.paneTerminalUnavailable`.
+  func attachCommand(for pane: Pane) -> String?
 
   /// Whether this host can serve herdr at all, and which "no" it is if not.
   func availability() async -> HerdrAvailability
@@ -221,7 +225,7 @@ public struct CLIControl: HerdrControl {
     return "export HERDR_SOCKET_PATH=\(shellQuoted(socketPath)); \(command)"
   }
 
-  public func attachCommand(for pane: Pane) -> String {
+  public func attachCommand(for pane: Pane) -> String? {
     // `--takeover` is never passed. Attaching must not evict the user at their desk.
 
     // By terminal, not by agent, when herdr sent a terminal id. `agent attach` fails with
