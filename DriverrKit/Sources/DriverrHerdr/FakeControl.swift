@@ -83,7 +83,10 @@ public actor FakeControl: HerdrControl {
   }
 
   /// A session that changes as it is polled, for exercising live updates.
-  public init(script: [SessionTree]) {
+  ///
+  /// - Parameter canStartAgent: whether the New Agent sheet is offered. A start stops the
+  ///   script, as any change the fake makes to its own tree does.
+  public init(script: [SessionTree], canStartAgent: Bool = false) {
     self.script = script
     tree = script.first ?? .empty
     failure = nil
@@ -92,7 +95,7 @@ public actor FakeControl: HerdrControl {
     attacher = nil
     unsupported = []
     canStartTerminal = false
-    canStartAgent = false
+    self.canStartAgent = canStartAgent
     startFailure = nil
     imageUploads = nil
   }
@@ -409,12 +412,39 @@ public actor FakeControl: HerdrControl {
   /// Every agent this fake was asked to start, refused ones included.
   public private(set) var agentLaunches: [AgentLaunch] = []
 
-  /// Records the launch and answers with a pane id, or with `startFailure`. The tree does not
-  /// change: a test that needs the new pane listed sets it with `update(to:)`.
+  /// Records the launch and answers with a pane id, or with `startFailure`.
+  ///
+  /// Lists the new pane in the fake's own tree, as herdr's TUI does: a new workspace named
+  /// after the folder, with the agent in its one pane. So a UI run can open what it started.
   public func startAgent(_ launch: AgentLaunch) async throws -> String {
     agentLaunches.append(launch)
     if let startFailure { throw startFailure }
-    return "agent:\(agentLaunches.count)"
+    let workspaceID = "agent\(agentLaunches.count)"
+    let tabID = workspaceID + ":t1"
+    let paneID = workspaceID + ":p1"
+    let pane = Pane(
+      id: paneID,
+      tabID: tabID,
+      workspaceID: workspaceID,
+      title: launch.kind.command,
+      agent: Agent(name: launch.kind.command, kind: launch.kind.command, status: .idle),
+      terminalID: "term_" + workspaceID,
+      directory: launch.directory
+    )
+    let workspace = Workspace(
+      id: workspaceID,
+      number: tree.workspaces.count + 1,
+      label: AgentLaunch.folderName(of: launch.directory),
+      tabs: [
+        Tab(
+          id: tabID, workspaceID: workspaceID, number: 1, label: launch.kind.command,
+          isAutoNamed: true, panes: [pane])
+      ]
+    )
+    tree = SessionTree(workspaces: tree.workspaces + [workspace], focusedPaneID: tree.focusedPaneID)
+    // Stop the script, as in `perform`.
+    scriptOverridden = true
+    return paneID
   }
 
   /// How many terminals this fake was asked to start.
