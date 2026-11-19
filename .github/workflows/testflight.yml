@@ -121,10 +121,13 @@ jobs:
             { echo "::error::the .p12 has no Apple Development identity"; exit 1; }
 
       # The committed CURRENT_PROJECT_VERSION is a placeholder. The number comes from the
-      # newest build App Store Connect holds.
+      # newest build App Store Connect holds or the newest build tag, whichever is higher.
+      # A build still processing is not on App Store Connect's list, and its tag is.
       - name: Choose the build number
         run: |
-          NEXT="$(node scripts/testflight.mjs next-build "$PRODUCT_BUNDLE_IDENTIFIER")"
+          TAGS="$(git ls-remote --tags origin 'refs/tags/build/*')"
+          TAG_MAX="$(sed -En 's|.*refs/tags/build/.*-([0-9]+)$|\1|p' <<< "$TAGS" | sort -n | tail -1)"
+          NEXT="$(node scripts/testflight.mjs next-build "$PRODUCT_BUNDLE_IDENTIFIER" --tag-max "${TAG_MAX:-0}")"
           [[ "$NEXT" =~ ^[1-9][0-9]*$ ]] || { echo "::error::no build number: '$NEXT'"; exit 1; }
           echo "NEXT=$NEXT" | tee -a "$GITHUB_ENV"
 
@@ -201,6 +204,7 @@ jobs:
           grep -q 'VERIFY SUCCEEDED' "$OUT/validate.log"
 
       - name: Upload
+        id: upload
         if: env.UPLOAD == 'true'
         run: |
           xcrun altool --upload-app -f "$IPA" -t ios \
@@ -217,7 +221,11 @@ jobs:
           gh api -X POST "repos/$GITHUB_REPOSITORY/git/refs" \
             -f ref="refs/tags/build/$MARKETING_VERSION-$NEXT" -f sha="$GITHUB_SHA" --silent
 
+      # The upload has succeeded by here. A build still processing after 30 minutes, and
+      # a failed call after it is VALID, are warnings with a line in the summary and leave
+      # the step green. A build that is INVALID fails it.
       - name: Release to testers
+        id: release
         if: env.UPLOAD == 'true'
         env:
           EXPORT_COMPLIANCE_EXEMPT: ${{ vars.EXPORT_COMPLIANCE_EXEMPT }}
@@ -230,11 +238,21 @@ jobs:
 
       - name: Summary
         if: always()
+        env:
+          UPLOAD_OUTCOME: ${{ steps.upload.outcome }}
+          RELEASE_OUTCOME: ${{ steps.release.outcome }}
         run: |
           {
             echo "Build ${NEXT:-not chosen} of ${MARKETING_VERSION:-unknown}, commit $GITHUB_SHA."
-            if [ "$UPLOAD" = true ]; then echo "Uploaded if the Upload step is green."
-            else echo "Validated only. Nothing was uploaded and no build number was used."; fi
+            if [ "$UPLOAD" != true ]; then
+              echo "Validated only. Nothing was uploaded and no build number was used."
+            elif [ "$UPLOAD_OUTCOME" != success ]; then
+              echo "Not uploaded: the Upload step ended as $UPLOAD_OUTCOME."
+            elif [ "$RELEASE_OUTCOME" = success ]; then
+              echo "Uploaded. Release to testers finished. A line above names each step it skipped."
+            else
+              echo "Uploaded. Release to testers ended as $RELEASE_OUTCOME. The build number is used. Do not upload this build again."
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Remove the key and the keychain
