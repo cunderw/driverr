@@ -1014,6 +1014,182 @@ struct PaneComposerStatusKeyNoticeTests {
   }
 }
 
+/// Which `Sent` notices age, and so which ones the model ticks for (#112).
+@Suite("PaneComposerState.sentNoticeAges")
+struct PaneComposerSentNoticeAgesTests {
+  /// Written out by hand, not derived from `sentVerdict`, so the test cannot agree with
+  /// itself.
+  private static let waitingKeys: [PaneKey] = [
+    .enter, .digit1, .digit2, .digit3, .digit4, .digit5, .digit6, .digit7, .digit8, .digit9,
+  ]
+  private static let finishedKeys: [PaneKey] = [
+    .esc, .up, .down, .left, .right, .tab, .backTab, .yes, .no, .interrupt,
+  ]
+
+  private func sent(_ begin: (inout PaneComposerState) -> Void) -> PaneComposerState {
+    var state = PaneComposerState()
+    begin(&state)
+    state.succeeded(at: Date(timeIntervalSince1970: 0))
+    return state
+  }
+
+  @Test("the two lists name every key once")
+  func everyKeyIsListed() {
+    let listed = Self.waitingKeys + Self.finishedKeys
+    #expect(Set(listed) == Set(PaneKey.allCases))
+    #expect(listed.count == PaneKey.allCases.count)
+  }
+
+  @Test("a reply, Enter, a digit and a key sequence wait for the agent, so they age")
+  func waitingNoticesAge() {
+    #expect(sent { $0.text = "yes"; _ = $0.beginSending() }.sentNoticeAges)
+    #expect(sent { _ = $0.beginSending([PaneKey.digit1, .enter]) }.sentNoticeAges)
+    for key in Self.waitingKeys {
+      #expect(sent { _ = $0.beginSending(key) }.sentNoticeAges, "\(key)")
+    }
+  }
+
+  @Test("a named key and Ctrl-C already said what they did, so they do not age")
+  func finishedNoticesDoNotAge() {
+    for key in Self.finishedKeys {
+      #expect(!sent { _ = $0.beginSending(key) }.sentNoticeAges, "\(key)")
+    }
+  }
+
+  @Test("nothing ages outside the sent phase")
+  func onlySentAges() {
+    var state = PaneComposerState()
+    #expect(!state.sentNoticeAges, "editing")
+    state.text = "yes"
+    _ = state.beginSending()
+    #expect(!state.sentNoticeAges, "sending")
+    state.failed(.herdrCommandFailed(reason: "no such pane"))
+    #expect(!state.sentNoticeAges, "failed")
+
+    var cleared = sent { $0.text = "yes"; _ = $0.beginSending() }
+    cleared.clearSentNotice()
+    #expect(!cleared.sentNoticeAges, "cleared")
+  }
+}
+
+/// A key's notice ("Sent Shift-Tab") has no wait to age and no clock to retire it, so it
+/// must go on evidence or on the next send (#112).
+@Suite("PaneComposerState key notice retiring")
+struct PaneComposerKeyNoticeRetiringTests {
+  private let start = Date(timeIntervalSince1970: 1_800_000_000)
+
+  private func working(name: String = "Claude", status: AgentStatus = .working) -> Pane {
+    Pane(
+      id: "w1:p2",
+      tabID: "w1:t1",
+      workspaceID: "w1",
+      title: "plan mode",
+      agent: Agent(name: name, kind: "claude", status: status)
+    )
+  }
+
+  /// Shift-Tab sent against a working pane, which is how the mode cycle is used.
+  private func shiftTabSent() -> PaneComposerState {
+    var state = PaneComposerState()
+    _ = state.beginSending(.backTab)
+    state.succeeded(at: start, pane: working())
+    return state
+  }
+
+  @Test("the fixture shows the key notice")
+  func fixtureShowsTheNotice() {
+    let status = shiftTabSent().status(asOf: start)
+    #expect(status?.message == "Sent Shift-Tab")
+    #expect(status?.isKeyNotice == true)
+  }
+
+  @Test("the next reply replaces the key notice with its own")
+  func nextReplyRetiresIt() {
+    var state = shiftTabSent()
+    state.text = "go on"
+    _ = state.beginSending()
+    #expect(state.status(asOf: start)?.message == PaneComposerCopy.sending)
+    #expect(state.status(asOf: start)?.isKeyNotice == false)
+
+    state.succeeded(at: start.addingTimeInterval(1), pane: working())
+
+    let status = state.status(asOf: start.addingTimeInterval(1))
+    #expect(status?.message == PaneComposerCopy.sent)
+    #expect(status?.isKeyNotice == false)
+  }
+
+  @Test("the next key replaces the key notice with its own")
+  func nextKeyRetiresIt() {
+    var state = shiftTabSent()
+    _ = state.beginSending(.esc)
+    state.succeeded(at: start.addingTimeInterval(1), pane: working())
+
+    #expect(state.status(asOf: start.addingTimeInterval(1))?.message == "Sent Esc")
+  }
+
+  @Test("a failed next send shows the failure, not the key notice")
+  func failedNextSendRetiresIt() {
+    var state = shiftTabSent()
+    state.text = "go on"
+    _ = state.beginSending()
+    state.failed(.herdrCommandFailed(reason: "no such pane"))
+
+    let status = state.status(asOf: start)
+    #expect(status?.message == PaneComposerCopy.failed)
+    #expect(status?.isKeyNotice == false)
+  }
+
+  @Test("the pane going idle retires it")
+  func idleRetiresIt() {
+    var state = shiftTabSent()
+    state.paneChanged(to: working(status: .idle))
+    #expect(state.phase == .editing)
+    #expect(state.status(asOf: start) == nil)
+  }
+
+  @Test("the agent changing name retires it")
+  func renamedAgentRetiresIt() {
+    var state = shiftTabSent()
+    state.paneChanged(to: working(name: "Codex"))
+    #expect(state.status(asOf: start) == nil)
+  }
+
+  @Test("the agent going away retires it")
+  func agentGoneRetiresIt() {
+    var state = shiftTabSent()
+    state.paneChanged(
+      to: Pane(id: "w1:p2", tabID: "w1:t1", workspaceID: "w1", title: "zsh", agent: nil))
+    #expect(state.status(asOf: start) == nil)
+  }
+
+  /// The model calls this for a new transcript turn and for an on-screen question that moved
+  /// (`onScreenQuestionAdvanced`).
+  @Test("the conversation moving retires it")
+  func transcriptRetiresIt() {
+    var state = shiftTabSent()
+    state.transcriptAdvanced()
+    #expect(state.status(asOf: start) == nil)
+  }
+
+  @Test("typing in the field retires it")
+  func typingRetiresIt() {
+    var state = shiftTabSent()
+    state.text = "a"
+    #expect(state.status(asOf: start) == nil)
+  }
+
+  /// A clock is not evidence. An idle, unchanged pane keeps the notice until the next send or
+  /// a signal above, however long that takes.
+  @Test("an unchanged or missing pane holds it, at any clock")
+  func noEvidenceHoldsIt() {
+    var state = shiftTabSent()
+    state.paneChanged(to: working())
+    state.paneChanged(to: nil)
+
+    #expect(state.status(asOf: start.addingTimeInterval(3600))?.message == "Sent Shift-Tab")
+  }
+}
+
 /// What a successful send says, per what was sent.
 @Suite("PaneComposerCopy.sentVerdict")
 struct PaneComposerCopySentVerdictTests {

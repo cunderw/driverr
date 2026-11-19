@@ -522,6 +522,37 @@ struct PaneComposerModelTests {
     #expect(model.state.phase == .sent)
   }
 
+  /// A named key's verdict and Ctrl-C's never age, so a tick would redraw the composer once a
+  /// second for no visible change (#112). A reply still ages, so it still ticks.
+  @Test("a key press starts no age tick, and a reply still does")
+  func aKeyPressStartsNoAgeTick() async {
+    for key in [PaneKey.esc, .backTab, .interrupt] {
+      let model = composer(FakeControl())
+      await model.send(key)
+      #expect(model.state.phase == .sent, "\(key)")
+      #expect(model.sentNotice == nil, "\(key) has no wait to age, so nothing ticks")
+    }
+
+    let model = composer(FakeControl())
+    model.text = "y"
+    await model.send()
+    #expect(model.sentNotice != nil, "a reply waits on the agent, so its notice ages")
+  }
+
+  /// The next send retires a key notice: it replaces the key's verdict with its own.
+  @Test("a reply sent after a key press does not keep the key's notice")
+  func theNextSendRetiresAKeyNotice() async {
+    let model = composer(FakeControl())
+    await model.send(.backTab)
+    #expect(model.status?.isKeyNotice == true)
+
+    model.text = "go on"
+    await model.send()
+
+    #expect(model.status?.message == PaneComposerCopy.sent)
+    #expect(model.status?.isKeyNotice == false)
+  }
+
   // MARK: - Telling the rest of the connection
 
   /// A successful send triggers a re-read. Without it the reader answers and watches the same
