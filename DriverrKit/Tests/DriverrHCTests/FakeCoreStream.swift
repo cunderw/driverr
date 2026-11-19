@@ -54,6 +54,13 @@ final class FakeCoreStream: HerdrStream, @unchecked Sendable {
     "machine.list": .result(FakeCoreStream.noMachines),
   ]
 
+  /// Answers a method gives once each, in order, before it goes back to `replies`.
+  ///
+  /// For a reply that is wrong for one call only. Swapping `replies` from the test's own task
+  /// races with whatever else is calling, and the call that lands one tick late gets the old
+  /// answer.
+  var queued: [String: [Reply]] = [:]
+
   /// What `file.read` answers, by path. A path with no entry is a file that is not there.
   var files: [String: Reply] = [:]
   /// What `machine.exec` answers, from its `line` and `on`, in place of `replies` once set.
@@ -143,8 +150,18 @@ final class FakeCoreStream: HerdrStream, @unchecked Sendable {
         let terminal = try required(params?["terminal"] as? String)
         answer(id: id, reply: screens[terminal] ?? .error("no terminal \(terminal)"))
       } else {
-        answer(id: id, reply: replies[method] ?? .error("no such method"))
+        let reply = nextQueued(for: method) ?? replies[method] ?? .error("no such method")
+        answer(id: id, reply: reply)
       }
+    }
+  }
+
+  private func nextQueued(for method: String) -> Reply? {
+    lock.withLock {
+      guard var waiting = queued[method], !waiting.isEmpty else { return nil }
+      let next = waiting.removeFirst()
+      queued[method] = waiting
+      return next
     }
   }
 
