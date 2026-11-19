@@ -79,9 +79,10 @@ enum TmuxProcessTable {
   ///
   /// Codex keeps no record that names its process, so its name is the only signal. macOS `ps`
   /// prints `comm` as the path it was started by, which for a symlinked install is the link,
-  /// such as `/home/dev/.local/bin/codex`. Linux prints the bare name. Measured on codex
-  /// 0.164.0 on macOS, where Codex was a member of the foreground group and not its leader.
-  /// A `node` wrapper from an npm install is not measured, and does not match.
+  /// such as `/home/dev/.local/bin/codex`, and `codex` when a shell found it on `PATH`. Linux
+  /// prints the bare name, which is not measured. On codex 0.164.0 on macOS one launch led the
+  /// foreground group and another was only a member of it, so every member is checked. A `node`
+  /// wrapper from an npm install is not measured, and does not match.
   static func isCodex(_ process: TmuxProcess) -> Bool {
     process.command.split(separator: "/").last == "codex"
   }

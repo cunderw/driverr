@@ -38,6 +38,24 @@ struct CodexTitleTests {
     #expect(CodexTitle.display("[ ! ] Action Required") == "")
   }
 
+  /// The titles one real turn produced on codex 0.164.0 in a folder named `work`: idle, working
+  /// once Codex named the thread, and idle again. The approval prompt was not reached, so the
+  /// blocked form here is the source-derived marker in front of the same rest.
+  @Test("the measured titles keep one label through every state")
+  func measured() {
+    #expect(CodexTitle.status(of: "work") == .idle)
+    #expect(CodexTitle.status(of: "⠧ work") == .working)
+    #expect(CodexTitle.status(of: "⠏ Create probe.txt | work") == .working)
+    #expect(CodexTitle.status(of: "Create probe.txt | work") == .idle)
+    for title in [
+      "⠏ Create probe.txt | work", "Create probe.txt | work",
+      "[ ! ] Action Required | Create probe.txt | work",
+      "[ . ] Action Required | Create probe.txt | work",
+    ] {
+      #expect(CodexTitle.display(title) == "Create probe.txt | work", "\(title)")
+    }
+  }
+
   @Test("the display form drops a spinner frame, and leaves any other title alone")
   func displayOther() {
     #expect(CodexTitle.display("⠋ driverr") == "driverr")
