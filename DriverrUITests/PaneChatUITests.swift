@@ -87,7 +87,8 @@ final class PaneChatUITests: XCTestCase {
     usageLimitReset: Bool = false,
     notificationsAuthorized: Bool = false,
     subagents: Bool = false,
-    endingSubagents: Bool = false
+    endingSubagents: Bool = false,
+    codexPicker: Bool = false
   ) -> XCUIApplication {
     XCUIDevice.shared.orientation = .portrait
     var flags: [String] = []
@@ -141,6 +142,8 @@ final class PaneChatUITests: XCTestCase {
     // Finished spawn lines, and one off-page sub-agent whose file stops reading as running
     // about half a minute after the list is read.
     if endingSubagents { flags += ["-uiTestingSubagentsEnding"] }
+    // `index rebuild`'s Codex shows its `/permissions` picker until anything is sent.
+    if codexPicker { flags += ["-uiTestingCodexPicker"] }
     // Seeded, because this class is not about connecting.
     let app = connectedHostApp(flags)
     require(app, "session.workspace", "Expected the session tree")
@@ -1667,11 +1670,71 @@ final class PaneChatUITests: XCTestCase {
     XCTAssertTrue(showScreen.isHittable, "Show the Screen must be in view above the composer")
     require(app, "composer.hold", "Expected the composer to say why Send is off")
 
+    // The dialog read off the screen answers from here too, in chips under the notice (#109).
+    // Checked with the keyboard down, before the typing below raises it. The keys are
+    // `ClaudeTrustPromptScreenTests`, and a chip's send is the Codex picker's test.
+    XCTAssertTrue(
+      notice.label.contains("Answer it below"),
+      "The notice must point to the chips under it, got '\(notice.label)'")
+    for label in ["No, exit", "Yes, I trust this folder"] {
+      XCTAssertTrue(
+        require(app, "pane.chat.turn.pending.chip.\(label)", "Expected the '\(label)' chip")
+          .isHittable,
+        "The dialog's chips must be in view above the composer")
+    }
+
     field.tap()
     app.typeText("yes")
     let send = require(app, "composer.send", "Expected the send button")
     XCTAssertFalse(send.isEnabled, "Send must stay off while the agent asks on its screen")
     XCTAssertEqual(field.value as? String, "yes", "The typed text must stay")
+  }
+
+  /// Codex's `/permissions` picker, which herdr reports `done` here and `idle` on a real host,
+  /// and which Codex writes nowhere (#109). Its options come off the screen as chips under the
+  /// conversation, and the composer holds its send: pasted text is no keys to the picker, and
+  /// the Enter after it picks the highlighted option. A chip answers it, and the hold lifts.
+  /// A UI test because the screen read is wired from the chat to the band, the composer's hold
+  /// and the send; `CodexPickerScreenTests`, `PaneComposerHoldTests` and
+  /// `ScreenQuestionWatchTests` cover the rules, and the trust prompt's test types into a held
+  /// composer. The slow transcript has the rollout arrive after the screen, as on a phone.
+  func testACodexPickerOffersItsOptionsAndHoldsTheComposer() {
+    let app = connectedHost(slowTranscript: true, codexPicker: true)
+
+    let wiki = app.descendants(matching: .any)
+      .matching(identifier: "session.workspace")
+      .matching(NSPredicate(format: "label CONTAINS %@", "wiki"))
+      .firstMatch
+    _ = wiki.waitForExistence(timeout: 10)
+    for _ in 0..<6 where !wiki.isHittable {
+      app.swipeUp()
+    }
+    wiki.tap()
+    tapPane(app, titled: "index rebuild")
+
+    XCTAssertEqual(
+      require(app, "pane.chat.turn.pending", "Expected the waiting line over the chips").label,
+      "Waiting for your answer")
+    XCTAssertEqual(
+      require(app, "pane.chat.turn.pending.question.q0", "Expected the picker's title").label,
+      "Update Model Permissions")
+    let hold = require(app, "composer.hold", "Expected the composer to say why Send is off")
+    XCTAssertTrue(
+      hold.label.contains("Sending is off while the agent's picker is open."),
+      "The hold must name the picker, got '\(hold.label)'")
+
+    let chip = require(
+      app, "pane.chat.turn.pending.chip.Full Access", "Expected a chip per option")
+    for _ in 0..<4 where !chip.isHittable {
+      app.swipeUp()
+    }
+    chip.tap()
+
+    // The digit closes the picker, so the next read of the screen has no question and the
+    // hold lifts with the chips.
+    requireGone(
+      app, "pane.chat.turn.pending.chip.Full Access", "The answered picker must go", timeout: 10)
+    requireGone(app, "composer.hold", "The hold must lift once the picker closes")
   }
 
   // MARK: - The chat keeps looking

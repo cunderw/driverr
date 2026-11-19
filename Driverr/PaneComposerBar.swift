@@ -182,8 +182,9 @@ struct PaneComposerBar: View {
   /// built without it, as in most hosted tests, is the bar it was.
   var savedPrompts: SavedPromptsModel?
 
-  /// Why typed text may not be sent now, from the pane's agent. `nil` lets it go. Handed
-  /// to the model, which refuses the send; the bar only says why. See `PaneComposerHold`.
+  /// Why typed text may not be sent now, from the pane's agent and its screen. `nil` lets it
+  /// go. Handed to the model, which refuses the send; the bar only says why. See
+  /// `PaneComposerHold`.
   var hold: PaneComposerHold?
 
   /// What the hold's hand-off is keyed on. The bar survives a pane switch, and each pane's
@@ -294,7 +295,16 @@ struct PaneComposerBar: View {
     // which also runs on the first appearance and would close a list opened from the start.
     .onChange(of: model.id) { closeSavedPrompts() }
     // `initial`, so a pane opened in the held state is held before its first tap.
-    .onChange(of: HoldKey(pane: model.id, hold: hold), initial: true) { model.hold = hold }
+    //
+    // A hold that starts on the pane in view also lowers the keyboard. `/permissions` sent
+    // from here opens Codex's picker with the keyboard still up, over the chips that answer
+    // it (#109). `ComposerFocusGate` keeps it down after that. Typed text stays.
+    .onChange(of: HoldKey(pane: model.id, hold: hold), initial: true) { previous, current in
+      model.hold = hold
+      if current.pane == previous.pane, previous.hold == nil, current.hold != nil {
+        isTextFocused = false
+      }
+    }
     .onChange(of: pendingRenameSelection) { _, pending in
       guard pending != nil else { return }
       Task { @MainActor in pendingRenameSelection = nil }

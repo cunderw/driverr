@@ -266,6 +266,11 @@ struct AppEnvironment {
           return FakeControl(
             tree: FakeControl.seededTree, screen: FakeControl.askUserQuestionScreen)
         }
+        // `index rebuild`'s Codex shows its `/permissions` picker until a chip answers it.
+        if isCodexPicker {
+          return FakeControl(
+            tree: FakeControl.seededTree, screenUntilSent: FakeControl.codexPickerScreen)
+        }
         // herdr drops the open pane from one poll and reports it again.
         if isPaneVanishingOnce { return FakeControl(script: FakeControl.vanishingPaneScript) }
         // The store tour's larger session, so its pane switcher shot is a full grid. The
@@ -864,9 +869,18 @@ struct AppEnvironment {
     ProcessInfo.processInfo.arguments.contains("-uiTestingFirstMessage") || isTrustPrompt
   }
 
-  /// Whether this launch serves `isFirstMessage`'s pane blocked on its trust prompt.
+  /// Whether this launch serves `isFirstMessage`'s pane blocked on its trust prompt. The
+  /// screen shows the dialog (`FakeControl.claudeTrustScreen`) until anything is sent.
   static var isTrustPrompt: Bool {
     ProcessInfo.processInfo.arguments.contains("-uiTestingTrustPrompt")
+  }
+
+  /// Whether this launch serves `index rebuild`'s Codex (`w3:p1`) with its `/permissions`
+  /// picker on the screen until anything is sent (`FakeControl.codexPickerScreen`). herdr
+  /// reports the pane `done`, not `blocked`, and the rollout says nothing about the picker, as
+  /// with a real Codex (#109).
+  static var isCodexPicker: Bool {
+    ProcessInfo.processInfo.arguments.contains("-uiTestingCodexPicker")
   }
 
   /// The herdr fake this launch uses, held here so the transcript runner can see what was
@@ -877,7 +891,9 @@ struct AppEnvironment {
   /// using the flag: one seeded host, a fresh process per test.
   static let firstMessageControl = FakeControl(
     tree: isTrustPrompt
-      ? FakeControl.treeWithUnstartedAgent : FakeControl.treeWithUnstartedIdleAgent)
+      ? FakeControl.treeWithUnstartedAgent : FakeControl.treeWithUnstartedIdleAgent,
+    // The dialog on the screen until a chip answers it, as the first reply moves the tree on.
+    screenUntilSent: isTrustPrompt ? FakeControl.claudeTrustScreen : nil)
 
   /// Whether this launch serves a pane whose agent has named a new session with no file yet.
   ///

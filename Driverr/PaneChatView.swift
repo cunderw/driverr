@@ -327,10 +327,16 @@ struct PaneChatView: View {
     isShowingSubagent ? nil : model.pane.agent?.status
   }
 
-  /// The composer's hold, from the pane's agent as `TerminalScreen` reads it, so the notice
-  /// and the composer agree. `nil` while a sub-agent is shown, for `agentStatus`'s reason.
+  /// The composer's hold, from the pane's agent and the screen read for a question, as
+  /// `TerminalScreen` reads it, so the notice and the composer agree. `nil` while a sub-agent
+  /// is shown, for `agentStatus`'s reason.
   private var composerHold: PaneComposerHold? {
-    isShowingSubagent ? nil : PaneComposerHold.reason(agent: model.pane.agent)
+    PaneComposerHold.reason(agent: paneAgent, screen: screenForQuestion)
+  }
+
+  /// The pane's agent, and `nil` while a sub-agent is shown, for `agentStatus`'s reason.
+  private var paneAgent: Agent? {
+    isShowingSubagent ? nil : model.pane.agent
   }
 
   /// What the pane's agent said it is blocked on, for `agentStatus`'s reason.
@@ -407,9 +413,11 @@ struct PaneChatView: View {
       guard scenePhase == .active else { return }
       await model.watch(followsSubagents: followsSubagents)
     }
-    // Read the screen for a question while the pane is blocked and the transcript has none.
-    // Claude Code writes a pending `AskUserQuestion` to the session file only once answered.
-    // The same cadence also shows a multi-question prompt's next tab after a chip answers.
+    // Read the screen for a question while `watchesScreenForQuestion` says so: a blocked pane,
+    // or a Codex that is not working, whose transcript has no question of its own. Claude
+    // Code writes a pending `AskUserQuestion` to the session file only once answered, and
+    // Codex writes nothing for its pickers. The same cadence also shows a multi-question
+    // prompt's next tab, or `/model`'s second stage, after a chip answers.
     .task(
       id: ScreenQuestionKey(
         pane: model.pane.id, isWatching: scenePhase == .active && watchesScreenForQuestion)
@@ -727,18 +735,13 @@ struct PaneChatView: View {
           }
           .padding(.bottom, 10)
         }
-        ReplyChipRow(
-          groups: pendingGroups,
-          selection: replySelection,
-          isSending: isSending,
-          onTap: { group, chip in choose(chip, in: group) },
-          onSend: { confirmReply() }
-        )
-        .onGeometryChange(for: CGFloat.self, of: { $0.frame(in: .named(Self.replySpace)).minY }) {
-          top in
-          bandTop = top
-          if isFromScreen { screenBandTop = top }
-        }
+        replyChips
+          .onGeometryChange(
+            for: CGFloat.self, of: { $0.frame(in: .named(Self.replySpace)).minY }
+          ) { top in
+            bandTop = top
+            if isFromScreen { screenBandTop = top }
+          }
       }
       .frame(maxWidth: ChatColumn.width, alignment: .leading)
       .frame(maxWidth: .infinity, alignment: .leading)
@@ -750,6 +753,17 @@ struct PaneChatView: View {
     }
   }
 
+  /// The chips themselves, in the band or under a notice.
+  private var replyChips: some View {
+    ReplyChipRow(
+      groups: pendingGroups,
+      selection: replySelection,
+      isSending: isSending,
+      onTap: { group, chip in choose(chip, in: group) },
+      onSend: { confirmReply() }
+    )
+  }
+
   /// The band item's own coordinate space, which the chips' offset is read in.
   private nonisolated static let replySpace = "pane.chat.reply"
 
@@ -757,8 +771,8 @@ struct PaneChatView: View {
   /// card would draw for the same call.
   private var screenQuestionNotice: String? {
     guard
-      let call = model.transcript?.questionCall(
-        screen: screenForQuestion, agentStatus: agentStatus)
+      let call = Transcript.questionCall(
+        in: model.transcript, screen: screenForQuestion, agentStatus: agentStatus)
     else { return nil }
     return call.pendingNotice(agentStatus: agentStatus, blockedKind: blockedKind).label
   }
@@ -845,17 +859,18 @@ struct PaneChatView: View {
   /// the count below, and is drawn by `replyRow`.
   private var pendingGroups: [ReplyChipGroup] {
     guard sendReply != nil,
-      let call = model.transcript?.questionCall(
-        screen: screenForQuestion, agentStatus: agentStatus)
+      let call = Transcript.questionCall(
+        in: model.transcript, screen: screenForQuestion, agentStatus: agentStatus)
     else { return [] }
     return call.pendingNotice(agentStatus: agentStatus, blockedKind: blockedKind).groups
   }
 
-  /// Whether to read the screen for a question: a blocked pane, a composer to answer through,
-  /// and a transcript whose pending call has no question of its own. A transcript question wins.
+  /// Whether to read the screen for a question: a composer to answer through, and
+  /// `PaneQuestionScreen.watches(agent:pendingCall:)`, which `TerminalScreen` also asks.
   private var watchesScreenForQuestion: Bool {
-    sendReply != nil && agentStatus == .blocked
-      && model.transcript?.pendingToolCall?.asksItsOwnQuestions != true
+    sendReply != nil
+      && PaneQuestionScreen.watches(
+        agent: paneAgent, pendingCall: model.transcript?.pendingToolCall)
   }
 
   /// The pane's screen, if this view read it while watching for a question.
@@ -1098,7 +1113,13 @@ struct PaneChatView: View {
   private func notice(for resolution: TranscriptResolution) -> some View {
     switch resolution {
     case .absent(let absence):
-      centred(TranscriptNotice(absence: absence, agentStatus: agentStatus, hold: composerHold))
+      // A pane with no file can still ask on its screen: Claude's trust dialog, or a Codex
+      // picker before the first prompt. Its chips go under the notice.
+      centred(
+        TranscriptNotice(
+          absence: absence, agentStatus: agentStatus, hold: composerHold,
+          answersBelow: !pendingGroups.isEmpty),
+        answering: true)
     case .ambiguous(let directory, let candidates):
       // The one place nothing is drawn behind what is on screen. Behind it would be a guessed,
       // possibly wrong, conversation.
@@ -1132,44 +1153,58 @@ struct PaneChatView: View {
   /// `minHeight` so it still centres when it fits. It sits inside the safe area, whose bottom
   /// edge is the composer, so `proxy.size.height` is already the visible height; subtracting
   /// the bar again would centre it too high.
-  private func centred(_ notice: TranscriptNotice) -> some View {
+  ///
+  /// `answering` draws the chips for a question read off the screen under the notice, inside
+  /// the same `minHeight`, so the notice and its answers centre together and both scroll.
+  private func centred(_ notice: TranscriptNotice, answering: Bool = false) -> some View {
     GeometryReader { proxy in
       ScrollView {
-        ContentUnavailableView {
-          Label(notice.title ?? "", systemImage: notice.symbolName)
-        } description: {
-          VStack(spacing: 8) {
-            Text(notice.message)
-              .accessibilityIdentifier("pane.chat.notice")
-            if !notice.evidence.isEmpty {
-              VStack(alignment: .leading, spacing: 2) {
-                ForEach(notice.evidence, id: \.self) { line in
-                  Text(line)
-                    .font(.caption2.monospaced())
-                    // Middle-truncated, so both the head and tail of a uuid and the trailing
-                    // `written 4s ago` survive.
-                    .lineLimit(1)
-                    .truncationMode(.middle)
+        VStack(spacing: 0) {
+          ContentUnavailableView {
+            Label(notice.title ?? "", systemImage: notice.symbolName)
+          } description: {
+            VStack(spacing: 8) {
+              Text(notice.message)
+                .accessibilityIdentifier("pane.chat.notice")
+              if !notice.evidence.isEmpty {
+                VStack(alignment: .leading, spacing: 2) {
+                  ForEach(notice.evidence, id: \.self) { line in
+                    Text(line)
+                      .font(.caption2.monospaced())
+                      // Middle-truncated, so both the head and tail of a uuid and the trailing
+                      // `written 4s ago` survive.
+                      .lineLimit(1)
+                      .truncationMode(.middle)
+                  }
                 }
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier("pane.chat.candidates")
               }
-              .accessibilityElement(children: .combine)
-              .accessibilityIdentifier("pane.chat.candidates")
+            }
+            // `.primary`, not the view's own secondary description: that grey measured 3.29:1 on
+            // the light background (#85858B on #F2F2F7), under 4.5:1. The glyph stays secondary.
+            .foregroundStyle(.primary)
+          } actions: {
+            // Side by side while they fit, stacked when not, so no exit slides off the edge at
+            // large text sizes. Prominence goes to the primary action; Show the Screen leads
+            // only when it is the sole exit.
+            ViewThatFits(in: .horizontal) {
+              HStack(spacing: 12) {
+                exits(notice, isProminent: !notice.offersRetry && !notice.offersFilePicker)
+              }
+              VStack(spacing: 10) {
+                exits(notice, isProminent: !notice.offersRetry && !notice.offersFilePicker)
+              }
             }
           }
-          // `.primary`, not the view's own secondary description: that grey measured 3.29:1 on
-          // the light background (#85858B on #F2F2F7), under 4.5:1. The glyph stays secondary.
-          .foregroundStyle(.primary)
-        } actions: {
-          // Side by side while they fit, stacked when not, so no exit slides off the edge at
-          // large text sizes. Prominence goes to the primary action; Show the Screen leads
-          // only when it is the sole exit.
-          ViewThatFits(in: .horizontal) {
-            HStack(spacing: 12) {
-              exits(notice, isProminent: !notice.offersRetry && !notice.offersFilePicker)
-            }
-            VStack(spacing: 10) {
-              exits(notice, isProminent: !notice.offersRetry && !notice.offersFilePicker)
-            }
+          if answering, !pendingGroups.isEmpty {
+            // No band geometry here: with no transcript turn, nothing takes the question over
+            // and `ChatReplyAnchor`'s headroom has nothing to keep still.
+            replyChips
+              .frame(maxWidth: ChatColumn.width, alignment: .leading)
+              .frame(maxWidth: .infinity, alignment: .leading)
+              .padding(.horizontal, chatGutter)
+              .padding(.bottom, ChatColumn.rowPadding)
           }
         }
         .frame(minHeight: proxy.size.height)
