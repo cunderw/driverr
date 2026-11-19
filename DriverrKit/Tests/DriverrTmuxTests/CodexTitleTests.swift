@@ -56,6 +56,13 @@ struct CodexTitleTests {
     }
   }
 
+  @Test("an attention dot in front of an idle title is dropped, so the label does not flip")
+  func displayIdleDot() {
+    #expect(CodexTitle.display("● Create probe.txt | work") == "Create probe.txt | work")
+    #expect(CodexTitle.display("● work") == CodexTitle.display("[ ! ] Action Required | work"))
+    #expect(CodexTitle.status(of: "● work") == .idle)
+  }
+
   @Test("the display form drops a spinner frame, and leaves any other title alone")
   func displayOther() {
     #expect(CodexTitle.display("⠋ driverr") == "driverr")

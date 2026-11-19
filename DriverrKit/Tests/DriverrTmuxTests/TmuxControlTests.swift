@@ -377,6 +377,24 @@ struct TmuxControlCodexTests {
     #expect(agent?.status == .working)
   }
 
+  @Test(
+    "a Claude leading the group with a codex child is not Codex, even with no record",
+    arguments: ["claude", "/home/dev/.local/bin/claude", "2.1.325"])
+  func claudeLeaderWithoutRecord(leader: String) async throws {
+    let host = host(title: "[ ! ] Action Required | app")
+    // `codex mcp-server` started by Claude as an MCP child, in Claude's foreground group.
+    await host.setProcesses([
+      .init(pid: 5001, tty: "ttys100", command: "zsh"),
+      .init(pid: 6000, groupID: 6000, foregroundGroupID: 6000, tty: "ttys101", command: leader),
+      .init(
+        pid: 6001, groupID: 6000, foregroundGroupID: 6000, tty: "ttys101",
+        command: "/home/dev/.local/bin/codex"),
+    ])
+    let tree = try await TmuxControl(run: host.runner).snapshot()
+    #expect(tree.pane(id: "tmux:%1")?.agent == nil)
+    #expect(tree.blockedPanes.isEmpty)
+  }
+
   @Test("Codex is still found when the read of Claude's records throws")
   func recordsFail() async throws {
     let host = host(title: "[ ! ] Action Required | app")
