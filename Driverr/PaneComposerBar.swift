@@ -63,6 +63,22 @@ struct PaneComposerBar: View {
   /// `selectionBinding`.
   @State private var pendingSelection: TextSelection?
 
+  /// The saved prompt being renamed, while its inline editor stands in for the list. `nil`
+  /// the rest of the time.
+  @State private var renamingPromptID: UUID?
+  @State private var renameDraft = ""
+  /// The rename field's whole draft, handed over once when the field takes focus, so the
+  /// first key replaces the name. Withdrawn after the update that delivers it, for
+  /// `selectionBinding`'s reason.
+  @State private var pendingRenameSelection: TextSelection?
+  @FocusState private var isRenameFocused: Bool
+
+  /// The height of one line of a saved prompt's name and of its preview, at the current text
+  /// size. Scaled metrics rather than a measured row, because a height fed back from layout
+  /// into this bar hangs the app (see `onLayoutProbe`).
+  @ScaledMetric(relativeTo: .callout) private var promptNameLine: CGFloat = 21
+  @ScaledMetric(relativeTo: .caption) private var promptPreviewLine: CGFloat = 16
+
   @Bindable var model: PaneComposerModel
 
   /// The conversation this composer answers, read only for its own command turns for the `/`
@@ -146,7 +162,7 @@ struct PaneComposerBar: View {
     if isCollapsed { return .collapsed }
     let isResting =
       !isTextFocused && model.text.isEmpty && !model.attachment.isAttached
-      && dynamicTypeSize < .accessibility1
+      && !showsSavedPromptsPanel && dynamicTypeSize < .accessibility1
     return isResting ? .pill : .card
   }
 
@@ -159,6 +175,14 @@ struct PaneComposerBar: View {
   /// The Shift-Tab button, which cycles Claude Code's mode. `.hidden` draws nothing. The rule
   /// is `PaneModeControl`, in `DriverrCore`.
   var modeControl: PaneModeControl = .hidden
+
+  /// The saved prompts, offered from a button in the card. `nil` hides the button, so a bar
+  /// built without it, as in most hosted tests, is the bar it was.
+  var savedPrompts: SavedPromptsModel?
+
+  /// Whether the saved list is up, above the card in the `/` list's slot. The bar owns it; the
+  /// value passed in is only where it starts, for hosted tests and previews.
+  @State var isShowingSavedPrompts = false
 
   var body: some View {
     withSlashKeyHandling(barContent)
@@ -174,6 +198,8 @@ struct PaneComposerBar: View {
       // composer goes.
       if isConfirmingInterrupt {
         interruptConfirm
+      } else if showsSavedPromptsPanel, let savedPrompts {
+        savedPromptsPanel(savedPrompts)
       } else if !slashSuggestions.isEmpty {
         slashSuggestionsList
       }
@@ -235,7 +261,23 @@ struct PaneComposerBar: View {
         if takeFocusRequest?() == true { isTextFocused = true }
       }
     }
-    .onChange(of: isTextFocused) { _, focused in onFocusChange?(focused) }
+    // The rename field counts as the composer's own: the keyboard stays up for it, and a
+    // report of focus leaving would make the chat jump to its end when focus comes back.
+    .onChange(of: isComposerFocused) { _, focused in onFocusChange?(focused) }
+    // A landscape phone with the keyboard up has no room for the list, so it closes rather
+    // than hides. Hidden, a rename field that had the keyboard would leave, drop the keyboard,
+    // un-collapse the bar, come back and take the keyboard again, round and round.
+    .onChange(of: isCollapsed) { _, collapsed in
+      guard collapsed else { return }
+      closeSavedPrompts()
+    }
+    // The list belongs to the pane it was opened on. `onChange`, not the `.task(id:)` above,
+    // which also runs on the first appearance and would close a list opened from the start.
+    .onChange(of: model.id) { closeSavedPrompts() }
+    .onChange(of: pendingRenameSelection) { _, pending in
+      guard pending != nil else { return }
+      Task { @MainActor in pendingRenameSelection = nil }
+    }
     // Retire the dismissal as soon as the query moves off it. Otherwise dismissing on `/`,
     // typing `c` and deleting it would keep the list hidden. `.task(id:)` above fires only on
     // a pane switch.
@@ -289,7 +331,9 @@ struct PaneComposerBar: View {
   /// are offered only for a word that opens the message, because Claude Code sends one
   /// mid-sentence as prose (`SlashCommandMatcher.withoutBuiltIns`).
   private var slashSuggestions: [SlashCommand] {
-    guard !isCollapsed, model.text != dismissedSuggestionsQuery, let token = slashToken else {
+    guard !isCollapsed, !showsSavedPromptsPanel, model.text != dismissedSuggestionsQuery,
+      let token = slashToken
+    else {
       return []
     }
     // No transcript is needed: recents need one, but the catalogue does not, so a pane whose
@@ -555,6 +599,306 @@ struct PaneComposerBar: View {
       }
   }
 
+  // MARK: - Saved prompts
+
+  /// Whether the saved list is drawn. Never while collapsed, and `isCollapsed` closes it too.
+  private var showsSavedPromptsPanel: Bool {
+    isShowingSavedPrompts && savedPrompts != nil && !isCollapsed
+  }
+
+  /// What `onFocusChange` reports: the field, or the rename field standing in for it.
+  private var isComposerFocused: Bool {
+    isTextFocused || renamingPromptID != nil
+  }
+
+  /// How many saved rows show before the list scrolls: four, or two at accessibility sizes,
+  /// the `/` list's numbers.
+  private var savedPromptCap: Int {
+    dynamicTypeSize >= .accessibility1
+      ? SlashCommandMatcher.maximumSuggestionsAtAccessibilitySizes
+      : 4
+  }
+
+  /// One saved row's height, from the scaled line heights: 8 pt padding above and below, the
+  /// name, and the preview where it shows, never under 44 pt.
+  private var savedPromptRowHeight: CGFloat {
+    let lines = promptNameLine + (showsDescriptions ? 1 + promptPreviewLine : 0)
+    return max(44, 16 + lines)
+  }
+
+  /// Opens and closes the saved list. An accent glyph on a neutral circle, like Attach.
+  private var promptsButton: some View {
+    Button {
+      if isShowingSavedPrompts {
+        closeSavedPrompts()
+      } else {
+        isShowingSavedPrompts = true
+      }
+    } label: {
+      Image(systemName: isShowingSavedPrompts ? "bookmark.fill" : "bookmark")
+        .font(.system(size: 17, weight: .semibold))
+        .foregroundStyle(themeAccent)
+        .frame(width: Self.circle(in: .card), height: Self.circle(in: .card))
+        .background(Color(.tertiarySystemFill), in: Circle())
+        .frame(width: 44, height: 44)
+        .contentShape(Rectangle())
+    }
+    .buttonStyle(.plain)
+    // The glyph has no words, so the label is all VoiceOver has.
+    .accessibilityLabel(PaneComposerCopy.savedPrompts)
+    .accessibilityAddTraits(isShowingSavedPrompts ? [.isSelected] : [])
+    .accessibilityIdentifier("composer.prompts")
+  }
+
+  /// The saved list, or the rename editor in its place, as a floating card in the `/` list's
+  /// shape and slot. It presents nothing, so it works wherever the bar is.
+  private func savedPromptsPanel(_ saved: SavedPromptsModel) -> some View {
+    VStack(alignment: .leading, spacing: 0) {
+      if let id = renamingPromptID, let prompt = saved.prompts.first(where: { $0.id == id }) {
+        renameEditor(prompt, in: saved)
+      } else {
+        savedPromptsHeader(saved)
+        if saved.prompts.isEmpty {
+          Text(PaneComposerCopy.noSavedPrompts)
+            .font(.footnote)
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityIdentifier("composer.prompts.empty")
+        } else {
+          savedPromptRows(saved)
+        }
+      }
+    }
+    .padding(.bottom, 4)
+    .clipShape(Self.cardShape)
+    .background(.regularMaterial, in: Self.cardShape)
+    .overlay {
+      Self.cardShape
+        .strokeBorder(Color(.opaqueSeparator), lineWidth: 1)
+    }
+  }
+
+  /// The caption, Save, and the close control. Save is here, not on a row, because it acts
+  /// on the field, not on a prompt.
+  private func savedPromptsHeader(_ saved: SavedPromptsModel) -> some View {
+    let canSave = saved.canSave(model.text)
+    return HStack(spacing: 0) {
+      Text(PaneComposerCopy.savedPrompts)
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .lineLimit(1)
+        .minimumScaleFactor(0.7)
+        .padding(.leading, 12)
+        .accessibilityAddTraits(.isHeader)
+
+      Spacer(minLength: 8)
+
+      Button {
+        saved.save(model.text)
+      } label: {
+        // The short word where the long one does not fit, at the largest sizes.
+        ViewThatFits(in: .horizontal) {
+          Text(PaneComposerCopy.savePrompt)
+          Text(PaneComposerCopy.saveShort)
+        }
+        .lineLimit(1)
+        // `Color.primary`, for `BorderedButtonLabel`'s reason, and secondary while off,
+        // because a fixed primary label would hide `.disabled`.
+        .foregroundStyle(canSave ? Color.primary : Color.secondary)
+      }
+      .buttonStyle(.bordered)
+      .controlSize(.small)
+      .disabled(!canSave)
+      .accessibilityLabel(PaneComposerCopy.savePrompt)
+      .accessibilityIdentifier("composer.prompts.save")
+
+      Button {
+        closeSavedPrompts()
+      } label: {
+        Image(systemName: "xmark")
+          .font(.body)
+          .foregroundStyle(.secondary)
+          .frame(minWidth: 44, minHeight: 44)
+          .contentShape(Rectangle())
+      }
+      .buttonStyle(.plain)
+      .accessibilityLabel(PaneComposerCopy.closeSavedPrompts)
+      .accessibilityIdentifier("composer.prompts.dismiss")
+    }
+  }
+
+  /// The rows, scrolling past `savedPromptCap` so the list cannot cover the conversation.
+  ///
+  /// A fixed height only when the rows overflow, because a `ScrollView` takes all the height
+  /// it is offered and would push the chat up with a short list too. The half row at the
+  /// bottom says there is more.
+  @ViewBuilder
+  private func savedPromptRows(_ saved: SavedPromptsModel) -> some View {
+    let rows = VStack(spacing: 0) {
+      ForEach(Array(saved.prompts.enumerated()), id: \.element.id) { index, prompt in
+        savedPromptRow(prompt, at: index, in: saved)
+      }
+    }
+    if saved.prompts.count > savedPromptCap {
+      ScrollView { rows }
+        .frame(height: savedPromptRowHeight * (CGFloat(savedPromptCap) + 0.5))
+    } else {
+      rows
+    }
+  }
+
+  /// One saved prompt: a tap inserts it, and the `ellipsis` beside it renames or deletes it.
+  /// Two siblings, never a menu inside the button. No identifier on the `HStack`.
+  private func savedPromptRow(
+    _ prompt: SavedPrompt, at index: Int, in saved: SavedPromptsModel
+  ) -> some View {
+    HStack(spacing: 0) {
+      Button {
+        insert(prompt)
+      } label: {
+        VStack(alignment: .leading, spacing: 1) {
+          Text(prompt.name)
+            .font(.callout)
+            .lineLimit(1)
+          // The first line of the text, where it fits: after a rename the name no longer says
+          // what the prompt is. Dropped at accessibility sizes, as the `/` list's descriptions.
+          if showsDescriptions {
+            Text(prompt.text)
+              .font(.caption)
+              .foregroundStyle(.secondary)
+              .lineLimit(1)
+              .truncationMode(.tail)
+          }
+        }
+        .padding(.leading, 12)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+        .contentShape(Rectangle())
+      }
+      .buttonStyle(SuggestionRowButtonStyle(accent: themeAccent))
+      .accessibilityLabel(prompt.name)
+      .accessibilityValue(prompt.text)
+      .accessibilityHint(PaneComposerCopy.insertPromptHint)
+      .accessibilityIdentifier("composer.prompts.row.\(index)")
+
+      // No `Section` in the menu: on iOS 27 a button inside one loses its identifier.
+      Menu {
+        Button(PaneComposerCopy.renamePrompt, systemImage: "pencil") {
+          beginRenaming(prompt)
+        }
+        .accessibilityIdentifier("composer.prompts.rename")
+        Button(PaneComposerCopy.deletePrompt, systemImage: "trash", role: .destructive) {
+          saved.delete(prompt.id)
+        }
+        .accessibilityIdentifier("composer.prompts.delete")
+      } label: {
+        Image(systemName: "ellipsis")
+          .font(.body)
+          .foregroundStyle(.secondary)
+          .frame(minWidth: 44, minHeight: 44)
+          .contentShape(Rectangle())
+      }
+      .menuIndicator(.hidden)
+      .buttonStyle(.plain)
+      .accessibilityLabel(PaneComposerCopy.promptActions(prompt.name))
+      .accessibilityIdentifier("composer.prompts.row.\(index).more")
+    }
+  }
+
+  /// Rename, inline, in `SessionTreeView.renameRow`'s shape: the buttons above the field, so
+  /// the keyboard cannot cover them, and tappable, because XCUITest cannot deliver Return.
+  private func renameEditor(_ prompt: SavedPrompt, in saved: SavedPromptsModel) -> some View {
+    let canCommit = RenameLabel.sanitised(renameDraft) != nil
+    return VStack(alignment: .leading, spacing: 8) {
+      HStack(spacing: 8) {
+        Text(PaneComposerCopy.renamePromptTitle)
+          .font(.footnote)
+          .lineLimit(1)
+          .minimumScaleFactor(0.7)
+        Spacer(minLength: 8)
+        Button {
+          endRenaming()
+        } label: {
+          BorderedButtonLabel(PaneComposerCopy.cancel)
+        }
+        .accessibilityIdentifier("composer.prompts.rename.cancel")
+        Button {
+          saved.rename(prompt.id, to: renameDraft)
+          endRenaming()
+        } label: {
+          Text(PaneComposerCopy.done)
+            .foregroundStyle(canCommit ? Color.primary : Color.secondary)
+        }
+        .disabled(!canCommit)
+        .accessibilityIdentifier("composer.prompts.rename.done")
+      }
+      .buttonStyle(.bordered)
+      .controlSize(.small)
+
+      TextField(
+        PaneComposerCopy.promptName,
+        text: $renameDraft,
+        selection: Binding(get: { pendingRenameSelection }, set: { _ in })
+      )
+      .textFieldStyle(.roundedBorder)
+      .textInputAutocapitalization(.never)
+      .autocorrectionDisabled()
+      .focused($isRenameFocused)
+      .submitLabel(.done)
+      .onSubmit {
+        saved.rename(prompt.id, to: renameDraft)
+        endRenaming()
+      }
+      .accessibilityIdentifier("composer.prompts.rename.field")
+      // Takes the keyboard from the composer's field, and selects the whole name once it has
+      // it, so the first key replaces the name.
+      .task { isRenameFocused = true }
+      .onChange(of: isRenameFocused) { _, focused in
+        guard focused else { return }
+        pendingRenameSelection = TextSelection(range: renameDraft.startIndex..<renameDraft.endIndex)
+      }
+    }
+    .padding(12)
+  }
+
+  /// Puts `prompt` in the field by `SavedPromptInsertion`'s rule and sends nothing. The caret
+  /// goes to the end, through the same two selections `choose` writes.
+  ///
+  /// An inserted prompt is finished text, so a prompt that is itself a `/command` does not
+  /// open the `/` list over it; the list returns when the text changes.
+  private func insert(_ prompt: SavedPrompt) {
+    let text = SavedPromptInsertion.inserting(prompt.text, into: model.text)
+    model.text = text
+    let caret = TextSelection(insertionPoint: text.endIndex)
+    pendingSelection = caret
+    reportedSelection = caret
+    dismissedSuggestionsQuery = text
+    suggestionSelection.reset()
+    isShowingSavedPrompts = false
+    isTextFocused = true
+  }
+
+  private func beginRenaming(_ prompt: SavedPrompt) {
+    renameDraft = prompt.name
+    renamingPromptID = prompt.id
+  }
+
+  /// Back to the list, and the keyboard back to the composer's field in the same update, so
+  /// `isComposerFocused` never reads false on the way.
+  private func endRenaming() {
+    isTextFocused = true
+    renamingPromptID = nil
+  }
+
+  /// Closes the list and any rename in it. A rename field holding the keyboard hands it back
+  /// to the composer's field first.
+  private func closeSavedPrompts() {
+    if renamingPromptID != nil { endRenaming() }
+    isShowingSavedPrompts = false
+  }
+
   // MARK: - The card
 
   /// The strip of page between the card's bottom edge and the bottom of this bar, which is
@@ -681,6 +1025,9 @@ struct PaneComposerBar: View {
   private func controlRow(in shape: CardShape) -> some View {
     HStack(alignment: .center, spacing: shape == .pill ? 0 : 8) {
       if shape != .pill, onAttach != nil { attachButton(in: shape) }
+      // In the card only, so the pill and the collapsed row keep their size. The list needs
+      // the card's room anyway, and an open list keeps the bar the card.
+      if shape == .card, savedPrompts != nil { promptsButton }
       // No spacer while collapsed, or it would strand Attach in the middle of the card. The
       // controls hug the trailing edge in every shape.
       if shape == .card { Spacer(minLength: 0) }
