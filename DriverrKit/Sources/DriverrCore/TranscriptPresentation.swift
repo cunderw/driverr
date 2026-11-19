@@ -337,7 +337,8 @@ public struct TranscriptNotice: Equatable, Sendable {
   /// finished agent has had its prompt, so a missing file is a fault. A blocked agent keeps
   /// the wait, because a new Claude on its trust prompt reports blocked before any prompt
   /// (`FakeControl.treeWithUnstartedAgent`). No default, so a call site cannot forget it.
-  /// The chat calls `init(absence:agentStatus:hold:)`, which sends a held pane to its screen.
+  /// The chat calls `init(absence:agentStatus:hold:answersBelow:)`, which sends a held pane to
+  /// its screen or its chips.
   public init(absence: TranscriptAbsence, agentStatus: AgentStatus?) {
     let leftTheDirectory = "If this pane has left the directory the agent started in,"
     switch absence {
