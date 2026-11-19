@@ -14,9 +14,12 @@ struct CoreSessionFilesTests {
   private func control(
     _ stream: FakeCoreStream,
     home: String? = Self.home,
-    deadline: Duration = .seconds(30)
+    deadline: Duration = .seconds(30),
+    retryAfter: Duration = CoreSessionFiles.defaultRetryAfter
   ) -> CoreControl {
-    CoreControl(binaryPath: "hc", home: home, callDeadline: deadline, open: { _ in stream })
+    CoreControl(
+      binaryPath: "hc", home: home, callDeadline: deadline, directoryRetryAfter: retryAfter,
+      open: { _ in stream })
   }
 
   private func path(_ pid: Int) -> String {
@@ -286,7 +289,7 @@ struct CoreSessionFilesTests {
     #expect(try execs(stream).count == 1)
   }
 
-  @Test("an answer that failed is asked again on the next read")
+  @Test("a place that failed is asked again once the retry window has passed")
   func configDirectoryRetries() async throws {
     let stream = stream(claude("t1", pid: 101))
     stream.exec = answers([:])
@@ -294,7 +297,7 @@ struct CoreSessionFilesTests {
       path(101): record(pid: 101, id: "home"),
       "/cfg/sessions/101.json": record(pid: 101, id: "moved"),
     ]
-    let control = control(stream)
+    let control = control(stream, retryAfter: .zero)
     #expect(sessions(try await control.snapshot()) == ["core:t1": "home"])
 
     stream.exec = answers([nil: "/cfg"])

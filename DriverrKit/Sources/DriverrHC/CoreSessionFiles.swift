@@ -28,15 +28,23 @@ actor CoreSessionFiles {
   }
 
   private let home: String?
+  /// How long a place that did not answer is left alone before it is asked again.
+  private let retryAfter: Duration
   /// The last good id per address.
   private var remembered: [String: String] = [:]
   /// What each place said its configuration directory is, by machine, `nil` for the core's own
-  /// computer. A task, so two reads that land together share one question. Kept only once it
-  /// has an answer, so a place that did not answer is asked again at the next read.
+  /// computer. A task, so terminals on one place that read together share one question. Kept
+  /// only once it has an answer.
   private var directories: [String?: Task<String?, Never>] = [:]
+  /// When each place last failed to answer, so a place that is down is not asked at every read.
+  private var failures: [String?: ContinuousClock.Instant] = [:]
 
-  init(home: String?) {
+  /// The wait before a place that did not answer is asked again.
+  static let defaultRetryAfter: Duration = .seconds(60)
+
+  init(home: String?, retryAfter: Duration = CoreSessionFiles.defaultRetryAfter) {
     self.home = home
+    self.retryAfter = retryAfter
   }
 
   /// Each Claude terminal's session id, by address, after reading those in `addresses`.
@@ -46,26 +54,21 @@ actor CoreSessionFiles {
   /// guess. This also covers Claude running something in the foreground, when the pid is not
   /// Claude's. An id goes when its terminal leaves or stops being Claude, which `terminals`
   /// says, so it must be all of them.
+  ///
+  /// Each terminal's read waits for its own place's directory and for nothing else, so a place
+  /// that never answers holds up only its own terminals. The call returns when the last read
+  /// has, which is the connection's call deadline for a place that is silent.
   func identifiers(
     for terminals: [CoreTerminal],
     reading addresses: Set<String>,
     over connection: CoreConnection
   ) async -> [String: String] {
-    // A terminal here needs `home`, and one on a machine does not. See
-    // `params(of:pid:home:)`.
-    let claudes = terminals.filter {
-      CoreSnapshotMapper.isClaude($0) && ($0.machine != nil || home != nil)
-    }
-    // One question for each place, before the reads, so the reads run side by side as before.
-    let reading = claudes.filter { addresses.contains($0.address) }
-    var known: [String?: String] = [:]
-    for machine in Set(reading.map(\.machine)) {
-      known[machine] = await configDirectory(on: machine, over: connection)
-    }
+    let claudes = terminals.filter { CoreSnapshotMapper.isClaude($0) }
     let reads = await withTaskGroup(of: (String, String?).self) { group in
-      for terminal in reading {
-        group.addTask { [home, directory = known[terminal.machine]] in
-          (
+      for terminal in claudes where addresses.contains(terminal.address) {
+        group.addTask { [home] in
+          let directory = await self.configDirectory(on: terminal.machine, over: connection)
+          return (
             terminal.address,
             await Self.identifier(
               of: terminal, home: home, directory: directory, over: connection)
@@ -85,7 +88,8 @@ actor CoreSessionFiles {
 
   /// What `CLAUDE_CONFIG_DIR` makes of the configuration directory on this core's computer, or
   /// on `machine`, learned once from a `machine.exec` there. `nil` when the place did not say
-  /// an absolute directory, which leaves the record under `~/.claude`.
+  /// an absolute directory, which leaves the record under `~/.claude`. A place that did not is
+  /// not asked again for `retryAfter`.
   ///
   /// Asked of the place itself and not over Driverr's SSH channel, because a machine's shell is
   /// only reachable through the core and its variable is its own. The core's computer answers
@@ -95,17 +99,22 @@ actor CoreSessionFiles {
     -> String?
   {
     if let asking = directories[machine] { return await asking.value }
+    if let failed = failures[machine], ContinuousClock.now < failed + retryAfter { return nil }
     let asking = Task { await Self.askConfigDirectory(on: machine, over: connection) }
     directories[machine] = asking
     let directory = await asking.value
-    if directory == nil, directories[machine] == asking { directories[machine] = nil }
+    if directory != nil {
+      failures[machine] = nil
+    } else if directories[machine] == asking {
+      directories[machine] = nil
+      failures[machine] = .now
+    }
     return directory
   }
 
-  /// Bounded to what a record's own `file.read` gets, near enough, so a machine that does not
-  /// answer holds up the ids no longer than the read it replaces.
+  /// The core's own `timeout`, which ends the program on its computer. The call itself gives up
+  /// at the connection's deadline, as a record's `file.read` does.
   private static let askTimeout: Duration = .seconds(5)
-  private static let askDeadline: Duration = .seconds(8)
 
   private static func askConfigDirectory(
     on machine: String?, over connection: CoreConnection
@@ -116,8 +125,7 @@ actor CoreSessionFiles {
         params: CoreExecParams(
           line: configDirectoryCommand, on: machine,
           timeout: Double(askTimeout.components.seconds)),
-        as: CoreExecResult.self,
-        deadline: askDeadline),
+        as: CoreExecResult.self),
       let result = try? CoreControl.commandResult(of: answer, on: machine ?? "This host"),
       result.exitStatus == 0
     else { return nil }

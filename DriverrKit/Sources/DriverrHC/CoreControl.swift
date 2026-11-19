@@ -43,6 +43,22 @@ public struct CoreControl: HerdrControl {
     heartbeatTick: Duration = CoreControl.defaultHeartbeatTick,
     open: @escaping StreamRunner
   ) {
+    self.init(
+      binaryPath: binaryPath, home: home, callDeadline: callDeadline,
+      heartbeatTick: heartbeatTick, directoryRetryAfter: CoreSessionFiles.defaultRetryAfter,
+      open: open)
+  }
+
+  /// `directoryRetryAfter` is how long a place that did not name its configuration directory
+  /// is left alone before it is asked again. See `CoreSessionFiles`.
+  init(
+    binaryPath: String = "hc",
+    home: String? = nil,
+    callDeadline: Duration = CoreControl.defaultCallDeadline,
+    heartbeatTick: Duration = CoreControl.defaultHeartbeatTick,
+    directoryRetryAfter: Duration,
+    open: @escaping StreamRunner
+  ) {
     self.binaryPath = binaryPath
     self.home = home
     link = CoreLink(
@@ -51,7 +67,9 @@ public struct CoreControl: HerdrControl {
       open: open
     )
     feed = CoreEventFeed(
-      link: link, sessionFiles: CoreSessionFiles(home: home), heartbeatTick: heartbeatTick)
+      link: link,
+      sessionFiles: CoreSessionFiles(home: home, retryAfter: directoryRetryAfter),
+      heartbeatTick: heartbeatTick)
   }
 
   /// What the events have said, subscribing first if nothing is subscribed. See `CoreEventFeed`.
