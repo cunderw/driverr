@@ -352,10 +352,10 @@ extension PaneQuestionScreen {
   /// Claude Code's folder-trust dialog, or `nil`. The dialog's rows are `ClaudeTrustPrompt`'s.
   ///
   /// The dialog draws no numbers, and a digit does nothing on it. Measured on Claude Code
-  /// 2.1.328 under herdr 0.9.5 (#109): `Down` then `Enter` trusted the folder. So the
-  /// question carries the cursor's row (`PickerTab.cursor`), and each chip moves from there
-  /// and presses Enter. A dialog with no cursor on either option gives no keys and reads as
-  /// `nil`.
+  /// 2.1.328 under herdr 0.9.5 (#109): `Down` then `Enter` trusted the folder. So each chip
+  /// moves the cursor and presses Enter, with the arrows worked out from a read taken at the
+  /// tap (`cursorKeys(to:on:)`). A dialog with no cursor on either option reads as `nil`, and
+  /// the notice's Show the Screen is the way to answer it.
   ///
   /// The question is the dialog's first sentence, up to its `?`. The rest of the paragraph
   /// says to review the folder first.
@@ -377,10 +377,19 @@ extension PaneQuestionScreen {
     )
   }
 
-  /// The keys that move a picker's cursor to `option` and press Enter, from a fresh read of
-  /// the screen, or `nil` when the screen no longer shows the dialog or its cursor.
+  /// The keys that move the trust dialog's cursor to `option` and press Enter, worked out
+  /// from `screen`, a read taken right before the send. `nil` when that screen no longer
+  /// shows the dialog, or shows no cursor on either option, so nothing is sent.
+  ///
+  /// The chips are drawn from a read up to one watch tick old, and the cursor can move in the
+  /// terminal meanwhile. The dialog wraps at its ends, so arrows counted from a stale cursor
+  /// can land Enter on "No, exit".
   public static func cursorKeys(to option: Int, on screen: PaneScreen) -> [PaneKey]? {
-    ToolCall.moves(from: 1, to: option) + [.enter]  // STUB
+    guard let question = claudeTrust(in: screen.lines),
+      let cursor = question.pickerTab?.cursor,
+      question.optionNumbers.contains(option)
+    else { return nil }
+    return ToolCall.moves(from: cursor, to: option) + [.enter]
   }
 
   // MARK: - When to read the screen
@@ -472,8 +481,9 @@ public struct PickerTab: Hashable, Sendable {
   /// toggles, so the keys have to start from these.
   public let checked: [Int]
   /// The option under the cursor, by number, for a picker that takes no digits: Claude Code's
-  /// folder-trust dialog. A chip moves the cursor from here with the arrow keys and presses
-  /// Enter (`ToolCall.replyChipGroups`). `nil` where a digit answers.
+  /// folder-trust dialog. Its chips carry their option (`ReplyChip.Action.cursorTo(option:)`),
+  /// and the arrows come from a fresh read at the tap, not from this value. `nil` where a
+  /// digit answers.
   public let cursor: Int?
   /// Whether the agent records nothing when this picker is answered, so the picker leaving
   /// the screen is the only sign the answer landed. True for Codex's pickers: herdr keeps the
