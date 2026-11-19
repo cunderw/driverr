@@ -317,6 +317,9 @@ public struct CombinedControl: HerdrControl {
   }
 
   /// The TUI's focus and the first core id. With no TUI tree, the first side's focus.
+  ///
+  /// Every side's `MirrorClaim`s are kept on the result. Beside a TUI tree, the panes they claim
+  /// for its session are marked `isMirror`, which `SessionTree.hidingMirrors(keeping:)` reads.
   private func merged(
     _ tuiSide: TUISide,
     _ reads: [Result<SessionTree, any Error>]
