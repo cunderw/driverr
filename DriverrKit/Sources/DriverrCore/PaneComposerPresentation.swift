@@ -379,7 +379,7 @@ public enum PaneComposerCopy {
     "The pane still reports \(agent) as waiting."
   }
 
-  /// How long a send waits for herdr before it is called a failure.
+  /// How long a send waits for the host before it is called a failure.
   ///
   /// Without a deadline a stalled channel leaves the pane's only composer spinning with
   /// every key disabled and no Retry. Twelve seconds lets a slow link finish before a person

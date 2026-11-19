@@ -38,7 +38,7 @@ public enum AppError: Error, Hashable, Sendable, LocalizedError {
   ///
   /// A tmux pane, until the live tmux terminal lands. Its chat and its composer still work.
   case paneTerminalUnavailable
-  /// herdr ran and refused, or failed. Carries what herdr itself said.
+  /// herdr, herdr-core or tmux ran and refused, or failed. Carries what that program said.
   case herdrCommandFailed(reason: String)
   /// The host was reached and the SSH handshake completed, but the search for herdr and tmux
   /// never finished. The sentence names both, because the search has not yet said which.

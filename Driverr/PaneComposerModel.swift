@@ -197,7 +197,8 @@ final class PaneComposerModel: Identifiable {
   /// Runs a send, and gives up on it after `sendDeadline`.
   ///
   /// Nothing under `CLIControl` checks cancellation, so a send already on the wire may still
-  /// land. That is why the failure says herdr did not answer, not that the reply was not sent.
+  /// land. That is why the failure says the host did not answer, not that the reply was not
+  /// sent.
   ///
   /// **Not a task group.** A group waits for every child, so racing a hung send against a
   /// sleep in `withThrowingTaskGroup` waits out the hang. Instead the send runs as an

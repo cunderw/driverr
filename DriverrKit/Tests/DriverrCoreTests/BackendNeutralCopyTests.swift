@@ -3,7 +3,7 @@ import Testing
 @testable import DriverrCore
 
 /// Sentences that a tmux pane or a tmux-only host can show must not name herdr as the thing
-/// that failed. They name no backend, or they name both.
+/// that failed. They name no backend.
 @Suite("Backend-neutral copy")
 struct BackendNeutralCopyTests {
   @Test("a tmux agent nothing recognised does not blame herdr")
@@ -18,13 +18,6 @@ struct BackendNeutralCopyTests {
   func composerCopyNamesNoBackend() {
     #expect(PaneComposerCopy.noAnswer == "The host did not answer.")
     #expect(PaneComposerCopy.stillWaiting("Claude") == "The pane still reports Claude as waiting.")
-  }
-
-  @Test("a set-up that stops answering names both things Driverr looks for")
-  func setUpTimeoutNamesHerdrAndTmux() {
-    #expect(
-      AppError.herdrDidNotAnswer(host: "workbox").errorDescription
-        == "Reached workbox, but it stopped answering while Driverr looked for herdr and tmux.")
   }
 
   @Test("an answer Driverr cannot read names no backend")

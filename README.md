@@ -39,13 +39,15 @@ why they are identical on every run.*
   [Herdr desktop app](https://github.com/herdrdev/herdr-app), or more than one of them.
   Driverr finds what the host has when it connects, over the same SSH connection.
 - **tmux** — a host with tmux 3.2 or later lists its sessions, windows and panes beside
-  herdr's, and a tmux pane opens as a live terminal. A Claude Code or Codex pane in tmux
-  shows its chat, and a blocked one shows in Needs you. A pane that only mirrors herdr or
-  tmux on the same host shows once. For a tmux pane, Driverr reads Claude Code's session
-  record from `$CLAUDE_CONFIG_DIR`, or from `~/.claude` when that is not set. Driverr runs
-  its commands in a non-interactive shell, so a variable exported only in `.zshrc` or
-  `.bashrc` does not reach them. Set it where a non-interactive shell reads it, such as
-  `~/.zshenv`.
+  herdr's, and a tmux pane opens as a live terminal. Resizing the window to fit the phone
+  needs tmux 3.3 or later; on 3.2 the pane works, but the phone does not resize it. A
+  Claude Code or Codex pane in tmux shows its chat, and a blocked one shows in Needs you. A
+  tmux pane that runs the herdr TUI, or a herdr pane that runs tmux, shows once. For a tmux
+  pane, Driverr reads Claude Code's session record from `$CLAUDE_CONFIG_DIR`, or from
+  `~/.claude` when that is not set. Driverr runs its commands in a non-interactive shell,
+  so a variable exported only in an interactive shell's startup file may not reach them.
+  zsh reads only `~/.zshenv` there, so set it in that file. Many `~/.bashrc` files return
+  early when the shell is not interactive, so set it above that check.
 - **Keys and passwords** — generate or import an Ed25519 key, or use a password. Both live
   in the device Keychain.
 - **Host keys checked** — Driverr remembers a host's key on first contact and stops hard if
