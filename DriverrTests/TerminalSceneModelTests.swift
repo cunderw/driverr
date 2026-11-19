@@ -2974,6 +2974,17 @@ struct TerminalSceneModelTests {
     #expect(stream.keys(for: "%3") == Data("k".utf8))
   }
 
+  /// The observer's feed is built apart from the controller's, so it is checked apart.
+  @Test("a tmux pane's observer feed answers queries itself too")
+  func aTmuxObserverDropsTheEmulatorsReply() async throws {
+    let (scene, transport, _) = await tmuxScene()
+    _ = try await paintedTmuxPane(scene, transport)
+    scene.show(.chat)
+    await scene.settle()
+    try #require(scene.currentRole == .observer)
+    #expect(scene.currentSession?.answersQueries == true)
+  }
+
   @Test("the size the view measured sizes the tmux window before the paint")
   func theMeasuredSizeSizesTheTmuxWindow() async throws {
     let (scene, transport, stream) = await tmuxScene()

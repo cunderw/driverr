@@ -217,8 +217,10 @@ public final class TerminalSession {
   public var answersQueries: Bool { feed.answersQueries }
 
   /// The emulator's own answer to something the program wrote, such as a device attributes or
-  /// cursor position query, as opposed to what someone typed.
+  /// cursor position query, as opposed to what someone typed. Dropped when the far side
+  /// answers the program itself; see `TerminalFeed.answersQueries`.
   public func sendReply(_ bytes: ArraySlice<UInt8>) {
+    guard !feed.answersQueries else { return }
     send(bytes)
   }
 

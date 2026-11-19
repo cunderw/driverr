@@ -1573,7 +1573,8 @@ final class TerminalSceneModel {
         raw: raw,
         output: stream,
         send: { try await bridge.send(bytes: $0) },
-        resize: { try await bridge.resize(to: $0) }
+        resize: { try await bridge.resize(to: $0) },
+        answersQueries: Self.answersQueries(target)
       )
       return (feed, pump)
     }
@@ -1588,6 +1589,14 @@ final class TerminalSceneModel {
       click: { try await bridge.click($0) }
     )
     return (feed, pump)
+  }
+
+  /// Whether the far side answers the pane's terminal queries itself: tmux does, measured on
+  /// 3.7c and 3.2a (#128). Read from the id, so a wrapper such as `DeferredPaneBridge` cannot
+  /// hide it. See `TerminalFeed.answersQueries`.
+  private static func answersQueries(_ target: TerminalTarget) -> Bool {
+    if case .pane(let id) = target { return TmuxID.isTmux(id) }
+    return false
   }
 
   /// An observer's frames, with input held for the controller.
@@ -1665,7 +1674,8 @@ final class TerminalSceneModel {
         raw: raw,
         output: stream,
         send: send,
-        resize: { try await (observer as? any PaneBridge)?.resize(to: $0) }
+        resize: { try await (observer as? any PaneBridge)?.resize(to: $0) },
+        answersQueries: Self.answersQueries(target)
       )
       return (feed, pump)
     }

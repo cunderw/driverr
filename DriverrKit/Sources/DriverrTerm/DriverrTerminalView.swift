@@ -317,9 +317,19 @@
       // SwiftTerm's delegate is not main-actor annotated, but UIKit calls it on the main
       // thread. `assumeIsolated` avoids a `Task` hop, which could reorder input against
       // output. Each method captures the `Sendable` session instead of `self`.
+      //
+      // Bytes that arrive while the view is feeding are the emulator's answers to the
+      // program's output, such as a device attributes query. Keys, pastes and a tap's mouse
+      // report come from the user, outside a feed. See `DriverrTerminalUIView.isFeeding`.
       public func send(source: TerminalView, data: ArraySlice<UInt8>) {
         let session = session
-        MainActor.assumeIsolated { session.send(data) }
+        MainActor.assumeIsolated {
+          if (source as? DriverrTerminalUIView)?.isFeeding == true {
+            session.sendReply(data)
+          } else {
+            session.send(data)
+          }
+        }
       }
 
       public func sizeChanged(source: TerminalView, newCols: Int, newRows: Int) {
@@ -370,6 +380,10 @@
   /// SwiftTerm leaves `accessibilityValue` empty. This view computes it on demand from
   /// the visible rows, for VoiceOver and the UI suite.
   public final class DriverrTerminalUIView: TerminalView {
+    /// `true` while `feedKeepingScrollGeometry(_:)` hands the far side's bytes to SwiftTerm.
+    /// Whatever SwiftTerm sends then answers those bytes.
+    private(set) var isFeeding = false
+
     fileprivate static let logger = Logger(subsystem: "com.cunderw.driverr", category: "keyboard")
 
     /// Bounded, cancellable, and tested one tier down. See `FocusRetryPolicy`.
@@ -421,9 +435,15 @@
     /// Feeds the far side's bytes to the emulator, then puts the scroll view back on the
     /// buffer if the bytes cut the buffer out from under it. The session's sink calls this,
     /// never `feed(byteArray:)` directly.
+    ///
+    /// SwiftTerm parses the bytes inside `feed(byteArray:)`, and answers a query there, through
+    /// the same delegate call that carries keys. `isFeeding` is how the coordinator tells the
+    /// two apart.
     func feedKeepingScrollGeometry(_ bytes: ArraySlice<UInt8>) {
       let heldBefore = scrollViewRowsExist()
+      isFeeding = true
       feed(byteArray: bytes)
+      isFeeding = false
       // SwiftTerm's `ESC[3J` (erase scrollback, which `clear` sends) trims the buffer's
       // lines and moves `yDisp`, and tells the view nothing. Nothing else in `clear` scrolls,
       // so `updateScroller` never runs. The scroll view keeps the old content height and

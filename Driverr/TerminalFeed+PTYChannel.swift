@@ -43,7 +43,10 @@ extension TerminalFeed {
 /// The other way round from a bridge pane: the bytes are the program's own, so the emulator
 /// knows the program's modes, a drag goes by `TerminalDragRoute`, and `TerminalMouseClick`
 /// encodes a tap locally. A feed with no `scroll` or `click` is what says so. What it adds is
-/// the two things a core asks of a viewer.
+/// the two things a core asks of a viewer. A tmux pane is fed the same way.
+///
+/// `answersQueries` is `true` for a tmux pane, whose own emulator answers the program's
+/// terminal queries. See `TerminalFeed.answersQueries`.
 extension TerminalFeed {
   init(
     raw: any RawTerminalStream,
@@ -61,7 +64,8 @@ extension TerminalFeed {
       focus: { try await raw.focus($0) },
       consumed: { raw.consumed($0) },
       leftAlternateScreen: { raw.leftAlternateScreen() },
-      awaitsFirstSize: true
+      awaitsFirstSize: true,
+      answersQueries: answersQueries
     )
   }
 }
