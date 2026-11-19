@@ -7,8 +7,9 @@
 /// `posix(_:)` sends the whole script as one `sh -c` word, quoted by
 /// `HookInstallCommands.loginShellQuoted`. bash, zsh, dash and fish all read that word back
 /// as the exact script, and `sh` then reads the script with POSIX rules. Every command
-/// Driverr writes goes through it. The Run box on the host screen does not: the user types
-/// that command for their own shell.
+/// Driverr writes reaches the login shell in this form: through this function, or through a
+/// builder that applies the same quoting itself, such as `HookInstallCommands`. The Run box
+/// on the host screen does not: the user types that command for their own shell.
 public enum LoginShell {
   /// `script` as a command that any supported login shell hands to `sh` unchanged.
   public static func posix(_ script: String) -> String {
