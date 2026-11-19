@@ -309,7 +309,8 @@ final class SessionModel {
   /// `created` event. `terminalArrivalLimit` bounds it. A terminal later than that opens nothing:
   /// the row it gets is the answer, and a scene that opened by itself would take over the screen.
   func startTerminal() async -> String? {
-    guard terminalStart != .starting else { return nil }
+    // An agent start's wait holds the one slot. See `startAgent(_:)`.
+    guard terminalStart != .starting, !isStartingAgent else { return nil }
     terminalStart = .starting
     do {
       let id = try await control.startTerminal()
@@ -349,7 +350,29 @@ final class SessionModel {
   ///   A start while another start is out throws without asking the host, because the wait
   ///   holds one pane at a time.
   func startAgent(_ launch: AgentLaunch) async throws -> String {
-    ""
+    guard !isStartingAgent, terminalStart != .starting else {
+      throw AppError.herdrCommandFailed(reason: "Another start is still running on this host.")
+    }
+    isStartingAgent = true
+    defer { isStartingAgent = false }
+
+    let id: String
+    do {
+      id = try await control.startAgent(launch)
+    } catch AppError.agentDidNotStart(let paneID, let place, let reason) {
+      await arrival(of: paneID)
+      throw AppError.agentDidNotStart(paneID: paneID, place: place, reason: reason)
+    } catch let error as AppError {
+      throw error
+    } catch {
+      throw AppError.herdrCommandFailed(reason: "The host could not be reached.")
+    }
+    await arrival(of: id)
+    guard reportedTree.pane(id: id) != nil else {
+      throw AppError.herdrCommandFailed(
+        reason: "The agent started, but the session has not listed its pane yet. It will show on the host screen.")
+    }
+    return id
   }
 
   /// Returns when `id` is in `reportedTree` or the limit has passed. `load` does the waking.

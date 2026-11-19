@@ -54,19 +54,38 @@ final class NewAgentModel {
   var isStarting: Bool { phase == .starting }
 
   /// Whether Start can be tapped now.
-  var canStart: Bool { false }
+  var canStart: Bool { form.canStart && !isStarting }
 
   /// Starts the agent the form describes, then opens its pane. A failure stays on the sheet.
-  func startAgent() async {}
+  func startAgent() async {
+    guard canStart, let launch = form.launch else { return }
+    phase = .starting
+    do {
+      let id = try await start(launch)
+      phase = .editing
+      open(id)
+    } catch let error as AppError {
+      phase = .failed(error)
+    } catch {
+      phase = .failed(.herdrCommandFailed(reason: "The agent could not be started."))
+    }
+  }
 
   /// The pane a start opened and the agent did not come up in, which the sheet offers to open.
-  var paneLeftOpen: (id: String, place: String)? { nil }
+  var paneLeftOpen: (id: String, place: String)? {
+    guard case .failed(.agentDidNotStart(let id, let place, _)) = phase else { return nil }
+    return (id, place)
+  }
 
   /// Opens `paneLeftOpen`.
-  func openPaneLeftOpen() {}
+  func openPaneLeftOpen() {
+    if let paneLeftOpen { open(paneLeftOpen.id) }
+  }
 
   /// A folder picked in the browser or from the recent list.
-  func use(folder: String) {}
+  func use(folder: String) {
+    form.directory = folder
+  }
 }
 
 /// One folder's listing, for the browser inside the New Agent sheet.
@@ -93,7 +112,23 @@ final class FolderBrowserModel {
   }
 
   /// Lists the folder, once. A listing the screen cancelled by leaving is asked again on return.
-  func load() async {}
+  func load() async {
+    if case .loaded = state { return }
+    guard let run = runner() else {
+      state = .failed(.notConnected(host: hostName))
+      return
+    }
+    state = .loading
+    do {
+      let listing = try await DirectoryListing.read(path, run: run)
+      state = .loaded(listing)
+    } catch {
+      // Left by a push or a pop before the answer: the next appearance asks again.
+      if Task.isCancelled { return }
+      state = .failed(
+        (error as? AppError) ?? .herdrCommandFailed(reason: "The folder could not be read."))
+    }
+  }
 }
 
 /// A folder to browse, pushed on the sheet's own stack.
