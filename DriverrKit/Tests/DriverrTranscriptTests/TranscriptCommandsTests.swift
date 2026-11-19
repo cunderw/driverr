@@ -472,6 +472,22 @@ struct ResultSelectorTests {
 struct EmptyGlobCommandTests {
   static let shells = ["/bin/zsh", "/bin/sh", "/bin/bash", "/bin/dash"]
 
+  /// What `Scratch.run` returns: a `CommandResult`'s three fields, and how the shell ended.
+  /// `exitStatus` alone reads 0 for a normal exit and the signal number for a killed
+  /// process, so a failure message needs the reason beside it (#106).
+  private struct ScratchResult {
+    let standardOutput: String
+    let standardError: String
+    let exitStatus: Int
+    let terminationReason: Process.TerminationReason
+
+    /// "exit" or "uncaught signal", with the status, for an `#expect` comment.
+    var ending: String {
+      let reason = terminationReason == .exit ? "exit" : "uncaught signal"
+      return "\(reason) \(exitStatus)"
+    }
+  }
+
   private struct Scratch {
     let home = FileManager.default.temporaryDirectory
       .appendingPathComponent("driverr-transcript-\(UUID().uuidString)")
@@ -494,7 +510,7 @@ struct EmptyGlobCommandTests {
     /// Runs a command as the exec channel hands it to a login shell.
     func run(
       _ command: String, shell: String, environment: [String: String] = [:]
-    ) async throws -> CommandResult {
+    ) async throws -> ScratchResult {
       let process = Process()
       process.executableURL = URL(fileURLWithPath: shell)
       process.arguments = ["-c", command]
@@ -506,14 +522,18 @@ struct EmptyGlobCommandTests {
       process.standardError = error
       // Waits on the termination handler rather than `waitUntilExit()`, so no cooperative
       // thread blocks (CLAUDE.md, "Never block a cooperative thread in a Kit test").
-      let status: Int32 = try await withCheckedThrowingContinuation { continuation in
-        process.terminationHandler = { continuation.resume(returning: $0.terminationStatus) }
-        do { try process.run() } catch { continuation.resume(throwing: error) }
-      }
-      return CommandResult(
+      let (status, reason): (Int32, Process.TerminationReason) =
+        try await withCheckedThrowingContinuation { continuation in
+          process.terminationHandler = {
+            continuation.resume(returning: ($0.terminationStatus, $0.terminationReason))
+          }
+          do { try process.run() } catch { continuation.resume(throwing: error) }
+        }
+      return ScratchResult(
         standardOutput: String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self),
         standardError: String(decoding: error.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self),
-        exitStatus: Int(status)
+        exitStatus: Int(status),
+        terminationReason: reason
       )
     }
   }
@@ -757,10 +777,17 @@ struct EmptyGlobCommandTests {
     #expect(result.exitStatus == 0)
     #expect(result.standardError == "")
     let list = TranscriptReader.subagentList(from: result.standardOutput, readAt: Date())
-    #expect(list.total == count + 1)
-    #expect(list.summaries.count == TranscriptCommands.subagentListLimit)
+    // A failure here once read "0 rows, total 53" with exit 0 and empty stderr, and nobody
+    // kept the output (#106). The comment keeps it, and how the shell ended, for next time.
+    let capture: Comment = """
+      \(shell): \(result.ending), \(list.summaries.count) rows, total \(list.total)
+      stdout: \(result.standardOutput)
+      stderr: \(result.standardError)
+      """
+    #expect(list.total == count + 1, capture)
+    #expect(list.summaries.count == TranscriptCommands.subagentListLimit, capture)
     let ids = list.summaries.map(\.id)
-    #expect(ids.first == "anostamp")
+    #expect(ids.first == "anostamp", capture)
     #expect(Array(ids.dropFirst().prefix(2)) == ["a51", "a50"])
     #expect(!ids.contains("a00"), "the oldest spawn, with the newest meta, is past the cap")
     #expect(!ids.contains("a02"))
