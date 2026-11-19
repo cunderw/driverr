@@ -157,6 +157,30 @@ struct PaneComposerModelTests {
     #expect(model.state.phase == .editing)
   }
 
+  /// Claude Code's folder-trust prompt picks "No, exit" on Enter, and a submit is text and
+  /// Enter (#122). The send itself refuses, not only the button.
+  @Test("a held composer sends nothing and keeps the text, and sends it once the hold ends")
+  func heldSendsNothing() async {
+    let control = FakeControl()
+    let model = composer(control)
+    model.text = "yes"
+    model.hold = PaneComposerHold.reason(
+      agentStatus: .blocked, absence: .noSessionFiles(directory: "/home/x/project"))
+    #expect(model.hold == .agentAsksOnScreen)
+
+    #expect(!model.canSend)
+    await model.send()
+    await model.send(text: "continue")
+
+    #expect(await control.sent.isEmpty)
+    #expect(model.text == "yes")
+    #expect(model.state.phase == .editing)
+
+    model.hold = nil
+    await model.send()
+    #expect(await control.sent == [.submit(paneID: "w1:p2", text: "yes")])
+  }
+
   // MARK: - Several questions in one call
 
   /// Driven through the pieces the screen uses: the notice a blocked `AskUserQuestion`

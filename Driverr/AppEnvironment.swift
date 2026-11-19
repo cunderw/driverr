@@ -857,8 +857,16 @@ struct AppEnvironment {
   /// The agent reports no `agent_session` and the directory holds no session file, so the chat
   /// shows `.noSessionFiles`. The first reply brings both into existence, as with a real agent,
   /// which writes the file before herdr reports the session.
+  ///
+  /// The agent is idle, at its own prompt. `-uiTestingTrustPrompt` serves the same pane
+  /// blocked, as on Claude Code's folder-trust prompt, where the composer holds its send.
   static var isFirstMessage: Bool {
-    ProcessInfo.processInfo.arguments.contains("-uiTestingFirstMessage")
+    ProcessInfo.processInfo.arguments.contains("-uiTestingFirstMessage") || isTrustPrompt
+  }
+
+  /// Whether this launch serves `isFirstMessage`'s pane blocked on its trust prompt.
+  static var isTrustPrompt: Bool {
+    ProcessInfo.processInfo.arguments.contains("-uiTestingTrustPrompt")
   }
 
   /// The herdr fake this launch uses, held here so the transcript runner can see what was
@@ -867,7 +875,9 @@ struct AppEnvironment {
   ///
   /// One instance for every host, never reset within a process. That holds for every launch
   /// using the flag: one seeded host, a fresh process per test.
-  static let firstMessageControl = FakeControl(tree: FakeControl.treeWithUnstartedAgent)
+  static let firstMessageControl = FakeControl(
+    tree: isTrustPrompt
+      ? FakeControl.treeWithUnstartedAgent : FakeControl.treeWithUnstartedIdleAgent)
 
   /// Whether this launch serves a pane whose agent has named a new session with no file yet.
   ///

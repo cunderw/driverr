@@ -1298,10 +1298,11 @@ struct TranscriptPresentationTests {
     #expect(notice.symbolName == "exclamationmark.triangle")
   }
 
-  /// A working or finished agent has had its prompt and gets the fault. Every other status
-  /// keeps the wait: a new Claude on its trust prompt reports blocked before any prompt
-  /// (`FakeControl.treeWithUnstartedAgent`). `noSessionFiles` is included because a reported
-  /// id in an empty directory lands there. Both keep the retry.
+  /// A working or finished agent has had its prompt and gets the fault. A blocked one is a new
+  /// Claude on its trust prompt (`FakeControl.treeWithUnstartedAgent`) and is sent to the
+  /// screen; see `aBlockedAgentWithNoFileIsSentToTheScreen`. Every other status keeps the
+  /// wait. `noSessionFiles` is included because a reported id in an empty directory lands
+  /// there. The fault and the wait keep the retry.
   @Test(
     "a missing file is a fault once the agent has had its prompt, and a wait before",
     arguments: [AgentStatus?.none] + AgentStatus.allCases.map { $0 },
@@ -1311,6 +1312,11 @@ struct TranscriptPresentationTests {
     ])
   func aMissingFileFollowsTheAgentStatus(status: AgentStatus?, absence: TranscriptAbsence) {
     let notice = TranscriptNotice(absence: absence, agentStatus: status)
+    if status == .blocked {
+      #expect(notice.title == "Waiting on its screen")
+      #expect(!notice.offersRetry)
+      return
+    }
     let prompted: Bool
     switch status {
     case .working, .done: prompted = true

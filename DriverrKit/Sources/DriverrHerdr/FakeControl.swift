@@ -1038,20 +1038,31 @@ public actor FakeControl: HerdrControl {
   /// `seededTree` with `w1:p2`'s Claude never yet spoken to, with no `agent_session`.
   ///
   /// Its chat resolves `.noSessionFiles`. The pane stays blocked, as a new Claude on its
-  /// trust prompt reports.
-  public static let treeWithUnstartedAgent: SessionTree = mapPanes(seededTree) { pane in
-    guard pane.id == "w1:p2", let agent = pane.agent else { return pane }
-    return Pane(
-      id: pane.id,
-      tabID: pane.tabID,
-      workspaceID: pane.workspaceID,
-      title: pane.title,
-      agent: Agent(name: agent.name, kind: agent.kind, status: agent.status, session: nil),
-      terminalID: pane.terminalID,
-      directory: pane.directory,
-      isFocused: pane.isFocused,
-      viewportRows: pane.viewportRows
-    )
+  /// trust prompt reports, so the composer holds its send (`PaneComposerHold`).
+  public static let treeWithUnstartedAgent = unstartedAgent(status: nil)
+
+  /// `treeWithUnstartedAgent` with the agent idle: a new Claude past its trust prompt, at its
+  /// own prompt with no file yet. The first message starts the conversation.
+  public static let treeWithUnstartedIdleAgent = unstartedAgent(status: .idle)
+
+  /// `seededTree` with `w1:p2`'s agent stripped of its session, and given `status`, or its
+  /// own status for `nil`.
+  private static func unstartedAgent(status: AgentStatus?) -> SessionTree {
+    mapPanes(seededTree) { pane in
+      guard pane.id == "w1:p2", let agent = pane.agent else { return pane }
+      return Pane(
+        id: pane.id,
+        tabID: pane.tabID,
+        workspaceID: pane.workspaceID,
+        title: pane.title,
+        agent: Agent(
+          name: agent.name, kind: agent.kind, status: status ?? agent.status, session: nil),
+        terminalID: pane.terminalID,
+        directory: pane.directory,
+        isFocused: pane.isFocused,
+        viewportRows: pane.viewportRows
+      )
+    }
   }
 
   /// `seededTree` with `w1:p2`'s Claude reporting a new session whose file is not written

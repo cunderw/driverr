@@ -513,6 +513,15 @@ struct TerminalScreen: View {
     return model.composers?.model(for: pane)
   }
 
+  /// Whether the composer may send typed text, from the pane's status and why its chat has
+  /// no transcript. See `PaneComposerHold`.
+  private var composerHold: PaneComposerHold? {
+    guard let pane = scene.currentPane else { return nil }
+    var absence: TranscriptAbsence?
+    if case .unavailable(.absent(let reason)) = chatModel?.state { absence = reason }
+    return PaneComposerHold.reason(agentStatus: pane.agent?.status, absence: absence)
+  }
+
   /// The reply surface, under either chat-side surface. Here, not in `PaneChatView`, so it
   /// sits under the captured screen too.
   ///
@@ -563,7 +572,8 @@ struct TerminalScreen: View {
         modeControl: PaneModeControl(
           pane: pane,
           deliversShiftTab: model.herdrAvailability?.deliversShiftTab(toPane: pane.id) == true),
-        savedPrompts: savedPrompts
+        savedPrompts: savedPrompts,
+        hold: composerHold
       )
     }
   }

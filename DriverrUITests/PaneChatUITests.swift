@@ -1602,7 +1602,8 @@ final class PaneChatUITests: XCTestCase {
   /// The no-session-file notice invites a send, and the send carries the chat to `.ready`.
   ///
   /// `-uiTestingFirstMessage` gives `w1:p2`'s Claude no `agent_session` and an empty project
-  /// directory, so the pane resolves `.noSessionFiles` on arrival.
+  /// directory, so the pane resolves `.noSessionFiles` on arrival. The agent is idle, at its
+  /// own prompt.
   func testSendingTheFirstMessageAnswersTheNoSessionFileNotice() {
     XCUIDevice.shared.orientation = .portrait
     let app = connectedHostApp(["-uiTestingFirstMessage"])
@@ -1624,6 +1625,35 @@ final class PaneChatUITests: XCTestCase {
       timeout: 15
     )
     requireGone(app, "pane.chat.notice", "The notice must not survive the first reply")
+  }
+
+  /// The same pane blocked, as Claude Code is on its folder-trust prompt, whose Enter picks
+  /// "No, exit" (#122). The notice sends the reader to the screen, and the composer keeps the
+  /// typed text with Send off. A UI test because the hold is wired from the pane screen's
+  /// chat state into the bar; `PaneComposerHoldTests` and `PaneComposerModelTests` cover the
+  /// rule and the refusal.
+  func testATrustPromptHoldsTheComposerAndPointsToTheScreen() {
+    XCUIDevice.shared.orientation = .portrait
+    let app = connectedHostApp(["-uiTestingTrustPrompt"])
+    require(app, "session.workspace", "Expected the session tree")
+
+    tapPane(app, titled: "needs a decision")
+
+    let notice = require(app, "pane.chat.notice", "Expected the trust-prompt notice")
+    XCTAssertTrue(
+      notice.label.contains("It is asking something on its screen"),
+      "The notice must send the reader to the screen, got '\(notice.label)'"
+    )
+    XCTAssertFalse(notice.label.contains("Send a message below"), "got '\(notice.label)'")
+    require(app, "pane.chat.showScreen", "Expected the way to the screen")
+    require(app, "composer.hold", "Expected the composer to say why Send is off")
+
+    let field = require(app, "composer.text", "Expected the composer under the notice")
+    field.tap()
+    app.typeText("yes")
+    let send = require(app, "composer.send", "Expected the send button")
+    XCTAssertFalse(send.isEnabled, "Send must stay off while the agent asks on its screen")
+    XCTAssertEqual(field.value as? String, "yes", "The typed text must stay")
   }
 
   // MARK: - The chat keeps looking
