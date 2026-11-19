@@ -41,8 +41,8 @@ why they are identical on every run.*
 - **tmux** — a host with tmux 3.2 or later lists its sessions, windows and panes beside
   herdr's, and a tmux pane opens as a live terminal. While the pane is open, the phone resizes
   its window to fit, and puts the old size back when you leave. On tmux 3.2, a dropped
-  connection leaves the window at the phone's size until you run `tmux set -wu window-size`
-  in it, or open and leave a pane in it from Driverr again. Text and keys that Driverr sends
+  connection leaves the window at the phone's size until you open and leave a pane in that
+  window from Driverr again, or run `tmux set -wu window-size` in that window. Text and keys that Driverr sends
   to a tmux pane first take it out of copy mode, so a desk scrolling that pane loses its
   place. A
   Claude Code or Codex pane in tmux shows its chat, and a blocked one shows in Needs you. A

@@ -618,6 +618,57 @@
       }
     }
 
+    /// The premise of dropping the emulator's own replies on a tmux pane (#128): tmux answers a
+    /// pane program's device attributes and cursor position queries itself, once each, while a
+    /// control client is attached and hears the queries too.
+    @Test("tmux answers a pane's DA and CPR queries once each, with a control client attached")
+    func tmuxAnswersQueriesOnce() async throws {
+      try await withLiveServer { control, tmux in
+        let directory = try LocalShell.temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let script = directory.appendingPathComponent("query.py")
+        let answers = directory.appendingPathComponent("answers")
+        try """
+          import os, select, sys, termios, time, tty
+          fd = sys.stdin.fileno()
+          tty.setraw(fd)
+          time.sleep(1)
+          os.write(1, b"\\x1b[c\\x1b[6n")
+          got = b""
+          end = time.time() + 2
+          while time.time() < end:
+              if select.select([fd], [], [], 0.1)[0]:
+                  got += os.read(fd, 1024)
+          open(sys.argv[1], "wb").write(got)
+          time.sleep(60)
+          """.write(to: script, atomically: true, encoding: .utf8)
+
+        let bridge = try await attacher(control).open(terminalID: "tmux:%1", size: Self.phone)
+        let collected = Collector(bridge.output)
+        #expect(await collected.eventually { $0.text.contains("\u{1B}[") }, "the first paint")
+        _ = try await tmux(
+          "respawn-pane -k -t %1 \(shellQuoted("python3 \(script.path) \(answers.path)"))")
+
+        #expect(
+          await collected.eventually(10) { $0.text.contains("\u{1B}[c\u{1B}[6n") },
+          "the control client heard the queries")
+        var read = Data()
+        for _ in 0..<100 {
+          if let data = FileManager.default.contents(atPath: answers.path) {
+            read = data
+            break
+          }
+          try await Task.sleep(for: .milliseconds(50))
+        }
+        let text = String(decoding: read, as: UTF8.self)
+        let deviceAttributes = text.components(separatedBy: "\u{1B}[?").count - 1
+        let cursorPositions = text.filter { $0 == "R" }.count
+        #expect(deviceAttributes == 1, "read: \(text.debugDescription)")
+        #expect(cursorPositions == 1, "read: \(text.debugDescription)")
+        await bridge.release()
+      }
+    }
+
     @Test("a counting pane's numbers arrive once each and in order, across the paint")
     func ordering() async throws {
       try await withLiveServer { control, tmux in

@@ -18,5 +18,6 @@ public enum TmuxResizeCopy {
     "While a tmux pane is open, Driverr resizes its tmux window to fit this screen, and puts "
     + "the old size back when you leave. Turn this off to keep the window at the computer's "
     + "size, so a wider pane wraps on this screen. On tmux 3.2, if the connection drops, the "
-    + "window keeps this screen's size until you run \"tmux set -wu window-size\" in it."
+    + "window keeps this screen's size until you open and leave a pane in that window again, "
+    + "or run \"tmux set -wu window-size\" in that window."
 }

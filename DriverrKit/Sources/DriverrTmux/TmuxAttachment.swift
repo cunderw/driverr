@@ -411,8 +411,9 @@ final class TmuxSessionClient: @unchecked Sendable {
       history: attachment.paintsHistory ? TmuxPaint.historyLines : 0, clearing: true)
   }
 
-  /// Sizes `window` to `size` for `attachment`, unless tmux has said it cannot, and waits for
-  /// tmux's answer.
+  /// Sizes `window` to `size` for `attachment`, as this tmux takes a size, and waits until the
+  /// size is settled: tmux's answer, or after a 3.3 line tmux refused, the `resize-window` that
+  /// replaces it.
   ///
   /// **The first size reads the window's own size in the same line**, so it is read before any
   /// size from here lands, and the choice of line is made under the lock that orders the writes.
