@@ -383,25 +383,38 @@
       }
     }
 
-    /// The attach line's client size holds the whole session's windows before 3.3. Under
-    /// `window-size smallest` with a desk, 3.2a held `@0` at 150x44 when the desk grew unless
-    /// `@W:` went first. On 3.7c it still does, with or without it: the limit `TmuxAttacher`'s
-    /// comment records.
-    @Test("under window-size smallest, a desk that grows keeps its window only before 3.3")
-    func attachLineUnderSmallest() async throws {
+    /// A desk that grows to 200x51 and then shrinks to 120x31, viewing `@0`, while the phone
+    /// sizes `@1`, under each `window-size`.
+    ///
+    /// Before 3.3 the attach line's client size would hold every window in the session, so 3.2a
+    /// gets `@W:` first and skips it, and the desk is in charge in every mode. On 3.3 and later the
+    /// client size is the current window's, which holds `@0` when the desk grows past it under
+    /// `smallest` and shrinks past it under `largest`: the limit `TmuxAttacher`'s comment records.
+    /// `latest` follows the desk.
+    @Test(
+      "a desk that grows and shrinks keeps its window, except where the client size holds it",
+      arguments: ["latest", "smallest", "largest"])
+    func deskResizesUnderEachWindowSize(mode: String) async throws {
       try await withLiveServer { control, tmux in
         let sized = try await sizesOneWindow(tmux)
-        _ = try await tmux("set-option -g window-size smallest")
+        _ = try await tmux("set-option -g window-size \(mode)")
         let desk = try await Desk(
           binaryPath: control.binaryPath, target: "probe", columns: 150, rows: 45, tmux: tmux)
         defer { Task { await desk.close() } }
         let bridge = try await attacher(control).open(terminalID: "tmux:%1", size: Self.phone)
         let collected = Collector(bridge.output)
-        try await desk.resize(columns: 200, rows: 51)
-        let expected = sized ? "@0:150x44 @1:60x20" : "@0:200x50 @1:150x44"
-        let grown = try await sizes(tmux, settlingAt: expected)
-        #expect(grown == expected)
         #expect(await collected.eventually { $0.text.contains("\u{1B}[") }, "the pane opened")
+        let phone = sized ? "@1:60x20" : "@1:150x44"
+
+        try await desk.resize(columns: 200, rows: 51)
+        let grownDesk = sized && mode == "smallest" ? "@0:150x44" : "@0:200x50"
+        let grown = try await sizes(tmux, settlingAt: "\(grownDesk) \(phone)")
+        #expect(grown == "\(grownDesk) \(phone)", "grown under \(mode)")
+
+        try await desk.resize(columns: 120, rows: 31)
+        let shrunkDesk = sized && mode == "largest" ? "@0:150x44" : "@0:120x30"
+        let shrunk = try await sizes(tmux, settlingAt: "\(shrunkDesk) \(phone)")
+        #expect(shrunk == "\(shrunkDesk) \(phone)", "shrunk under \(mode)")
         await bridge.release()
       }
     }
