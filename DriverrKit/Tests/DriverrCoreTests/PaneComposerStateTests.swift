@@ -970,6 +970,50 @@ struct ReplyChipSelectionTests {
   }
 }
 
+/// Which verdicts are a key's own notice, which the foot of a working pane keeps beside
+/// "Claude is working." rather than in its place.
+@Suite("PaneComposerStatus.isKeyNotice")
+struct PaneComposerStatusKeyNoticeTests {
+  private func status(after attempt: (inout PaneComposerState) -> Void) -> PaneComposerStatus? {
+    var state = PaneComposerState()
+    attempt(&state)
+    state.succeeded(at: Date(timeIntervalSince1970: 0))
+    return state.status(asOf: Date(timeIntervalSince1970: 1))
+  }
+
+  @Test("a named key's verdict is a key notice", arguments: [
+    PaneKey.backTab, .esc, .tab, .up, .down, .left, .right, .yes, .no,
+  ])
+  func namedKeys(key: PaneKey) throws {
+    let sent = try #require(status { _ = $0.beginSending(key) })
+    #expect(sent.isKeyNotice, "\(key)")
+  }
+
+  /// A reply waits on the agent, and Ctrl-C says the agent stopped. Neither sits beside
+  /// "Claude is working."
+  @Test("a reply, Enter, a digit and Ctrl-C are not")
+  func repliesAndInterrupt() throws {
+    var text = PaneComposerState()
+    text.text = "yes"
+    _ = text.beginSending()
+    text.succeeded(at: Date(timeIntervalSince1970: 0))
+    #expect(text.status(asOf: Date(timeIntervalSince1970: 1))?.isKeyNotice == false)
+    for key in [PaneKey.enter, .digit1, .interrupt] {
+      let sent = try #require(status { _ = $0.beginSending(key) })
+      #expect(!sent.isKeyNotice, "\(key)")
+    }
+  }
+
+  @Test("sending and failing are not notices")
+  func inFlightAndFailed() {
+    var state = PaneComposerState()
+    _ = state.beginSending(.backTab)
+    #expect(state.status(asOf: Date())?.isKeyNotice == false)
+    state.failed(.herdrCommandFailed(reason: "no such pane"))
+    #expect(state.status(asOf: Date())?.isKeyNotice == false)
+  }
+}
+
 /// What a successful send says, per what was sent.
 @Suite("PaneComposerCopy.sentVerdict")
 struct PaneComposerCopySentVerdictTests {
@@ -997,6 +1041,7 @@ struct PaneComposerCopySentVerdictTests {
     #expect(PaneComposerCopy.sentVerdict(for: .up) == "Sent Up")
     #expect(PaneComposerCopy.sentVerdict(for: .down) == "Sent Down")
     #expect(PaneComposerCopy.sentVerdict(for: .tab) == "Sent Tab")
+    #expect(PaneComposerCopy.sentVerdict(for: .backTab) == "Sent Shift-Tab")
     #expect(PaneComposerCopy.sentVerdict(for: .yes) == "Sent y")
     #expect(PaneComposerCopy.sentVerdict(for: .no) == "Sent n")
   }

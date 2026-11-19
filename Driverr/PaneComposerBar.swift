@@ -8,11 +8,12 @@ import UIKit
 /// answers, including under a captured screen with no transcript. `PanePromptBar` has the
 /// same shape.
 ///
-/// At rest, with nothing typed, it is a one-row pill: Attach, the field, Stop as a glyph while
-/// the agent works, and Send. Focused or holding a draft it is the card, the field over its
-/// controls. See `shape`. There are no terminal keys: a pending question is answered
-/// by chips under its turn (`ReplyChipRow`), an interrupt is Stop, which shows only while the
-/// agent is working, and Escape and the arrows are on the Terminal side. With no accessory
+/// At rest, with nothing typed, it is a one-row pill: Attach, the field, Shift-Tab for a
+/// Claude Code pane, Stop as a glyph while the agent works, and Send. Focused or holding a
+/// draft it is the card, the field over its controls. See `shape`. There are no terminal
+/// keys: a pending question is answered by chips under its turn (`ReplyChipRow`), an
+/// interrupt is Stop, which shows only while the agent is working, Shift-Tab is its own
+/// button, and Escape and the arrows are on the Terminal side. With no accessory
 /// row, the keyboard's end frame is the safe area and iOS's own avoidance is correct.
 ///
 /// The words come from `DriverrCore` (`PaneComposerHeader`, `PaneComposerStatus`,
@@ -154,6 +155,10 @@ struct PaneComposerBar: View {
   /// A closure, not a picker here; see `ComposerPhotosPicker` and `ComposerFileImporter`.
   /// `nil` hides the button.
   var onAttach: ((AttachmentSource) -> Void)?
+
+  /// The Shift-Tab button, which cycles Claude Code's mode. `.hidden` draws nothing. The rule
+  /// is `PaneModeControl`, in `DriverrCore`.
+  var modeControl: PaneModeControl = .hidden
 
   var body: some View {
     withSlashKeyHandling(barContent)
@@ -679,19 +684,31 @@ struct PaneComposerBar: View {
       // No spacer while collapsed, or it would strand Attach in the middle of the card. The
       // controls hug the trailing edge in every shape.
       if shape == .card { Spacer(minLength: 0) }
+      if modeControl != .hidden { modeButton(in: shape) }
       // Stop exists only while something is running.
       if header.isWorking && !isConfirmingInterrupt {
-        if shape == .pill { stopGlyphButton } else { stopButton }
+        // The capsule only where its word fits on one line. At the largest text sizes, beside
+        // Attach, Shift-Tab and Send, it wrapped to "Sto" over "p"; there the glyph stands in.
+        if shape == .pill {
+          stopGlyphButton(in: shape)
+        } else {
+          ViewThatFits(in: .horizontal) {
+            stopButton
+            stopGlyphButton(in: shape)
+          }
+        }
       }
       sendButton(in: shape)
     }
   }
 
-  /// Stop in the pill: the glyph alone, red on a neutral circle, beside Send.
+  /// Stop as the glyph alone, red on a neutral circle, beside Send: always in the pill, and in
+  /// the card or collapsed bar where the capsule's word does not fit on one line. The circle
+  /// is the shape's, so it matches the controls beside it.
   ///
   /// The word is the label, so VoiceOver and the tests read "Stop" as they do on the card's
   /// capsule. The same two-step confirm.
-  private var stopGlyphButton: some View {
+  private func stopGlyphButton(in shape: CardShape) -> some View {
     Button(role: .destructive) {
       isConfirmingInterrupt = true
     } label: {
@@ -701,7 +718,7 @@ struct PaneComposerBar: View {
         Image(systemName: "stop.fill")
           .font(.system(size: 14, weight: .semibold))
           .foregroundStyle(Color(.systemRed))
-          .frame(width: Self.pillCircle, height: Self.pillCircle)
+          .frame(width: Self.circle(in: shape), height: Self.circle(in: shape))
           .background(Color(.tertiarySystemFill), in: Circle())
           .frame(width: 44, height: 44)
           .contentShape(Circle())
@@ -752,6 +769,36 @@ struct PaneComposerBar: View {
     .accessibilityIdentifier("composer.stop")
   }
 
+
+  /// Shift-Tab, beside Stop and Send: Claude Code moves to its next mode. It says no mode,
+  /// because nothing Driverr reads says the mode the moment it changes.
+  ///
+  /// Drawn like Attach, an accent glyph on a neutral circle, so it does not read as a second
+  /// Send. Off while the pane is blocked, where Shift-Tab approves the request, and while a
+  /// reply is on its way.
+  private func modeButton(in shape: CardShape) -> some View {
+    let isEnabled = modeControl == .ready && !model.isSending
+    return Button {
+      Task { await model.send(.backTab) }
+    } label: {
+      // `chevron.forward.2`, after Claude Code's own "⏵⏵" mode marker. Not a circular arrow,
+      // which is the system's refresh glyph and would read as reloading the conversation.
+      Image(systemName: "chevron.forward.2")
+        .font(.system(size: shape == .card ? 17 : 15, weight: .semibold))
+        .foregroundStyle(isEnabled ? themeAccent : Color.secondary)
+        .frame(width: Self.circle(in: shape), height: Self.circle(in: shape))
+        .background(Color(.tertiarySystemFill), in: Circle())
+        .frame(width: 44, height: 44)
+        .contentShape(Rectangle())
+    }
+    .buttonStyle(.plain)
+    .disabled(!isEnabled)
+    // The glyph has no words, so the label is all VoiceOver has.
+    .accessibilityLabel(PaneModeControl.label)
+    .accessibilityHint(
+      modeControl == .blocked ? PaneModeControl.blockedHint : PaneModeControl.hint)
+    .accessibilityIdentifier("composer.mode")
+  }
 
   // MARK: - Upload readout for UI tests
 

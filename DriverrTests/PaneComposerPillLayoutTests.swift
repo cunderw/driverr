@@ -17,16 +17,22 @@ struct PaneComposerPillLayoutTests {
   /// The pill's own height: 44 pt targets and 2 pt above and below.
   private static let pillHeight: Double = 48
 
-  private func barHeight(text: String, size: DynamicTypeSize = .large) -> Double {
+  private func barHeight(
+    text: String,
+    size: DynamicTypeSize = .large,
+    pane: Pane = PreviewSupport.agentPane,
+    modeControl: PaneModeControl = .hidden
+  ) -> Double {
     var height: Double = 0
     var state = PaneComposerState()
     state.text = text
-    let composer = PreviewSupport.composer(for: PreviewSupport.agentPane, in: state)
+    let composer = PreviewSupport.composer(for: pane, in: state)
     let bar = PaneComposerBar(
       model: composer,
-      header: PaneComposerHeader(pane: PreviewSupport.agentPane),
+      header: PaneComposerHeader(pane: pane),
       onLayoutProbe: { height = Double($0.height) },
-      onAttach: { _ in }
+      onAttach: { _ in },
+      modeControl: modeControl
     )
     .environment(\.dynamicTypeSize, size)
     let window = HostedProbe.window(bar)
@@ -54,5 +60,34 @@ struct PaneComposerPillLayoutTests {
     let draft = barHeight(text: "x", size: .accessibility1)
     #expect(rest > 0)
     #expect(rest == draft)
+  }
+
+  /// A working Claude pane: the pill's busiest row, Attach, the field, Shift-Tab, Stop, Send.
+  private static let workingPane = Pane(
+    id: "w1:p2", tabID: "w1:t1", workspaceID: "w1", title: "working",
+    agent: Agent(name: "Claude", kind: "claude", status: .working)
+  )
+
+  @Test("the mode button beside Stop keeps the bar at rest one 48 pt row")
+  func modeButtonKeepsThePill() {
+    let rest = barHeight(text: "", pane: Self.workingPane, modeControl: .ready)
+    #expect(abs(rest - (Self.pillHeight + 6 + PaneComposerBar.cardBottomInset)) < 1)
+    let blocked = barHeight(text: "", pane: Self.workingPane, modeControl: .blocked)
+    #expect(blocked == rest, "a disabled button takes the same room")
+  }
+
+  @Test("with the mode button, a draft is the card and an accessibility size is too")
+  func modeButtonInTheCard() {
+    let rest = barHeight(text: "", pane: Self.workingPane, modeControl: .ready)
+    let draft = barHeight(text: "x", pane: Self.workingPane, modeControl: .ready)
+    #expect(draft > rest + 30)
+    // At the largest size the button must not make the card taller. Beside it, Stop's
+    // capsule wrapped its word onto a second line and the card grew 58 pt; Stop is the glyph
+    // there now.
+    let large = barHeight(
+      text: "", size: .accessibility5, pane: Self.workingPane, modeControl: .ready)
+    let largeWithout = barHeight(text: "", size: .accessibility5, pane: Self.workingPane)
+    #expect(large > 0)
+    #expect(large <= largeWithout, "with \(large), without \(largeWithout)")
   }
 }

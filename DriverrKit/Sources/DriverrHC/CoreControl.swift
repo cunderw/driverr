@@ -429,6 +429,8 @@ extension PaneKey {
     case .enter: Data([0x0D])
     case .esc: Data([0x1B])
     case .tab: Data([0x09])
+    // `CSI Z`, what a terminal sends for Shift-Tab. Claude Code cycles its mode on it.
+    case .backTab: Data("\u{1B}[Z".utf8)
     case .interrupt: Data([0x03])
     case .up: Data("\u{1B}[A".utf8)
     case .down: Data("\u{1B}[B".utf8)
