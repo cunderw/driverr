@@ -2978,6 +2978,8 @@ struct TerminalSceneModelTests {
     let (scene, transport, stream) = await tmuxScene()
     _ = try await paintedTmuxPane(scene, transport)
     try #require(stream.closeCount == 0)
+    // Sized first, so the size check below can only pass on a hand-back.
+    try #require(stream.size(of: "@2") == "52x48")
 
     // What `TerminalPresenter.endPresentation` does, less the parts with no tmux in them.
     scene.model.session?.stopLiveUpdates()
