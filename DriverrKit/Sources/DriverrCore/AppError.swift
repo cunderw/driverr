@@ -52,6 +52,9 @@ public enum AppError: Error, Hashable, Sendable, LocalizedError {
   /// readable by the login account. A file that ends mid-record or holds no conversation is
   /// a `Transcript` outcome, not this.
   case transcriptUnreadable(reason: String)
+  /// A folder the user asked to browse could not be opened on the host: missing, not a
+  /// folder, or not readable by the login account. `path` is what the user asked for.
+  case directoryUnavailable(path: String)
   case cancelled
 
   public var errorDescription: String? {
@@ -100,6 +103,8 @@ public enum AppError: Error, Hashable, Sendable, LocalizedError {
       // The reason alone. `TranscriptNotice(failure:)`'s title already says the file could
       // not be read.
       reason
+    case let .directoryUnavailable(path):
+      "Could not open \(path) on this host. Check that the folder exists and that you can read it."
     case .cancelled:
       "Cancelled."
     }
@@ -123,6 +128,8 @@ public enum AppError: Error, Hashable, Sendable, LocalizedError {
     case .herdrDidNotAnswer: true
     // A session file can be rotated out from under a read, so asking again is reasonable.
     case .transcriptUnreadable: true
+    // A missing or locked folder stays that way until the user picks another.
+    case .directoryUnavailable: false
     }
   }
 }
