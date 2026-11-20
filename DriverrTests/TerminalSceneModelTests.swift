@@ -1709,9 +1709,13 @@ struct TerminalSceneModelTests {
   }
 
   /// A core pane read from its chat, with the setting still changeable.
+  ///
+  /// - Parameter remembersChat: switch the pane to the terminal and back by hand first, so
+  ///   memory holds chat. A single `show(.chat)` under the Chat setting records nothing,
+  ///   because the pane is already on chat.
   private func coreAgentScene(
     _ attacher: FakeCoreAttacher,
-    surface: PaneSurface?,
+    remembersChat: Bool,
     setting: FirstSurfaceSetting
   ) async throws -> (TerminalSceneModel, FakeCoreViewer) {
     let control = FakeControl(
@@ -1719,8 +1723,12 @@ struct TerminalSceneModelTests {
         withCorePane: "core:t7", agent: FakeControl.seededTree.pane(id: "w1:p1")?.agent),
       attacher: attacher)
     let (scene, _) = await makeScene(
-      initialTarget: .pane(id: "core:t7"), surface: surface, firstSurface: { setting.value },
+      initialTarget: .pane(id: "core:t7"), surface: nil, firstSurface: { setting.value },
       herdr: control, openSettlingWindow: .zero, responder: Self.everythingPaints)
+    if remembersChat {
+      scene.show(.terminal)
+      scene.show(.chat)
+    }
     let observer = try await opened(scene, attacher)
     #expect(scene.surface == .chat)
     #expect(scene.currentRole == .observer)
@@ -1732,7 +1740,7 @@ struct TerminalSceneModelTests {
   func theSettingToTerminalPromotesTheCurrentObserver() async throws {
     let attacher = FakeCoreAttacher()
     let setting = FirstSurfaceSetting(.chat)
-    let (scene, observer) = try await coreAgentScene(attacher, surface: nil, setting: setting)
+    let (scene, observer) = try await coreAgentScene(attacher, remembersChat: false, setting: setting)
 
     setting.value = .terminal
     scene.firstSurfaceChanged()
@@ -1748,7 +1756,7 @@ struct TerminalSceneModelTests {
   func theSettingDoesNotMoveARememberedPane() async throws {
     let attacher = FakeCoreAttacher()
     let setting = FirstSurfaceSetting(.chat)
-    let (scene, observer) = try await coreAgentScene(attacher, surface: .chat, setting: setting)
+    let (scene, observer) = try await coreAgentScene(attacher, remembersChat: true, setting: setting)
 
     setting.value = .terminal
     scene.firstSurfaceChanged()

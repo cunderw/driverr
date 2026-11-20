@@ -630,7 +630,16 @@ final class TerminalSceneModel {
   private(set) var wantsComposerFocus = false
 
   /// Asks for the composer. See `wantsComposerFocus`.
+  ///
+  /// The composer is on the chat side, so Reply puts the pane there first, under either
+  /// Settings choice, and remembers chat for it. Remembered after `show(_:)`, because
+  /// `show(_:)` does nothing for a surface memory already holds, and a held controller would
+  /// stay up behind the chat.
   func focusComposer() {
+    if case .pane(let id) = current, hasChatSurface(for: current) {
+      show(.chat)
+      model.surfaces.remember(.chat, for: id)
+    }
     wantsComposerFocus = true
   }
 
