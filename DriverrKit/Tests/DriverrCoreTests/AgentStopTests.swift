@@ -75,6 +75,22 @@ struct AgentStopTests {
     #expect(Self.notice(AgentStop(kind: .other), secondsBeforeReset: 0).compactLine == "API error")
   }
 
+  @Test("the open body repeats no title the folded header already shows")
+  func foldedBodyTitle() {
+    #expect(
+      Self.notice(Self.limit, secondsBeforeReset: 3_600).foldedBodyTitle == "Usage limit reached")
+    #expect(Self.notice(Self.limit, secondsBeforeReset: -60).foldedBodyTitle == nil)
+    let noTime = AgentStopNotice(
+      stop: AgentStop(kind: .rateLimit, message: "You've hit your session limit"),
+      asOf: .distantFuture, timeZone: Self.chicago, locale: Self.enUS)
+    #expect(noTime.foldedBodyTitle == nil)
+    for kind in [AgentStop.Kind.loginExpired, .serverError, .other] {
+      #expect(
+        Self.notice(AgentStop(kind: kind, message: "x"), secondsBeforeReset: 0).foldedBodyTitle
+          == nil)
+    }
+  }
+
   @Test("a limit that resets days away does not print a bare time")
   func weeklyLimit() {
     let notice = Self.notice(Self.limit, secondsBeforeReset: 3 * 86_400)

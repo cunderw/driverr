@@ -134,6 +134,11 @@ public struct AgentStopNotice: Hashable, Sendable {
     }
   }
 
+  /// The title the open body shows under the folded header at accessibility sizes, or `nil`
+  /// where the header already says it: every stop whose `compactLine` is its title. Only a
+  /// live limit with a reset time shows its title again, because its header shows the reset.
+  public var foldedBodyTitle: String? { compactLine == title ? nil : title }
+
   /// Title and detail as one sentence pair, for VoiceOver.
   public var accessibilityLabel: String {
     guard let detail else { return "Agent stopped. \(title)." }

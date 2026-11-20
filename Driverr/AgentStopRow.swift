@@ -86,10 +86,26 @@ struct AgentStopRow: View {
     .accessibilityIdentifier("pane.chat.agentStop")
   }
 
-  /// The body's notice: title and detail in the notice's glass, without the glyph the header
-  /// already shows. One accessibility element, as the notice is at other sizes.
+  /// The body's notice, in the notice's glass, without the glyph the header already shows.
+  /// Title and detail for a live limit, whose header shows the reset; the detail alone for a
+  /// stop whose header is its title (`AgentStopNotice.foldedBodyTitle`), and no card at all
+  /// when that stop has no detail. One accessibility element reading the whole notice, as the
+  /// notice is at other sizes.
+  @ViewBuilder
   private func card(_ notice: AgentStopNotice) -> some View {
-    words(for: notice)
+    if notice.foldedBodyTitle != nil {
+      bodyCard(words(for: notice), notice)
+    } else if let detail = notice.detail {
+      bodyCard(
+        Text(detail)
+          .foregroundStyle(Color.secondary)
+          .fixedSize(horizontal: false, vertical: true),
+        notice)
+    }
+  }
+
+  private func bodyCard(_ content: some View, _ notice: AgentStopNotice) -> some View {
+    content
       .noticeGlass()
       .accessibilityElement(children: .ignore)
       .accessibilityLabel(notice.accessibilityLabel)
