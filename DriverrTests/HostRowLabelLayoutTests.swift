@@ -5,15 +5,19 @@ import UIKit
 
 @testable import Driverr
 
-/// The phone's host row at AX3, with a blocked badge.
+/// The phone's host row at the largest text size, with a blocked badge.
 ///
-/// A short name must stay whole on one line, and the badge must keep its whole capsule. The
-/// name alone gives way first: it hyphenated "workbox" to "work-" / "box". The name's layout
+/// A short name must stay whole on one line, and the badge must keep its whole capsule. With
+/// neither held, the name gave way first: it hyphenated "workbox" to "work-" / "box". The name's layout
 /// priority alone squeezes the count capsule to a sliver instead. Both halves are checked.
 @MainActor
 @Suite("Host row label layout")
 struct HostRowLabelLayoutTests {
   private static let name = "workbox"
+
+  /// The size the UI tests launch with, `UICTContentSizeCategoryAccessibilityXXXL`. At
+  /// `.accessibility3` the row fits on main, so this test could not fail there.
+  private static let size = DynamicTypeSize.accessibility5
 
   /// The status the store tour's connected host shows, with `blocked` panes waiting.
   private static func status(blocked: Int) -> HostStatus {
@@ -40,10 +44,10 @@ struct HostRowLabelLayoutTests {
         }
       }
     }
-    .environment(\.dynamicTypeSize, .accessibility3)
+    .environment(\.dynamicTypeSize, Self.size)
   }
 
-  /// The name on one line and the capsule at its own size, both at AX3, with nothing to
+  /// The name on one line and the capsule at its own size, both at `size`, with nothing to
   /// squeeze them.
   private func naturalSizes(badge: String) -> (name: CGSize, capsule: CGSize) {
     var name = CGSize.zero
@@ -53,7 +57,7 @@ struct HostRowLabelLayoutTests {
         Text(Self.name).fixedSize().measuredFrame { name = $0.size }
         HostBadgeCapsule(badge: badge).fixedSize().measuredFrame { capsule = $0.size }
       }
-      .environment(\.dynamicTypeSize, .accessibility3)
+      .environment(\.dynamicTypeSize, Self.size)
     )
     withExtendedLifetime(window) {}
     return (name, capsule)
@@ -80,12 +84,12 @@ struct HostRowLabelLayoutTests {
       "The capsule is squeezed: \(capsule.width) pt of \(natural.capsule.width) pt. \(measured)")
   }
 
-  @Test("at AX3 a row counting several blocked panes keeps its name and its capsule whole")
+  @Test("at the largest text size a row counting several blocked panes keeps its name and its capsule whole")
   func countKeepsNameAndCapsule() throws {
     try check(blocked: 2, lonePane: nil)
   }
 
-  @Test("at AX3 a row whose badge opens one pane keeps its name and its capsule whole")
+  @Test("at the largest text size a row whose badge opens one pane keeps its name and its capsule whole")
   func lonePaneKeepsNameAndCapsule() throws {
     try check(blocked: 1, lonePane: HostRowLonePane(title: "claude", open: {}))
   }
