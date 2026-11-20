@@ -48,8 +48,9 @@ struct HostDetailView: View {
   /// user start the connect, and only then may it offer the hooks. A restored launch, a Live
   /// Activity, a notification and a URL connect with nobody having asked.
   private let offersHooksOnConnect: Bool
-  /// Whether the split view's sidebar is collapsed (`.detailOnly`). Passed in, because only
-  /// `ContentView` holds the column visibility. See `readableDetailColumn`.
+  /// Whether nothing of the sidebar covers the detail column's leading edge. `ContentView`
+  /// measures it from two safe-area insets (see `ContentView.isSidebarCollapsed`). See
+  /// `readableDetailColumn`.
   private let isSidebarCollapsed: Bool
 
   init(

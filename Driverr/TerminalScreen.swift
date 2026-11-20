@@ -40,9 +40,10 @@ struct TerminalScreen: View {
   /// because only the root holds those flags. See `PaneKeyActions.isBehindRootPresentation`.
   var isBehindRootPresentation = false
 
-  /// Whether the split view's sidebar is collapsed (`.detailOnly`). Passed in, because only
-  /// `ContentView` holds the column visibility. Decides whether the full-bleed fills paint
-  /// the leading safe area; see `TerminalSceneRoute.fillsLeadingSafeArea(isSidebarCollapsed:)`.
+  /// Whether nothing of the sidebar covers the detail column's leading edge. `ContentView`
+  /// measures it from two safe-area insets (see `ContentView.isSidebarCollapsed`). Decides
+  /// whether the full-bleed fills paint the leading safe area; see
+  /// `TerminalSceneRoute.fillsLeadingSafeArea(isSidebarCollapsed:)`.
   var isSidebarCollapsed = false
 
   private var host: DriverrCore.Host { scene.host }
