@@ -20,8 +20,8 @@ enum HostRowPart {
 /// One host, answering "is anything waiting on me?" before it is opened. Every word comes
 /// from `DriverrCore.HostStatus`, where `swift test` covers it.
 ///
-/// The row's label only: the caller wraps it in its link. `accessory` follows the blocked
-/// badge as direct content of the row, so a view it leaves out adds no gap.
+/// The row's label only: the caller wraps it in its link. `accessory` ends the row as its
+/// direct content, so a view it leaves out adds no gap.
 ///
 /// At the accessibility sizes the dot and the badge take a line of their own under the
 /// address. Side by side, the name, the dot and the badge need about 30 pt more than a phone
