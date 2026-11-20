@@ -1137,8 +1137,7 @@ struct ContentView: View {
     HostRowLabel(
       name: host.displayName,
       status: status,
-      lonePane: lonePane(host, status: status),
-      growsWithCapsule: showsDisclosure
+      lonePane: lonePane(host, status: status)
     ) {
       // Draws nothing. Keeps the count above live. See `SessionPollHold`.
       if let session = connections.existingModel(for: host.id)?.session {

@@ -22,18 +22,26 @@ enum HostRowPart {
 ///
 /// The row's label only: the caller wraps it in its link. `accessory` follows the blocked
 /// badge as direct content of the row, so a view it leaves out adds no gap.
+///
+/// At the accessibility sizes the dot and the badge take a line of their own under the
+/// address. Side by side, the name, the dot and the badge need about 30 pt more than a phone
+/// row has at the largest size, and the name broke mid-word ("work-" / "box"). `accessory`
+/// stays at the trailing edge at every size, so the iPad sidebar's chevron stays in line with
+/// the tree's own chevrons.
 struct HostRowLabel<Accessory: View>: View {
   let name: String
   let status: HostStatus
   /// The pane the badge opens, or `nil` when it counts several (`SessionTree.loneBlockedPane`).
   var lonePane: HostRowLonePane?
-  var growsWithCapsule = false
   /// Where a hosted layout test reads each part's frame. Nothing is installed when `nil`. See
   /// `SidebarPaneRow.onTitleFrame`.
   var onFrame: (@MainActor (HostRowPart, CGRect) -> Void)?
   @ViewBuilder var accessory: Accessory
 
+  @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
   var body: some View {
+    let stacked = dynamicTypeSize.isAccessibilitySize
     HStack(spacing: 8) {
       VStack(alignment: .leading, spacing: 2) {
         Text(name)
@@ -41,16 +49,27 @@ struct HostRowLabel<Accessory: View>: View {
         Text(status.subtitle)
           .font(.caption)
           .foregroundStyle(.secondary)
+        if stacked {
+          HStack(spacing: 8) {
+            indicators
+          }
+          .padding(.top, 4)
+        }
       }
-      // First claim on the width in a row with the sidebar's chevron, or at AX3 the name
-      // breaks mid-word while its row is selected. Other rows lay out as they did.
-      .layoutPriority(growsWithCapsule ? 1 : 0)
       Spacer(minLength: 8)
-      connectionDot
-      if let badge = status.badge, let spoken = status.badgeAccessibilityLabel {
-        blockedBadge(badge: badge, spoken: spoken)
+      if !stacked {
+        indicators
       }
       accessory
+    }
+  }
+
+  /// The dot and the badge. Direct content of whichever stack holds them, so each keeps that
+  /// stack's 8 pt gap.
+  @ViewBuilder private var indicators: some View {
+    connectionDot
+    if let badge = status.badge, let spoken = status.badgeAccessibilityLabel {
+      blockedBadge(badge: badge, spoken: spoken)
     }
   }
 
@@ -106,9 +125,7 @@ struct HostRowLabel<Accessory: View>: View {
   /// single destination. `.buttonStyle(.borderless)` stops the enclosing `NavigationLink` row
   /// from taking the tap.
   ///
-  /// `growsWithCapsule` is for a row that also draws the sidebar's chevron. Its layout box
-  /// takes the capsule's size, so at the accessibility sizes the capsule does not spill into
-  /// the chevron. Every other row keeps the fixed box, so the phone lays out as it did.
+  /// Both forms hold the capsule at its own width, so a long name cannot squeeze it.
   @ViewBuilder
   private func blockedBadge(badge: String, spoken: String) -> some View {
     if let lonePane {
@@ -117,15 +134,14 @@ struct HostRowLabel<Accessory: View>: View {
       } label: {
         capsule(badge)
       }
-      .badgeHitArea(growsWithCapsule: growsWithCapsule)
+      .badgeHitArea()
       .buttonStyle(.borderless)
       // The count, then what a tap does. `spoken` is already a sentence.
       .accessibilityLabel("\(spoken). Opens \(lonePane.title).")
       .accessibilityIdentifier("hosts.blocked")
     } else {
       capsule(badge)
-        // Fixed on a chevron row, where the name's layout priority would squeeze it.
-        .fixedSize(horizontal: growsWithCapsule, vertical: false)
+        .fixedSize(horizontal: true, vertical: false)
         .accessibilityLabel(spoken)
         .accessibilityIdentifier("hosts.blocked")
     }
@@ -151,12 +167,10 @@ extension HostRowLabel where Accessory == EmptyView {
     name: String,
     status: HostStatus,
     lonePane: HostRowLonePane? = nil,
-    growsWithCapsule: Bool = false,
     onFrame: (@MainActor (HostRowPart, CGRect) -> Void)? = nil
   ) {
     self.init(
-      name: name, status: status, lonePane: lonePane, growsWithCapsule: growsWithCapsule,
-      onFrame: onFrame
+      name: name, status: status, lonePane: lonePane, onFrame: onFrame
     ) { EmptyView() }
   }
 }
@@ -177,29 +191,19 @@ struct HostBadgeCapsule: View {
 }
 
 extension View {
-  /// The blocked badge's 44 pt hit area, without making its row taller.
+  /// The blocked badge's hit area: 12 pt past the capsule on every side, without making its
+  /// row taller.
   ///
-  /// The fixed form: a 44 x 44 hit area on 20 x 20 of layout; keep these three modifiers in
-  /// this order. A plain 44 pt `frame` would make the rows taller than their neighbours.
-  /// `frame` sizes the hit box, `contentShape` makes all of it hittable, and the negative
-  /// padding returns the layout space. `contentShape` before `frame` shapes only the capsule,
-  /// and padding before `contentShape` shrinks the shape.
-  ///
-  /// The growing form takes the capsule's own size, at least 20 x 20, and pads the hit area
-  /// 12 pt past it on every side. `fixedSize`, so a neighbour with layout priority cannot
-  /// squeeze the capsule.
-  @ViewBuilder
-  fileprivate func badgeHitArea(growsWithCapsule: Bool) -> some View {
-    if growsWithCapsule {
-      fixedSize()
-        .frame(minWidth: 20, minHeight: 20)
-        .padding(12)
-        .contentShape(Rectangle())
-        .padding(-12)
-    } else {
-      frame(width: 44, height: 44)
-        .contentShape(Rectangle())
-        .padding(-12)
-    }
+  /// The layout box is the capsule's own size, at least 20 x 20, so the hit area is at least
+  /// 44 x 44. At the default size that box is 20 x 20. At the accessibility sizes it grows
+  /// with the capsule, so the capsule does not spill over the address above it. `fixedSize`,
+  /// so a neighbour cannot squeeze the capsule. Keep `contentShape` between the two paddings:
+  /// before them it shapes only the capsule, and after them it shrinks the shape.
+  fileprivate func badgeHitArea() -> some View {
+    fixedSize()
+      .frame(minWidth: 20, minHeight: 20)
+      .padding(12)
+      .contentShape(Rectangle())
+      .padding(-12)
   }
 }
