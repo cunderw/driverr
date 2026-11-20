@@ -99,7 +99,11 @@ struct AgentStopRow: View {
       bodyCard(
         Text(detail)
           .foregroundStyle(Color.secondary)
-          .fixedSize(horizontal: false, vertical: true),
+          .lineLimit(lineLimit)
+          .fixedSize(horizontal: false, vertical: true)
+          // The column's width, so the card lines up with the header rather than hugging
+          // its wrapped lines.
+          .frame(maxWidth: .infinity, alignment: .leading),
         notice)
     }
   }
