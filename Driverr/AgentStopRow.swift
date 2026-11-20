@@ -22,8 +22,9 @@ import SwiftUI
 /// At accessibility text sizes the notice, the opt-in and Show the Screen covered most of a
 /// phone's chat (#107), so there the row draws in two parts. The header is one capsule with
 /// the glyph, `AgentStopNotice.compactLine` and a chevron, the same card folded or open. A
-/// tap opens the body under it: the whole notice, in its own card, and the opt-in.
-/// `PaneChatView` places the two and draws Show the Screen after the body.
+/// tap opens the body under it: the whole notice, in its own card, and the opt-in. The
+/// header speaks a short label and the body card the whole notice, so VoiceOver does not read
+/// the notice twice when it is open. `PaneChatView` places the two and draws Show the Screen after the body.
 struct AgentStopRow: View {
   let stop: AgentStop
   /// Whether this pane's reset alert offers Continue. `nil` draws no control.
@@ -119,7 +120,8 @@ struct AgentStopRow: View {
   /// The header at accessibility sizes: a button that opens and closes the body. The glyph and
   /// the compact line, at most two lines on an iPhone 17 at the largest size, in both states,
   /// so it keeps its height as the body opens. The chevron says which state. VoiceOver reads
-  /// the whole notice, with the fold as the value.
+  /// `AgentStopNotice.headerAccessibilityLabel`, with the fold as the value; the body card
+  /// reads the whole notice.
   private func foldingCapsule(_ notice: AgentStopNotice, expanded: Binding<Bool>) -> some View {
     Button { expanded.wrappedValue.toggle() } label: {
       HStack(alignment: .firstTextBaseline, spacing: 6) {
@@ -138,7 +140,7 @@ struct AgentStopRow: View {
     }
     .buttonStyle(.plain)
     .accessibilityElement(children: .ignore)
-    .accessibilityLabel(notice.accessibilityLabel)
+    .accessibilityLabel(notice.headerAccessibilityLabel)
     .accessibilityValue(expanded.wrappedValue ? "Expanded" : "Collapsed")
     .accessibilityAddTraits(.isButton)
     .accessibilityIdentifier("pane.chat.agentStop")

@@ -59,7 +59,7 @@ struct ChatUnderBarLayoutTests {
       NavigationStack {
         PaneChatView(
           model: model, agentName: "Claude", screen: screen, onCapsulesFrame: onCapsules,
-          continueAtReset: continueAtReset, opensStopForLayoutTest: opensStop)
+          continueAtReset: continueAtReset, isStopExpanded: opensStop)
           // As `TerminalScreen.paneSurfaces` attaches the composer.
           .safeAreaBar(edge: .bottom, spacing: 0) {
             Color.green

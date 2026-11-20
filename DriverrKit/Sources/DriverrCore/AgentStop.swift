@@ -139,6 +139,13 @@ public struct AgentStopNotice: Hashable, Sendable {
   /// live limit with a reset time shows its title again, because its header shows the reset.
   public var foldedBodyTitle: String? { compactLine == title ? nil : title }
 
+  /// The folding header's VoiceOver label at accessibility sizes: the title, and the compact
+  /// line where it says more. The open body's card reads `accessibilityLabel`, so the notice
+  /// is not read twice.
+  public var headerAccessibilityLabel: String {
+    compactLine == title ? title : "\(title). \(compactLine)"
+  }
+
   /// Title and detail as one sentence pair, for VoiceOver.
   public var accessibilityLabel: String {
     guard let detail else { return "Agent stopped. \(title)." }

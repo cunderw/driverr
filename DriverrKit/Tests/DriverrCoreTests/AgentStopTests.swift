@@ -75,6 +75,20 @@ struct AgentStopTests {
     #expect(Self.notice(AgentStop(kind: .other), secondsBeforeReset: 0).compactLine == "API error")
   }
 
+  @Test("the folding header speaks the title, and the reset where the header shows one")
+  func headerAccessibilityLabel() {
+    #expect(
+      Self.notice(Self.limit, secondsBeforeReset: 3_600).headerAccessibilityLabel
+        == "Usage limit reached. Resets at \(Self.time("5:40 PM"))")
+    let server = Self.notice(
+      AgentStop(kind: .serverError, message: "API Error: Can't reach the API server"),
+      secondsBeforeReset: 0)
+    #expect(server.headerAccessibilityLabel == "API request failed")
+    #expect(
+      Self.notice(Self.limit, secondsBeforeReset: -60).headerAccessibilityLabel
+        == "Usage limit reset")
+  }
+
   @Test("the open body repeats no title the folded header already shows")
   func foldedBodyTitle() {
     #expect(

@@ -198,10 +198,6 @@ struct PaneChatView: View {
   /// opt-in. `nil` draws no control. See `AgentStopRow.continueAtReset`.
   var continueAtReset: Binding<Bool>?
 
-  /// Opens a folding stop notice on appearance, for a hosted layout test, which cannot tap.
-  /// See `floatingCapsules(for:)`.
-  var opensStopForLayoutTest = false
-
   /// VoiceOver focus, moved to the newest turn when the transcript first renders, where a
   /// sighted reader's eye lands anyway.
   @AccessibilityFocusState private var focusedTurnID: TranscriptTurn.ID?
@@ -239,8 +235,9 @@ struct PaneChatView: View {
   @State private var chatSlotTopInset: CGFloat = 0
 
   /// Whether the stop notice is open, at accessibility sizes, where it folds. See
-  /// `floatingCapsules(for:)`.
-  @State private var isStopExpanded = false
+  /// `floatingCapsules(for:)`. Not private, so a hosted layout test, which cannot tap, can
+  /// start it open.
+  @State var isStopExpanded = false
 
   @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
@@ -475,6 +472,8 @@ struct PaneChatView: View {
       // The next pane's stop, if it has one, opens folded.
       isStopExpanded = false
     }
+    // A new stop on the same pane opens folded too. A refresh of the same record is equal.
+    .onChange(of: model.transcript?.agentStop) { isStopExpanded = false }
   }
 
   // MARK: - A conversation
@@ -1503,7 +1502,6 @@ struct PaneChatView: View {
           }
         }
       }
-      .onAppear { if opensStopForLayoutTest { isStopExpanded = true } }
     }
   }
 
