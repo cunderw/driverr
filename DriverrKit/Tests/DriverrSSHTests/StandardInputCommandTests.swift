@@ -505,8 +505,8 @@ struct StandardInputCommandTests {
       username: "carson"
     )
     let coordinator = ConnectionCoordinator(transport: NIOSSHTransport())
-    // Every teardown in a `defer`, the client's too, or a throwing body leaks the transport's
-    // event loop group.
+    // Every teardown in a `defer`, the client's too, or a throwing body leaves the
+    // transport's connection and the server running.
     defer {
       Task {
         await coordinator.disconnect()

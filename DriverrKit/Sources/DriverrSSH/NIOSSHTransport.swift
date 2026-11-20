@@ -68,6 +68,9 @@ public actor NIOSSHTransport: SSHTransport {
         }
       }
 
+    // A disconnect during the TCP connect does not end it; NIO's connect timeout does
+    // (10 s). A socket that connects after the disconnect is closed by the `catch` below,
+    // because the disconnect has already failed the host-key decision.
     let connected: Channel
     do {
       connected = try await bootstrap.connect(host: host.hostname, port: host.port).get()
@@ -321,6 +324,9 @@ final class HandshakeCoordinator: NIOSSHClientServerAuthenticationDelegate,
   private var authenticationSettled = false
   private var hostKeySettled = false
   private var credentialSettled = false
+  /// Set by `cancelPendingWork`. Not `hostKeySettled`, which is also true after a trusted
+  /// first key exchange, when a re-key asks again.
+  private var isCancelled = false
 
   init(eventLoop: EventLoop, host: DriverrCore.Host, validator: any HostKeyValidator) {
     self.eventLoop = eventLoop
@@ -350,6 +356,7 @@ final class HandshakeCoordinator: NIOSSHClientServerAuthenticationDelegate,
   /// disconnect without authentication leaves the credential promise open.
   func cancelPendingWork() async {
     try? await eventLoop.submit { [self] in
+      isCancelled = true
       if !credentialSettled {
         credentialSettled = true
         credentialAvailable.fail(AppError.cancelled)
@@ -371,6 +378,13 @@ final class HandshakeCoordinator: NIOSSHClientServerAuthenticationDelegate,
     hostKey: NIOSSHPublicKey,
     validationCompletePromise: EventLoopPromise<Void>
   ) {
+    // Do not ask the person about a connection that a disconnect has cancelled. The loop
+    // stays up now (#151), so a socket that connects after a teardown can still reach key
+    // exchange before its close lands.
+    guard !isCancelled else {
+      validationCompletePromise.fail(AppError.cancelled)
+      return
+    }
     let domainKey = SSHHostKey(niosshPublicKey: hostKey)
     let host = host
     let validator = validator
@@ -378,12 +392,22 @@ final class HandshakeCoordinator: NIOSSHClientServerAuthenticationDelegate,
     Task { [self] in
       let decision = await validator.validate(domainKey, for: host)
       eventLoop.execute { [self] in
-        guard !hostKeySettled else { return }
+        // NIOSSH's promise is settled on every path. An unsettled one stalls its key
+        // exchange, and NIO traps on a promise released unfulfilled.
+        //
+        // A disconnect while the prompt was up cancelled the handshake.
+        guard !isCancelled else {
+          validationCompletePromise.fail(AppError.cancelled)
+          return
+        }
+        // A re-key asks again after the first exchange settled `hostKeyDecided`. Answer
+        // NIOSSH, and leave the settled promises alone.
+        let isFirstDecision = !hostKeySettled
         hostKeySettled = true
         switch decision {
         case .trust:
           validationCompletePromise.succeed(())
-          hostKeyDecided.succeed(())
+          if isFirstDecision { hostKeyDecided.succeed(()) }
         case .reject, .mismatch:
           // A mismatch keeps its own error: the UI must never offer a way past it.
           let error =
@@ -391,8 +415,9 @@ final class HandshakeCoordinator: NIOSSHClientServerAuthenticationDelegate,
             ? AppError.hostKeyMismatch(host: host.hostname)
             : AppError.hostKeyRejected(host: host.hostname)
           validationCompletePromise.fail(error)
-          hostKeyDecided.fail(error)
-          // Nothing will supply a credential now; unblock any waiter.
+          if isFirstDecision { hostKeyDecided.fail(error) }
+          // Nothing will supply a credential now; unblock any waiter. A no-op once
+          // authentication has settled.
           settleAuthentication(with: error)
         }
       }

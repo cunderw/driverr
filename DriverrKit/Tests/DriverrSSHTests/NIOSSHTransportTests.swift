@@ -2,6 +2,7 @@ import Crypto
 import DriverrCore
 import Foundation
 import NIOCore
+import NIOPosix
 import NIOSSH
 import Testing
 @testable import DriverrSSH
@@ -329,5 +330,142 @@ struct NIOSSHTransportTests {
       }
       await transport.disconnect()
     }
+  }
+}
+
+/// Holds its decision until the test releases it, like a trust prompt left on screen.
+private final class ParkedValidator: HostKeyValidator, Sendable {
+  private let reachedStream: AsyncStream<Void>
+  private let reachedSignal: AsyncStream<Void>.Continuation
+  private let releaseStream: AsyncStream<Void>
+  private let releaseSignal: AsyncStream<Void>.Continuation
+
+  init() {
+    (reachedStream, reachedSignal) = AsyncStream.makeStream(of: Void.self)
+    (releaseStream, releaseSignal) = AsyncStream.makeStream(of: Void.self)
+  }
+
+  func validate(_ key: SSHHostKey, for host: DriverrCore.Host) async -> HostKeyDecision {
+    reachedSignal.yield()
+    for await _ in releaseStream { break }
+    return .trust
+  }
+
+  func waitUntilAsked() async { for await _ in reachedStream { break } }
+  func release() { releaseSignal.yield() }
+}
+
+/// What a promise settled with, recorded from its event loop.
+private final class SettledBox: @unchecked Sendable {
+  private let lock = NSLock()
+  private var stored: Result<Void, any Error>?
+
+  func record(_ result: Result<Void, any Error>) { lock.withLock { stored = result } }
+  var result: Result<Void, any Error>? { lock.withLock { stored } }
+}
+
+/// NIOSSH hands `validateHostKey` a promise and waits on it. These cases drive the delegate
+/// directly, so a promise left unsettled is an assertion rather than a stalled handshake.
+@Suite("HandshakeCoordinator host-key promise")
+struct HandshakeCoordinatorHostKeyTests {
+  private let loop = MultiThreadedEventLoopGroup.singleton.next()
+  private let host = DriverrCore.Host(
+    name: "embedded",
+    hostname: "127.0.0.1",
+    port: 22,
+    username: "carson"
+  )
+  private let hostKey = NIOSSHPrivateKey(ed25519Key: Curve25519.Signing.PrivateKey()).publicKey
+
+  /// Calls the delegate on its loop, as NIOSSH does, and returns NIOSSH's promise.
+  private func validate(with coordinator: HandshakeCoordinator) async throws
+    -> EventLoopPromise<Void>
+  {
+    let hostKey = hostKey
+    let loop = loop
+    return try await loop.submit {
+      let promise = loop.makePromise(of: Void.self)
+      coordinator.validateHostKey(hostKey: hostKey, validationCompletePromise: promise)
+      return promise
+    }.get()
+  }
+
+  /// How the promise settled, or nil if it had not within the budget.
+  private func settled(
+    _ promise: EventLoopPromise<Void>,
+    within budget: Duration = .seconds(2)
+  ) async throws -> Result<Void, any Error>? {
+    let box = SettledBox()
+    promise.futureResult.whenComplete { box.record($0) }
+    let deadline = ContinuousClock.now + budget
+    while box.result == nil, ContinuousClock.now < deadline {
+      try await Task.sleep(for: .milliseconds(20))
+    }
+    return box.result
+  }
+
+  /// Settles whatever is still open, so a red run fails on its assertion rather than on
+  /// NIO's trap for a promise released unfulfilled.
+  private func finish(_ coordinator: HandshakeCoordinator, _ promises: EventLoopPromise<Void>...)
+    async throws
+  {
+    try await loop.submit {
+      for promise in promises { promise.fail(AppError.cancelled) }
+    }.get()
+    await coordinator.cancelPendingWork()
+  }
+
+  private func failedAsCancelled(_ result: Result<Void, any Error>?) -> Bool {
+    guard case .failure(let error) = result else { return false }
+    return error as? AppError == .cancelled
+  }
+
+  @Test("a trust answer that arrives after a disconnect fails NIOSSH's promise as cancelled")
+  func aLateAnswerAfterADisconnectSettlesThePromise() async throws {
+    let validator = ParkedValidator()
+    let coordinator = HandshakeCoordinator(eventLoop: loop, host: host, validator: validator)
+    let promise = try await validate(with: coordinator)
+    await validator.waitUntilAsked()
+    await coordinator.cancelPendingWork()
+    validator.release()
+
+    let result = try await settled(promise)
+    #expect(result != nil, "the late answer left NIOSSH's promise unsettled")
+    #expect(failedAsCancelled(result), "expected cancelled, got \(String(describing: result))")
+    try await finish(coordinator, promise)
+  }
+
+  /// A re-key runs key exchange again on a live connection, and NIOSSH asks again.
+  @Test("a second host-key check after a trusted first one succeeds")
+  func aSecondCheckAfterATrustedFirstOneSucceeds() async throws {
+    let coordinator = HandshakeCoordinator(
+      eventLoop: loop,
+      host: host,
+      validator: RecordingValidator(decision: .trust)
+    )
+    let first = try await validate(with: coordinator)
+    let firstResult = try await settled(first)
+    try await coordinator.waitForHostKeyDecision()
+    let second = try await validate(with: coordinator)
+    let secondResult = try await settled(second)
+
+    #expect(firstResult.map { (try? $0.get()) != nil } == true)
+    #expect(secondResult != nil, "the second check left NIOSSH's promise unsettled")
+    #expect(secondResult.map { (try? $0.get()) != nil } == true, "the second check failed")
+    try await finish(coordinator, first, second)
+  }
+
+  @Test("a host-key check after a disconnect fails at once and asks nobody")
+  func aCheckAfterADisconnectAsksNobody() async throws {
+    let validator = RecordingValidator(decision: .trust)
+    let coordinator = HandshakeCoordinator(eventLoop: loop, host: host, validator: validator)
+    await coordinator.cancelPendingWork()
+    let promise = try await validate(with: coordinator)
+
+    let result = try await settled(promise)
+    #expect(result != nil, "the check left NIOSSH's promise unsettled")
+    #expect(failedAsCancelled(result), "expected cancelled, got \(String(describing: result))")
+    #expect(validator.seenKey == nil, "the validator was asked about a cancelled connection")
+    try await finish(coordinator, promise)
   }
 }
