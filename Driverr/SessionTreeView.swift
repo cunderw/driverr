@@ -437,7 +437,7 @@ struct SessionTreeView: View {
         .font(.subheadline.weight(.semibold))
       // Only `.inline`: a single user-named tab. See `Workspace.tabHeaderStyle`.
       if workspace.tabHeaderStyle == .inline, let tab = workspace.tabs.first {
-        Text("· \(tab.label)")
+        Text("·\u{00A0}\(tab.label)")
           .font(.subheadline)
           .foregroundStyle(.secondary)
       }

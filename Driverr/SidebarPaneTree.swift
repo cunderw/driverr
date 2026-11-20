@@ -127,7 +127,7 @@ struct SidebarPaneTree: View {
   private func workspaceTitle(_ workspace: Workspace) -> Text {
     let name = Text(workspace.label).font(.subheadline.weight(.semibold))
     guard workspace.tabHeaderStyle == .inline, let tab = workspace.tabs.first else { return name }
-    return Text("\(name) \(Text("· \(tab.label)").font(.subheadline).foregroundStyle(.secondary))")
+    return Text("\(name) \(Text("·\u{00A0}\(tab.label)").font(.subheadline).foregroundStyle(.secondary))")
   }
 
   private func tabLabel(_ tab: DriverrCore.Tab) -> some View {

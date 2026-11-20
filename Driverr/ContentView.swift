@@ -181,6 +181,11 @@ struct ContentView: View {
   /// tested. Unclamped, 320 pt reaches about 900 at the largest size.
   @ScaledMetric(relativeTo: .body) private var scaledSidebarBase = SidebarColumnWidth.base
 
+  /// How far the list's own disclosure chevrons reach past a row's content edge, so the host
+  /// row's chevron can share their column. Measured on Driverr iPad: 2.5 pt at the default
+  /// size and 8 pt at AX3, which is the glyph's own growth, so it scales with the footnote.
+  @ScaledMetric(relativeTo: .footnote) private var disclosureOverhang: CGFloat = 2.5
+
   var body: some View {
     // The phone authors its own `NavigationStack` and the iPad keeps the split view (CLAUDE.md).
     // The root changes type across the size-class boundary, so a rotation rebuilds both
@@ -1136,6 +1141,7 @@ struct ContentView: View {
           .font(.caption)
           .foregroundStyle(.secondary)
       }
+      .layoutPriority(1)
       Spacer(minLength: 8)
       connectionDot(status)
       if let badge = status.badge, let spoken = status.badgeAccessibilityLabel {
@@ -1162,13 +1168,13 @@ struct ContentView: View {
       }
     } label: {
       Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-        .font(.body.weight(.semibold))
+        // The width of the tree's own disclosure chevrons, measured on Driverr iPad: about
+        // 11.5 pt at the default size. It scales with them.
+        .font(.footnote.weight(.semibold))
         .foregroundStyle(Color.primary)
-        // Capped, because at the accessibility sizes a full-size glyph took the width the
-        // host's name needs and hyphenated it.
-        .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
-        // At least 20 pt of layout, trailing, so the glyph lines up with the tree's own
-        // chevrons. Not a fixed width: at the accessibility sizes the glyph outgrows it.
+        // At least 20 pt of layout, trailing, so the glyph's right edge and centre line up
+        // with the tree's own chevrons. Not a fixed width: at the accessibility sizes the
+        // glyph outgrows it.
         .frame(minWidth: 20, minHeight: 20, alignment: .trailing)
     }
     // The hit area is the layout plus 12 pt a side, so at least 44 pt, without growing the
@@ -1176,6 +1182,7 @@ struct ContentView: View {
     .padding(12)
     .contentShape(Rectangle())
     .padding(-12)
+    .padding(.trailing, -disclosureOverhang)
     .buttonStyle(.borderless)
     .accessibilityLabel(isExpanded ? "Hide panes" : "Show panes")
     .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
@@ -1251,12 +1258,16 @@ struct ContentView: View {
       } label: {
         badgeCapsule(badge)
       }
-      // A 44 x 44 hit area on 20 x 20 of layout; keep these three modifiers in this order.
-      // A plain 44 pt `frame` would make these rows taller than their neighbours. `frame`
-      // sizes the hit box, `contentShape` makes all of it hittable, and the negative padding
-      // returns the layout space. `contentShape` before `frame` shapes only the capsule, and
-      // padding before `contentShape` shrinks the shape.
-      .frame(width: 44, height: 44)
+      // A hit area 12 pt wider than the layout on every side, at least 44 x 44 on at least
+      // 20 x 20 of layout; keep these four modifiers in this order. A plain 44 pt `frame`
+      // would make these rows taller than their neighbours. The positive padding sizes the
+      // hit box, `contentShape` makes all of it hittable, and the negative padding returns
+      // the layout space. `contentShape` before the padding shapes only the capsule.
+      //
+      // Not a fixed 44 pt frame: at the accessibility sizes the capsule is wider than 20 pt,
+      // and a fixed layout box let it spill into the dot and the chevron beside it.
+      .frame(minWidth: 20, minHeight: 20)
+      .padding(12)
       .contentShape(Rectangle())
       .padding(-12)
       .buttonStyle(.borderless)
