@@ -8,8 +8,9 @@ import UIKit
 /// The phone's host row at the largest text size, with a blocked badge.
 ///
 /// A short name must stay whole on one line, and the badge must keep its whole capsule. With
-/// neither held, the name gave way first: it hyphenated "workbox" to "work-" / "box". The name's layout
-/// priority alone squeezes the count capsule to a sliver instead. Both halves are checked.
+/// neither held, the name gave way first: it hyphenated "workbox" to "work-" / "box". The
+/// name's layout priority alone squeezes the count capsule to a sliver instead. Both halves are
+/// checked.
 @MainActor
 @Suite("Host row label layout")
 struct HostRowLabelLayoutTests {

@@ -42,7 +42,7 @@ struct HostRowLabel<Accessory: View>: View {
       }
       // First claim on the width in a row with the sidebar's chevron, or at AX3 the name
       // breaks mid-word while its row is selected. Other rows lay out as they did.
-      .layoutPriority(growsWithCapsule ? 1 : 0)
+      .layoutPriority(1)
       Spacer(minLength: 8)
       connectionDot
       if let badge = status.badge, let spoken = status.badgeAccessibilityLabel {
