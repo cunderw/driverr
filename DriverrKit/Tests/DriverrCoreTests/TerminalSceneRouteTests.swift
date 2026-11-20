@@ -30,6 +30,15 @@ struct TerminalSceneRouteTests {
     #expect(TerminalSceneRoute.none.readableContentWidth == nil)
   }
 
+  /// The glass sidebar takes its colour from what is painted under it.
+  @Test("the detail column paints the leading safe area only with the sidebar collapsed")
+  func theDetailColumnLeavesTheSidebarUnpainted() {
+    #expect(!TerminalSceneRoute.detailColumn.fillsLeadingSafeArea(isSidebarCollapsed: false))
+    #expect(TerminalSceneRoute.detailColumn.fillsLeadingSafeArea(isSidebarCollapsed: true))
+    #expect(TerminalSceneRoute.stack.fillsLeadingSafeArea(isSidebarCollapsed: false))
+    #expect(TerminalSceneRoute.stack.fillsLeadingSafeArea(isSidebarCollapsed: true))
+  }
+
   @Test("the readable measure is 680 pt")
   func theMeasureIsSixEighty() {
     #expect(TerminalSceneRoute.readableWidth == 680)

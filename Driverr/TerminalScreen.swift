@@ -40,6 +40,11 @@ struct TerminalScreen: View {
   /// because only the root holds those flags. See `PaneKeyActions.isBehindRootPresentation`.
   var isBehindRootPresentation = false
 
+  /// Whether the split view's sidebar is collapsed (`.detailOnly`). Passed in, because only
+  /// `ContentView` holds the column visibility. Decides whether the full-bleed fills paint
+  /// the leading safe area; see `TerminalSceneRoute.fillsLeadingSafeArea(isSidebarCollapsed:)`.
+  var isSidebarCollapsed = false
+
   private var host: DriverrCore.Host { scene.host }
   private var model: ConnectionModel { scene.model }
 
@@ -460,14 +465,15 @@ struct TerminalScreen: View {
     // The chat side is painted `ChatColumn.ground` (a fixed #151515 in dark), not the terminal
     // theme, because the chat's translucent chrome blends with what is behind it.
     //
-    // **Not the leading edge on the detail column.** There the leading safe area is the
-    // sidebar's width, and the glass sidebar is translucent over whatever this paints under
-    // it, so a full-bleed fill changed the sidebar's colour on entering a pane.
+    // **Not the leading edge in the detail column while the sidebar shows.** There the
+    // leading safe area is the sidebar's width, and the glass sidebar is translucent over
+    // whatever this paints under it, so a full-bleed fill changed the sidebar's colour on
+    // entering a pane. With the sidebar collapsed the leading edge is painted again.
     .background {
       (isShowingChat
         ? ChatColumn.ground
         : settings.theme.surfaceColor(for: colorScheme == .dark ? .dark : .light))
-        .ignoresSafeArea(edges: route == .detailColumn ? [.top, .bottom, .trailing] : .all)
+        .ignoresSafeArea(edges: route.fillEdges(isSidebarCollapsed: isSidebarCollapsed))
     }
     // The full-size image, last in the chain so it covers the composer too.
     //
@@ -475,7 +481,10 @@ struct TerminalScreen: View {
     // visible, because hiding the bar would move the region under the viewer.
     .overlay {
       if let viewingImage {
-        TranscriptImageViewer(image: viewingImage) { self.viewingImage = nil }
+        TranscriptImageViewer(
+          image: viewingImage,
+          backdropEdges: route.fillEdges(isSidebarCollapsed: isSidebarCollapsed)
+        ) { self.viewingImage = nil }
       }
     }
     // An image belongs to its pane and surface, and `@State` survives both changes.

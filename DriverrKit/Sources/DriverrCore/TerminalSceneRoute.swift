@@ -51,4 +51,20 @@ public enum TerminalSceneRoute: Equatable, Sendable {
     case .stack, .none: nil
     }
   }
+
+  /// Whether a full-bleed fill on this route may paint the leading safe area.
+  ///
+  /// In the detail column, while the sidebar shows, the leading safe area is the sidebar's
+  /// width. The glass sidebar is translucent over what is painted there, so a fill under it
+  /// changes the sidebar's colour. With the sidebar collapsed the leading safe area is the
+  /// device's own, such as a landscape Pro Max's Dynamic Island inset, and must be painted.
+  ///
+  /// - Parameter isSidebarCollapsed: whether the split view's column visibility is
+  ///   `.detailOnly`. Ignored off the detail column.
+  public func fillsLeadingSafeArea(isSidebarCollapsed: Bool) -> Bool {
+    switch self {
+    case .detailColumn: isSidebarCollapsed
+    case .stack, .none: true
+    }
+  }
 }

@@ -122,6 +122,9 @@ struct ContentView: View {
 
   @State private var model: HostListModel?
   @State private var isShowingKeys = false
+  /// The split view's column visibility, bound so the detail column knows when the sidebar
+  /// is collapsed. See `isSidebarCollapsed`.
+  @State private var sidebarVisibility: NavigationSplitViewVisibility = .automatic
   /// The host form, when it is up, and which host it is for.
   ///
   /// `.sheet(item:)`, not `.sheet(isPresented:)` beside a separate value: with `isPresented`
@@ -540,9 +543,17 @@ struct ContentView: View {
 
   // MARK: - The iPad's split view
 
+  /// Whether the split view's sidebar is collapsed: the column visibility is `.detailOnly`.
+  /// The system writes that value back when someone uses the sidebar button.
+  ///
+  /// `.automatic`, the launch value, counts as not collapsed. On the 13-inch iPad it shows
+  /// the sidebar beside the detail in both orientations. Where it overlays the sidebar
+  /// instead, the detail's leading safe area is not the sidebar's width.
+  private var isSidebarCollapsed: Bool { sidebarVisibility == .detailOnly }
+
   /// The host list beside the detail column. Regular width only; `phoneStack` serves compact.
   private var splitView: some View {
-    NavigationSplitView {
+    NavigationSplitView(columnVisibility: $sidebarVisibility) {
       hostListScreen
         // The column grows with the text size. At the default size this applies nothing,
         // because the platform's sidebar width differs by device. See `SidebarColumnWidth`.
@@ -560,7 +571,8 @@ struct ContentView: View {
       if terminalRoute == .detailColumn, let request = terminalPresenter.request {
         TerminalScreen(
           scene: request.scene, route: .detailColumn,
-          isBehindRootPresentation: hasRootPresentation
+          isBehindRootPresentation: hasRootPresentation,
+          isSidebarCollapsed: isSidebarCollapsed
         )
       }
       // The host screen for the selected id, or a placeholder below when nothing is chosen.
@@ -581,7 +593,8 @@ struct ContentView: View {
           onInstallHooks: { requestHookInstall(for: $0) },
           onInstallKey: { keySheet = KeySheetRequest(host: $0) },
           onNewAgent: { requestNewAgent(on: $0) },
-          offersHooksOnConnect: hostPick.offersHooksOnConnect(for: host.id)
+          offersHooksOnConnect: hostPick.offersHooksOnConnect(for: host.id),
+          isSidebarCollapsed: isSidebarCollapsed
         )
         .id(host.id)
       }
