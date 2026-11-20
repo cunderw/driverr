@@ -459,11 +459,15 @@ struct TerminalScreen: View {
     //
     // The chat side is painted `ChatColumn.ground` (a fixed #151515 in dark), not the terminal
     // theme, because the chat's translucent chrome blends with what is behind it.
+    //
+    // **Not the leading edge on the detail column.** There the leading safe area is the
+    // sidebar's width, and the glass sidebar is translucent over whatever this paints under
+    // it, so a full-bleed fill changed the sidebar's colour on entering a pane.
     .background {
       (isShowingChat
         ? ChatColumn.ground
         : settings.theme.surfaceColor(for: colorScheme == .dark ? .dark : .light))
-        .ignoresSafeArea()
+        .ignoresSafeArea(edges: route == .detailColumn ? [.top, .bottom, .trailing] : .all)
     }
     // The full-size image, last in the chain so it covers the composer too.
     //

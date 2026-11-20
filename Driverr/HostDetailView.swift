@@ -717,12 +717,16 @@ extension View {
   /// cap the width, give the capped view the full column to centre in, and paint the strips
   /// either side, or the grouped `Form` looks like it floats. `isRegularWidth` is a parameter
   /// so `HostDetailColumnLayoutTests` can drive both answers.
+  ///
+  /// The fill leaves out the leading safe area. In the detail column that is the sidebar's
+  /// width, and the glass sidebar would tint itself with this fill.
   @ViewBuilder
   func readableDetailColumn(isRegularWidth: Bool) -> some View {
     if isRegularWidth {
       frame(maxWidth: CGFloat(TerminalSceneRoute.readableWidth))
         .frame(maxWidth: .infinity)
-        .background(Color(.systemGroupedBackground).ignoresSafeArea())
+        .background(
+          Color(.systemGroupedBackground).ignoresSafeArea(edges: [.top, .bottom, .trailing]))
     } else {
       self
     }
