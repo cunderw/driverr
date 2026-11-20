@@ -1142,11 +1142,13 @@ struct ContentView: View {
           .font(.caption)
           .foregroundStyle(.secondary)
       }
-      .layoutPriority(1)
+      // First claim on the width in a row with the sidebar's chevron, or at AX3 the name
+      // breaks mid-word while its row is selected. Other rows lay out as they did.
+      .layoutPriority(showsDisclosure ? 1 : 0)
       Spacer(minLength: 8)
       connectionDot(status)
       if let badge = status.badge, let spoken = status.badgeAccessibilityLabel {
-        blockedBadge(host, badge: badge, spoken: spoken)
+        blockedBadge(host, badge: badge, spoken: spoken, growsWithCapsule: showsDisclosure)
       }
       // Draws nothing. Keeps the count above live. See `SessionPollHold`.
       if let session = connections.existingModel(for: host.id)?.session {
@@ -1241,10 +1243,15 @@ struct ContentView: View {
   /// single destination (`SessionTree.loneBlockedPane` is `nil`). `.buttonStyle(.borderless)`
   /// stops the enclosing `NavigationLink` row from taking the tap.
   @ViewBuilder
+  ///
+  /// `growsWithCapsule` is for a row that also draws the sidebar's chevron. Its layout box
+  /// takes the capsule's size, so at the accessibility sizes the capsule does not spill into
+  /// the chevron. Every other row keeps the fixed box, so the phone lays out as it did.
   private func blockedBadge(
     _ host: DriverrCore.Host,
     badge: String,
-    spoken: String
+    spoken: String,
+    growsWithCapsule: Bool
   ) -> some View {
     // Read through the optional: the registry may forget the host between reading the status
     // and this line.
@@ -1259,18 +1266,7 @@ struct ContentView: View {
       } label: {
         badgeCapsule(badge)
       }
-      // A hit area 12 pt wider than the layout on every side, at least 44 x 44 on at least
-      // 20 x 20 of layout; keep these four modifiers in this order. A plain 44 pt `frame`
-      // would make these rows taller than their neighbours. The positive padding sizes the
-      // hit box, `contentShape` makes all of it hittable, and the negative padding returns
-      // the layout space. `contentShape` before the padding shapes only the capsule.
-      //
-      // Not a fixed 44 pt frame: at the accessibility sizes the capsule is wider than 20 pt,
-      // and a fixed layout box let it spill into the dot and the chevron beside it.
-      .frame(minWidth: 20, minHeight: 20)
-      .padding(12)
-      .contentShape(Rectangle())
-      .padding(-12)
+      .badgeHitArea(growsWithCapsule: growsWithCapsule)
       .buttonStyle(.borderless)
       // The count, then what a tap does. `spoken` is already a sentence.
       .accessibilityLabel("\(spoken). Opens \(pane.title).")
@@ -1295,6 +1291,32 @@ struct ContentView: View {
 }
 
 extension View {
+  /// The blocked badge's 44 pt hit area, without making its row taller.
+  ///
+  /// The fixed form: a 44 x 44 hit area on 20 x 20 of layout; keep these three modifiers in
+  /// this order. A plain 44 pt `frame` would make the rows taller than their neighbours.
+  /// `frame` sizes the hit box, `contentShape` makes all of it hittable, and the negative
+  /// padding returns the layout space. `contentShape` before `frame` shapes only the capsule,
+  /// and padding before `contentShape` shrinks the shape.
+  ///
+  /// The growing form takes the capsule's own size, at least 20 x 20, and pads the hit area
+  /// 12 pt past it on every side. `fixedSize`, so a neighbour with layout priority cannot
+  /// squeeze the capsule.
+  @ViewBuilder
+  fileprivate func badgeHitArea(growsWithCapsule: Bool) -> some View {
+    if growsWithCapsule {
+      fixedSize()
+        .frame(minWidth: 20, minHeight: 20)
+        .padding(12)
+        .contentShape(Rectangle())
+        .padding(-12)
+    } else {
+      frame(width: 44, height: 44)
+        .contentShape(Rectangle())
+        .padding(-12)
+    }
+  }
+
   /// Asks the split view for a sidebar this wide, or asks for nothing.
   ///
   /// `nil` applies no modifier, because any modifier replaces the platform's per-device width
