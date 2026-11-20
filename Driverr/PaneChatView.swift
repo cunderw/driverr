@@ -1465,10 +1465,19 @@ struct PaneChatView: View {
                   top: 0)
               }
               .scrollBounceBehavior(.basedOnSize)
-              .scrollEdgeEffectStyle(.soft, for: .vertical)
-              // A scroll view reaches into the safe area around it, so unclipped the stack
-              // draws down under the composer.
-              .clipped()
+              // A scroll view reaches into the safe area around it, so unmasked the stack
+              // draws down under the composer. The mask also fades both ends over 12 pt
+              // rather than cutting through the glass: `scrollEdgeEffectStyle(.soft, …)`
+              // drew nothing here, in a bar with no bar of its own.
+              .mask {
+                VStack(spacing: 0) {
+                  LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom)
+                    .frame(height: 12)
+                  Color.black
+                  LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom)
+                    .frame(height: 12)
+                }
+              }
             }
           }
         } else {
