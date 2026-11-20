@@ -1404,6 +1404,7 @@ struct AppEnvironment {
     if isTranscriptEndingSubagents { return endingSubagentTranscript }
     if isTranscriptIdleSubagents { return idleSubagentTranscript }
     if isTranscriptSubagents { return subagentTranscript }
+    if isTranscriptUsageLimitedTomorrow { return usageLimitedTomorrowTranscript }
     if isTranscriptUsageLimited { return usageLimitedTranscript }
     if isTranscriptUsageLimitReset { return usageLimitResetTranscript }
     if isTranscriptServerError { return serverErrorTranscript }
@@ -1690,6 +1691,13 @@ struct AppEnvironment {
   /// the host's zone, as a real record does; the chat hides that turn while the notice stands.
   static let usageLimitedTranscript = usageLimited(resetsAt: Date().addingTimeInterval(2 * 3_600))
 
+  /// The same limit, resetting at 7:53 PM tomorrow: the folded notice's longer form at
+  /// accessibility sizes (#107).
+  static let usageLimitedTomorrowTranscript = usageLimited(
+    resetsAt: Calendar.current.date(
+      byAdding: DateComponents(day: 1, hour: 19, minute: 53),
+      to: Calendar.current.startOfDay(for: Date()))!)
+
   /// The same limit, reset an hour before launch: the "Usage limit reset" state.
   static let usageLimitResetTranscript = usageLimited(
     resetsAt: Date().addingTimeInterval(-3_600))
@@ -1722,6 +1730,11 @@ struct AppEnvironment {
   /// Whether this launch's notifications report `.authorized`. See `SilentNotificationCenter`.
   static var isNotificationsAuthorized: Bool {
     ProcessInfo.processInfo.arguments.contains("-uiTestingNotificationsAuthorized")
+  }
+
+  /// Whether this launch should serve the usage-limit fixture resetting tomorrow.
+  static var isTranscriptUsageLimitedTomorrow: Bool {
+    ProcessInfo.processInfo.arguments.contains("-uiTestingUsageLimitedTomorrow")
   }
 
   /// Whether this launch should serve the usage-limit fixture past its reset.
