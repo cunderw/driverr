@@ -66,7 +66,7 @@ struct HostRowLabelLayoutTests {
   }
 
   /// `.large` is the default size. `.accessibility5` is the size the UI tests launch with,
-  /// `UICTContentSizeCategoryAccessibilityXXXL`; at `.accessibility3` main's row still fits.
+  /// `UICTContentSizeCategoryAccessibilityXXXL`.
   @Test(
     "the name stays on one line and the capsule whole, the dot and badge beside or under it",
     arguments: [DynamicTypeSize.large, .accessibility5], [1, 2])
@@ -80,9 +80,10 @@ struct HostRowLabelLayoutTests {
     let name = try #require(frames[.name], "The name never reported a frame.")
     let capsule = try #require(frames[.badge], "The badge never reported a frame.")
     let dot = try #require(frames[.dot], "The dot never reported a frame.")
+    let address = try #require(frames[.address], "The address never reported a frame.")
     let measured = """
       name \(name), one line \(natural.name); capsule \(capsule), natural \(natural.capsule); \
-      dot \(dot)
+      dot \(dot); address \(address)
       """
     #expect(
       abs(name.height - natural.name.height) < 1,
@@ -91,8 +92,10 @@ struct HostRowLabelLayoutTests {
       capsule.width >= natural.capsule.width - 0.5,
       "The capsule is squeezed: \(capsule.width) pt of \(natural.capsule.width) pt. \(measured)")
     if size.isAccessibilitySize {
-      #expect(dot.minY >= name.maxY, "The dot is not under the name. \(measured)")
-      #expect(capsule.minY >= name.maxY, "The badge is not under the name. \(measured)")
+      // Under the address, not only the name: a badge box smaller than the capsule lets the
+      // capsule spill up over the address.
+      #expect(dot.minY >= address.maxY, "The dot is not under the address. \(measured)")
+      #expect(capsule.minY >= address.maxY, "The badge is not under the address. \(measured)")
     } else {
       #expect(dot.minX >= name.maxX, "The dot is not beside the name. \(measured)")
       #expect(capsule.minX >= dot.maxX, "The badge is not after the dot. \(measured)")

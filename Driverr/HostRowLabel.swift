@@ -11,6 +11,8 @@ struct HostRowLonePane {
 enum HostRowPart {
   /// The host's name.
   case name
+  /// The address line under the name.
+  case address
   /// The drawn capsule of the blocked badge, not its layout box.
   case badge
   /// The connection dot.
@@ -49,6 +51,7 @@ struct HostRowLabel<Accessory: View>: View {
         Text(status.subtitle)
           .font(.caption)
           .foregroundStyle(.secondary)
+          .background { measurement(.address) }
         if stacked {
           HStack(spacing: 8) {
             indicators
@@ -196,7 +199,9 @@ extension View {
   ///
   /// The layout box is the capsule's own size, at least 20 x 20, so the hit area is at least
   /// 44 x 44. At the default size that box is 20 x 20. At the accessibility sizes it grows
-  /// with the capsule, so the capsule does not spill over the address above it. `fixedSize`,
+  /// with the capsule, so the capsule does not spill over the address above it. There the hit
+  /// area reaches 12 pt above the capsule, past the 6 pt gap, and covers the bottom 6 pt of
+  /// the address's last line; the target stays at least 44 pt. `fixedSize`,
   /// so a neighbour cannot squeeze the capsule. Keep `contentShape` between the two paddings:
   /// before them it shapes only the capsule, and after them it shrinks the shape.
   fileprivate func badgeHitArea() -> some View {
