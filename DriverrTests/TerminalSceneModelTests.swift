@@ -110,12 +110,15 @@ struct TerminalSceneModelTests {
   /// `responder`.
   ///
   /// - Parameter surface: which surface, chat or terminal, the scene opens on, or
-  ///   `nil` for the scene's own choice (`.chat` for an agent pane). It defaults to `.terminal`
-  ///   because most of this suite is about the controller's lifetime. Set before `start()`, as
-  ///   the screen does.
+  ///   `nil` for the scene's own choice (`firstSurface` for an agent pane). It defaults to
+  ///   `.terminal` because most of this suite is about the controller's lifetime. Set before
+  ///   `start()`, as the screen does.
+  /// - Parameter firstSurface: the Settings choice of first surface, as `TerminalPresenter`
+  ///   passes it.
   private func makeScene(
     initialTarget: TerminalTarget = .pane(id: "w1:p1"),
     surface: PaneSurface? = .terminal,
+    firstSurface: @escaping @MainActor () -> PaneSurface = { .chat },
     ptyGreeting: String? = nil,
     herdr: (any HerdrControl)? = nil,
     notifications: NotificationCenter = NotificationCenter(),
@@ -138,7 +141,8 @@ struct TerminalSceneModelTests {
       stepDeadline: stepDeadline,
       openSettlingWindow: openSettlingWindow,
       coreSizeDeadline: coreSizeDeadline,
-      notifications: notifications
+      notifications: notifications,
+      firstSurface: firstSurface
     )
     if let surface { scene.show(surface) }
     return (scene, transport)
@@ -1648,6 +1652,183 @@ struct TerminalSceneModelTests {
     await scene.settle()
     #expect(scene.title == "terminal wiring")
     #expect(scene.title == scene.currentPane?.title)
+  }
+
+  // MARK: - The first-surface setting
+
+  /// The Settings choice, changeable while a scene is up, as `SettingsModel` is.
+  @MainActor
+  private final class FirstSurfaceSetting {
+    var value: PaneSurface
+    init(_ value: PaneSurface) { self.value = value }
+  }
+
+  @Test("under Terminal, an agent pane never switched opens on its terminal with the controller")
+  func theTerminalSettingOpensAnAgentPaneOnItsTerminal() async {
+    let (scene, transport) = await makeScene(
+      surface: nil, firstSurface: { .terminal }, responder: Self.everythingPaints)
+    scene.start()
+    await scene.settle()
+
+    #expect(scene.surface == .terminal)
+    #expect(scene.showsSurfaceToggle, "the pane still has a chat to switch to")
+    let controls = await transport.streamedCommands.filter(Self.isControlOf("term_w1p1"))
+    #expect(controls.count == 1, "the terminal side takes the token once: \(controls)")
+    #expect(scene.role(for: .pane(id: "w1:p1")) == .controller)
+  }
+
+  /// Memory is the reader's own choice for the pane, so the setting does not override it.
+  @Test("under Terminal, a pane remembered on chat opens on chat and takes no controller")
+  func aRememberedChatOutranksTheTerminalSetting() async {
+    let (scene, transport) = await makeScene(
+      surface: .chat, firstSurface: { .terminal }, responder: Self.everythingPaints)
+    scene.start()
+    await scene.settle()
+
+    #expect(scene.surface == .chat)
+    let commands = await transport.streamedCommands
+    #expect(
+      commands.contains { $0.contains("terminal session control") } == false,
+      "a remembered chat took the attach token: \(commands)")
+    #expect(scene.role(for: .pane(id: "w1:p1")) == .observer)
+  }
+
+  /// A shell has nothing but a terminal, whatever the setting says.
+  @Test("a pane without an agent opens on its terminal under either setting, with no toggle",
+    arguments: PaneSurface.allCases)
+  func aShellIgnoresTheSetting(setting: PaneSurface) async {
+    let (scene, _) = await makeScene(
+      initialTarget: .pane(id: "w1:p3"), surface: nil, firstSurface: { setting },
+      responder: Self.everythingPaints)
+    scene.start()
+    await scene.settle()
+
+    #expect(scene.surface == .terminal)
+    #expect(!scene.showsSurfaceToggle)
+    #expect(scene.role(for: .pane(id: "w1:p3")) == .controller)
+  }
+
+  /// A core pane read from its chat, with the setting still changeable.
+  private func coreAgentScene(
+    _ attacher: FakeCoreAttacher,
+    surface: PaneSurface?,
+    setting: FirstSurfaceSetting
+  ) async throws -> (TerminalSceneModel, FakeCoreViewer) {
+    let control = FakeControl(
+      tree: tree(
+        withCorePane: "core:t7", agent: FakeControl.seededTree.pane(id: "w1:p1")?.agent),
+      attacher: attacher)
+    let (scene, _) = await makeScene(
+      initialTarget: .pane(id: "core:t7"), surface: surface, firstSurface: { setting.value },
+      herdr: control, openSettlingWindow: .zero, responder: Self.everythingPaints)
+    let observer = try await opened(scene, attacher)
+    #expect(scene.surface == .chat)
+    #expect(scene.currentRole == .observer)
+    return (scene, observer)
+  }
+
+  /// The pane on screen now shows its terminal, and an observer there cannot be typed into.
+  @Test("switching the setting to Terminal promotes the observer of a core pane on screen")
+  func theSettingToTerminalPromotesTheCurrentObserver() async throws {
+    let attacher = FakeCoreAttacher()
+    let setting = FirstSurfaceSetting(.chat)
+    let (scene, observer) = try await coreAgentScene(attacher, surface: nil, setting: setting)
+
+    setting.value = .terminal
+    scene.firstSurfaceChanged()
+    await scene.settle()
+
+    #expect(scene.surface == .terminal)
+    #expect(observer.promotionCount == 1)
+    #expect(scene.currentRole == .controller)
+    #expect(attacher.log == ["observe t7"])
+  }
+
+  @Test("switching the setting leaves a pane remembered on chat where it is")
+  func theSettingDoesNotMoveARememberedPane() async throws {
+    let attacher = FakeCoreAttacher()
+    let setting = FirstSurfaceSetting(.chat)
+    let (scene, observer) = try await coreAgentScene(attacher, surface: .chat, setting: setting)
+
+    setting.value = .terminal
+    scene.firstSurfaceChanged()
+    await scene.settle()
+
+    #expect(scene.surface == .chat)
+    #expect(observer.promotionCount == 0)
+    #expect(scene.currentRole == .observer)
+  }
+
+  /// The chat is on screen now, so a controller behind it would hold the desk's size for
+  /// nothing.
+  @Test("switching the setting to Chat hands the current pane's controller back")
+  func theSettingToChatDemotesTheCurrentController() async {
+    let setting = FirstSurfaceSetting(.terminal)
+    let (scene, transport) = await makeScene(
+      surface: nil, firstSurface: { setting.value }, responder: Self.everythingPaints)
+    scene.start()
+    await scene.settle()
+    #expect(scene.role(for: .pane(id: "w1:p1")) == .controller)
+
+    setting.value = .chat
+    scene.firstSurfaceChanged()
+    await scene.settle()
+
+    #expect(scene.surface == .chat)
+    #expect(scene.role(for: .pane(id: "w1:p1")) == .observer)
+    #expect(await transport.streamedCommands.filter(Self.isObserveOf("term_w1p1")).isEmpty == false)
+  }
+
+  /// Reply on a new scene: the presenter builds the scene and asks for the composer before
+  /// `start()`.
+  @Test("Reply under Terminal opens a new scene on chat and never takes the controller")
+  func replyOpensANewSceneOnChat() async {
+    let (scene, transport) = await makeScene(
+      surface: nil, firstSurface: { .terminal }, responder: Self.everythingPaints)
+
+    scene.focusComposer()
+    scene.start()
+    await scene.settle()
+
+    #expect(scene.surface == .chat)
+    let commands = await transport.streamedCommands
+    #expect(
+      commands.contains { $0.contains("terminal session control") } == false,
+      "Reply took the attach token: \(commands)")
+    #expect(scene.takeComposerFocusRequest())
+  }
+
+  /// Reply on a host with a scene up: the presenter selects the pane and asks for the
+  /// composer in one go, with nothing settled between.
+  @Test("Reply under Terminal on a scene showing another pane opens that pane on chat")
+  func replyOpensAPaneOnChatInAnExistingScene() async {
+    let (scene, transport) = await makeScene(
+      surface: nil, firstSurface: { .terminal }, responder: Self.everythingPaints)
+    scene.start()
+    await scene.settle()
+
+    scene.select(.pane(id: "w1:p2"))
+    scene.focusComposer()
+    await scene.settle()
+
+    #expect(scene.current == .pane(id: "w1:p2"))
+    #expect(scene.surface == .chat)
+    let controls = await transport.streamedCommands.filter(Self.isControlOf("term_w1p2"))
+    #expect(controls.isEmpty, "Reply took the replied-to pane's attach token: \(controls)")
+    #expect(scene.role(for: .pane(id: "w1:p2")) == .observer)
+    #expect(scene.takeComposerFocusRequest())
+  }
+
+  /// Reply is a choice of the chat for that pane, so a later change of the setting does not
+  /// move it.
+  @Test("Reply remembers chat for the pane under either setting", arguments: PaneSurface.allCases)
+  func replyRemembersChat(setting: PaneSurface) async {
+    let (scene, _) = await makeScene(
+      surface: nil, firstSurface: { setting }, responder: Self.everythingPaints)
+
+    scene.focusComposer()
+
+    #expect(scene.model.surfaces.surface(for: "w1:p1") == .chat)
   }
 
   // MARK: - Reading a pane versus driving it

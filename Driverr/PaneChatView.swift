@@ -80,25 +80,6 @@ struct ChatPlaceProbe: Equatable {
   var hasStandingTarget = false
 }
 
-
-/// Which of a pane's two surfaces is being looked at.
-///
-/// Only a pane with an agent has two; see `TerminalScreen.showsSurfaceToggle`. A shell opens
-/// straight into the terminal.
-enum PaneSurface: Hashable {
-  case chat
-  case terminal
-
-  /// The other one, which ⌘⇧T switches to. A `switch`, so a third surface fails to compile
-  /// here instead of making inline ternaries wrong.
-  var toggled: PaneSurface {
-    switch self {
-    case .chat: .terminal
-    case .terminal: .chat
-    }
-  }
-}
-
 /// What the transcript watcher is keyed on: which conversation, and whether anyone is looking.
 /// A named value, so a new condition cannot be appended without being seen.
 private struct WatchKey: Equatable {

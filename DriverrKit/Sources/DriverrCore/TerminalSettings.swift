@@ -1,7 +1,8 @@
 import Foundation
 
-/// The complete set of global settings: theme, font, font size, whether the captured screen
-/// wraps, whether Driverr draws Live Activities, and whether a tmux window takes the phone's size.
+/// The complete set of global settings: theme, font, font size, which surface an agent pane
+/// opens on, whether the captured screen wraps, whether Driverr draws Live Activities, and
+/// whether a tmux window takes the phone's size.
 ///
 /// The list is closed. A new setting has to argue its case (see `CLAUDE.md`), and this type
 /// has nowhere to put one without changing it on purpose.
@@ -21,6 +22,10 @@ public struct TerminalSettings: Hashable, Sendable, Codable {
   /// Whether an open tmux pane's window takes this screen's size, and gives it back on leaving.
   /// Off leaves the desk's size alone, and the pane draws at the desk's width.
   public var resizesTmuxWindows: Bool
+  /// The surface an agent pane opens on when it was never switched by hand. A pane's
+  /// remembered surface outranks it, and a pane with no agent always opens on the terminal.
+  /// See `PaneSurface.opening(hasChatSurface:remembered:setting:)`.
+  public var panesOpenOn: PaneSurface
 
   /// Small enough to fit a wide terminal on a phone, large enough to read. Enforced here
   /// rather than left to a stepper.
@@ -33,7 +38,8 @@ public struct TerminalSettings: Hashable, Sendable, Codable {
     fontSize: Double = TerminalSettings.defaultFontSize,
     wrapsScreenLines: Bool = true,
     liveActivities: Bool = true,
-    resizesTmuxWindows: Bool = true
+    resizesTmuxWindows: Bool = true,
+    panesOpenOn: PaneSurface = .chat
   ) {
     self.themeID = themeID
     self.fontID = fontID
@@ -41,6 +47,7 @@ public struct TerminalSettings: Hashable, Sendable, Codable {
     self.wrapsScreenLines = wrapsScreenLines
     self.liveActivities = liveActivities
     self.resizesTmuxWindows = resizesTmuxWindows
+    self.panesOpenOn = panesOpenOn
   }
 
   public init(from decoder: any Decoder) throws {
@@ -56,6 +63,9 @@ public struct TerminalSettings: Hashable, Sendable, Codable {
     let activities = try container.decodeIfPresent(Bool.self, forKey: .liveActivities)
     // `?? true`: the default, because a pane at the desk's width is unusable on a phone.
     let resizes = try container.decodeIfPresent(Bool.self, forKey: .resizesTmuxWindows)
+    // `try?`, unlike the fields above: a raw value this build does not know throws, and a
+    // throw here would reset every setting. `?? .chat`: what every pane opened on before.
+    let opensOn = try? container.decodeIfPresent(PaneSurface.self, forKey: .panesOpenOn)
     self.init(
       themeID: theme ?? Theme.default.id,
       // The resolved id, so an id this build no longer ships shows the face it draws as
@@ -64,7 +74,8 @@ public struct TerminalSettings: Hashable, Sendable, Codable {
       fontSize: size ?? Self.defaultFontSize,
       wrapsScreenLines: wraps ?? true,
       liveActivities: activities ?? true,
-      resizesTmuxWindows: resizes ?? true
+      resizesTmuxWindows: resizes ?? true,
+      panesOpenOn: opensOn ?? .chat
     )
   }
 

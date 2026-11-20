@@ -114,6 +114,10 @@ final class TerminalSceneModel {
   private(set) var actions: PaneActionsModel?
 
   private let initialTarget: TerminalTarget
+  /// The surface an agent pane never switched by hand opens on: the Settings choice,
+  /// `TerminalSettings.panesOpenOn`. A closure, so a change reaches a scene already up, and
+  /// given at init, so a pane never draws one surface for a frame and then flips.
+  private let firstSurface: @MainActor () -> PaneSurface
   private var notices: [TerminalTarget: Notice] = [:]
   /// How many times each target's stream has ended with no `terminal.closed` record and
   /// been reattached with no frame painted since. `TerminalEndDisposition` bounds the
@@ -246,9 +250,11 @@ final class TerminalSceneModel {
     stepDeadline: Duration = TerminalSceneModel.defaultStepDeadline,
     openSettlingWindow: Duration = TerminalSession.defaultOpenSettlingWindow,
     coreSizeDeadline: Duration = DeferredPaneBridge.defaultSizeDeadline,
-    notifications: NotificationCenter = .default
+    notifications: NotificationCenter = .default,
+    firstSurface: @escaping @MainActor () -> PaneSurface = { .chat }
   ) {
     self.host = host
+    self.firstSurface = firstSurface
     self.model = model
     self.initialTarget = initialTarget
     self.wait = wait
@@ -314,15 +320,20 @@ final class TerminalSceneModel {
 
   /// Which surface `target` is showing, and therefore what it holds on the host.
   ///
-  /// The pane's remembered choice first (`PaneSurfaceMemory`), so it survives a pane switch
-  /// and leaving and reopening the pane. A pane never switched opens on chat, so reading a blocked agent's
-  /// question needs no terminal. Anything without a chat answers `.terminal`.
+  /// `PaneSurface.opening` decides. The pane's remembered choice first (`PaneSurfaceMemory`),
+  /// so it survives a pane switch and leaving and reopening the pane. A pane never switched
+  /// opens where Settings says (`firstSurface`), chat by default, so reading a blocked
+  /// agent's question needs no terminal. Anything without a chat answers `.terminal`.
   ///
   /// Resolved here, not in `TerminalScreen`, because it decides whether a target holds the
   /// exclusive attach token or an observer. See `openSurface(for:)`.
   func surface(for target: TerminalTarget) -> PaneSurface {
-    guard case .pane(let id) = target, hasChatSurface(for: target) else { return .terminal }
-    return model.surfaces.surface(for: id) ?? .chat
+    guard case .pane(let id) = target else { return .terminal }
+    return PaneSurface.opening(
+      hasChatSurface: hasChatSurface(for: target),
+      remembered: model.surfaces.surface(for: id),
+      setting: firstSurface()
+    )
   }
 
   /// The surface the current target is showing.
@@ -600,6 +611,16 @@ final class TerminalSceneModel {
     // host. `start()` opens whatever this recorded.
     guard warm.current != nil else { return }
     enqueue(on: target) { [weak self] in await self?.openSurface(for: target) }
+  }
+
+  /// The Settings choice of first surface changed while this scene is up.
+  ///
+  /// The current pane, if it was never switched by hand, now shows the other surface, so it
+  /// takes or hands back what that surface holds on the host, as when an agent starts or
+  /// quits. A remembered pane keeps its surface, and both checks find nothing to do.
+  func firstSurfaceChanged() {
+    promoteObserverLeftOnItsTerminal()
+    demoteViewerLeftBehindItsChat()
   }
 
   /// Reply asked for the composer, and it has not been served yet.
