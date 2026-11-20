@@ -68,8 +68,7 @@ struct HostRowLabelLayoutTests {
   /// `.large` is the default size. `.accessibility5` is the size the UI tests launch with,
   /// `UICTContentSizeCategoryAccessibilityXXXL`; at `.accessibility3` main's row still fits.
   @Test(
-    "the name stays on one line and the capsule whole, with the dot and badge beside the name "
-      + "or under it",
+    "the name stays on one line and the capsule whole, the dot and badge beside or under it",
     arguments: [DynamicTypeSize.large, .accessibility5], [1, 2])
   func nameAndBadgeStayWhole(size: DynamicTypeSize, blocked: Int) throws {
     let natural = naturalSizes(badge: String(blocked), size: size)
