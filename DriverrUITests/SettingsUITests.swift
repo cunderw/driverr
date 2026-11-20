@@ -196,11 +196,25 @@ final class SettingsUITests: XCTestCase {
         seen = app.staticTexts[header].exists
       }
       XCTAssertTrue(seen, "Expected a '\(header)' section.\nTree was:\n\(app.debugDescription)")
+      // The Terminal row is a `Button`, and it publishes no `StaticText` labelled
+      // "Terminal": measured at 0 with the row on screen. So any such text is a section
+      // header or a row of another setting. Counted here, with the row in reach, so the
+      // check cannot pass because the row has scrolled away.
+      if header == "Open Panes In" {
+        scrollIntoReach(app, "settings.panesopenon.terminal")
+        XCTAssertEqual(
+          app.staticTexts.matching(NSPredicate(format: "label == 'Terminal'")).count,
+          0,
+          "Settings grew a 'Terminal' section or row beside Open Panes In.\nTree was:\n"
+            + "\(app.debugDescription)"
+        )
+      }
     }
-    // Anything a future setting would plausibly be filed under. Not "Terminal", which is
-    // now a row of Open Panes In.
+    // Anything a future setting would plausibly be filed under. "Terminal" stays: the Open
+    // Panes In row publishes no `StaticText` (see above).
     for absent in [
-      "Advanced", "General", "Keyboard", "Behavior", "Behaviour", "Bell", "Scrollback",
+      "Advanced", "Terminal", "General", "Keyboard", "Behavior", "Behaviour", "Bell",
+      "Scrollback",
     ] {
       XCTAssertFalse(
         app.staticTexts[absent].exists,
