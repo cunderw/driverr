@@ -199,11 +199,11 @@ extension View {
   ///
   /// The layout box is the capsule's own size, at least 20 x 20, so the hit area is at least
   /// 44 x 44. At the default size that box is 20 x 20. At the accessibility sizes it grows
-  /// with the capsule, so the capsule does not spill over the address above it. There the hit
-  /// area reaches 12 pt above the capsule, past the 6 pt gap, and covers the bottom 6 pt of
-  /// the address's last line; the target stays at least 44 pt. `fixedSize`,
-  /// so a neighbour cannot squeeze the capsule. Keep `contentShape` between the two paddings:
-  /// before them it shapes only the capsule, and after them it shrinks the shape.
+  /// with the capsule: a fixed 20 pt box there let the 38 pt capsule spill sideways over the
+  /// dot. There the hit area reaches 12 pt above the capsule, past the 6 pt gap, and covers
+  /// the bottom 6 pt of the address's last line. `fixedSize`, so a neighbour cannot squeeze
+  /// the capsule. Keep `contentShape` between the two paddings: before them it shapes only the
+  /// capsule, and after them it shrinks the shape.
   fileprivate func badgeHitArea() -> some View {
     fixedSize()
       .frame(minWidth: 20, minHeight: 20)

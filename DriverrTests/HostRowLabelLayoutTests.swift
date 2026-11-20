@@ -91,6 +91,11 @@ struct HostRowLabelLayoutTests {
     #expect(
       capsule.width >= natural.capsule.width - 0.5,
       "The capsule is squeezed: \(capsule.width) pt of \(natural.capsule.width) pt. \(measured)")
+    // The row's 8 pt gap between the dot and the badge, whole. A badge layout box narrower
+    // than the capsule lets the capsule spill sideways over the dot.
+    #expect(
+      capsule.minX - dot.maxX >= 7.5,
+      "The badge is \(capsule.minX - dot.maxX) pt after the dot, not 8. \(measured)")
     if size.isAccessibilitySize {
       // Under the address, not only the name: a badge box smaller than the capsule lets the
       // capsule spill up over the address.
