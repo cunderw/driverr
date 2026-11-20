@@ -210,7 +210,7 @@ struct ChatUnderBarLayoutTests {
         ForEach(resets.indices, id: \.self) { index in
           AgentStopRow(
             stop: AgentStop(kind: .rateLimit, resetsAt: resets[index]),
-            expanded: .constant(false)
+            part: .header(expanded: .constant(false))
           )
           .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { heights[index] = $0 }
         }

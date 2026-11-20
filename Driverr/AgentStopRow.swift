@@ -20,26 +20,25 @@ import SwiftUI
 /// element, because the notice's capsule ignores its children.
 ///
 /// At accessibility text sizes the notice, the opt-in and Show the Screen covered most of a
-/// phone's chat (#107), so there the notice folds: one capsule with the glyph,
-/// `AgentStopNotice.compactLine` and a chevron, and a tap opens the full notice and the
-/// opt-in under it. `PaneChatView` hides Show the Screen while it is folded.
+/// phone's chat (#107), so there the row draws in two parts. The header is one capsule with
+/// the glyph, `AgentStopNotice.compactLine` and a chevron, the same card folded or open. A
+/// tap opens the body under it: the whole notice, in its own card, and the opt-in.
+/// `PaneChatView` places the two and draws Show the Screen after the body.
 struct AgentStopRow: View {
   let stop: AgentStop
   /// Whether this pane's reset alert offers Continue. `nil` draws no control.
   var continueAtReset: Binding<Bool>?
-  /// Whether the folded notice is open. `nil` at the sizes where the notice never folds, so
-  /// the notice is not a button there and lays out as it always did.
-  var expanded: Binding<Bool>?
-  /// Which of the row's two capsules to draw. `PaneChatView` draws them apart when the open
-  /// stack does not fit, so the notice and its fold stay put while the opt-in scrolls.
+  /// What to draw. `.all` at the sizes where the notice never folds, so it lays out as it
+  /// always did.
   var part: Part = .all
 
   enum Part {
+    /// The notice and the opt-in under it.
     case all
-    /// The notice capsule only.
-    case notice
-    /// The Continue opt-in only.
-    case continueControl
+    /// The folding header at accessibility sizes, a button that opens and closes the body.
+    case header(expanded: Binding<Bool>)
+    /// The open body at accessibility sizes: the whole notice and the opt-in under it.
+    case body
   }
 
   /// One width for all five glyphs, so the text does not move when the glyph changes.
@@ -61,18 +60,15 @@ struct AgentStopRow: View {
     TimelineView(.explicit(stop.resetsAt.map { [$0.addingTimeInterval(1)] } ?? [])) { _ in
       let notice = AgentStopNotice(stop: stop, asOf: Date())
       VStack(spacing: 0) {
-        if part != .continueControl {
-          if let expanded {
-            foldingCapsule(notice, expanded: expanded)
-          } else {
-            capsule(notice)
-          }
-        }
-        // Only while the reset is ahead: after it there is no alert left to change.
-        if part != .notice, let continueAtReset, stop.kind == .rateLimit, stop.resetsAt != nil,
-          !notice.isStale, expanded?.wrappedValue ?? true
-        {
-          continueControl(continueAtReset)
+        switch part {
+        case .all:
+          capsule(notice)
+          continueControl(for: notice)
+        case .header(let expanded):
+          foldingCapsule(notice, expanded: expanded)
+        case .body:
+          card(notice)
+          continueControl(for: notice)
         }
       }
     }
@@ -90,22 +86,28 @@ struct AgentStopRow: View {
     .accessibilityIdentifier("pane.chat.agentStop")
   }
 
-  /// The notice as a button that folds it, at accessibility sizes. Folded it is the glyph and
-  /// the compact line, at most two lines on an iPhone 17 at the largest size for today's
-  /// reset; open it is the whole notice. The chevron says which. VoiceOver reads the whole
-  /// notice either way, with the fold as the value.
+  /// The body's notice: title and detail in the notice's glass, without the glyph the header
+  /// already shows. One accessibility element, as the notice is at other sizes.
+  private func card(_ notice: AgentStopNotice) -> some View {
+    words(for: notice)
+      .noticeGlass()
+      .accessibilityElement(children: .ignore)
+      .accessibilityLabel(notice.accessibilityLabel)
+      .accessibilityIdentifier("pane.chat.agentStop.detail")
+  }
+
+  /// The header at accessibility sizes: a button that opens and closes the body. The glyph and
+  /// the compact line, at most two lines on an iPhone 17 at the largest size, in both states,
+  /// so it keeps its height as the body opens. The chevron says which state. VoiceOver reads
+  /// the whole notice, with the fold as the value.
   private func foldingCapsule(_ notice: AgentStopNotice, expanded: Binding<Bool>) -> some View {
     Button { expanded.wrappedValue.toggle() } label: {
       HStack(alignment: .firstTextBaseline, spacing: 6) {
         glyph(notice)
-        if expanded.wrappedValue {
-          words(for: notice)
-        } else {
-          Text(notice.compactLine)
-            .fontWeight(.semibold)
-            .foregroundStyle(notice.isStale ? Color.secondary : Color.primary)
-            .fixedSize(horizontal: false, vertical: true)
-        }
+        Text(notice.compactLine)
+          .fontWeight(.semibold)
+          .foregroundStyle(notice.isStale ? Color.secondary : Color.primary)
+          .fixedSize(horizontal: false, vertical: true)
         Image(systemName: expanded.wrappedValue ? "chevron.up" : "chevron.down")
           .fontWeight(.semibold)
           .foregroundStyle(Color.secondary)
@@ -127,6 +129,15 @@ struct AgentStopRow: View {
       .foregroundStyle(notice.isStale ? Color.secondary : Color.orange)
       .frame(width: glyphWidth, alignment: .center)
       .accessibilityHidden(true)
+  }
+
+  /// The opt-in, only for a live limit with a reset time: after the reset there is no alert
+  /// left to change.
+  @ViewBuilder
+  private func continueControl(for notice: AgentStopNotice) -> some View {
+    if let continueAtReset, stop.kind == .rateLimit, stop.resetsAt != nil, !notice.isStale {
+      continueControl(continueAtReset)
+    }
   }
 
   /// The opt-in for the reset alert's Continue. A button with a check, not a `Toggle`, so it
