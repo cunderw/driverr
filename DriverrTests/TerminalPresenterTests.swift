@@ -180,8 +180,8 @@ struct TerminalPresenterTests {
 
   @Test("a pick on the host already on screen switches the scene rather than re-presenting it")
   func aPickOnTheCurrentHostSwitchesInPlace() throws {
-    // The switcher cannot produce this, but the method must not tear a warm scene down for
-    // nothing.
+    // The iPad sidebar's pane rows produce this: a tap on another pane of the open host must
+    // switch inside the warm scene, not tear it down.
     let presenter = TerminalPresenter()
     let registry = registered(presenter, [host])
     presenter.present(

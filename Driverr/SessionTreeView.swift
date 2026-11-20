@@ -437,7 +437,7 @@ struct SessionTreeView: View {
         .font(.subheadline.weight(.semibold))
       // Only `.inline`: a single user-named tab. See `Workspace.tabHeaderStyle`.
       if workspace.tabHeaderStyle == .inline, let tab = workspace.tabs.first {
-        Text("· \(tab.label)")
+        Text("·\u{00A0}\(tab.label)")
           .font(.subheadline)
           .foregroundStyle(.secondary)
       }
@@ -589,22 +589,6 @@ struct SessionTreeView: View {
     }
   }
 
-  /// The second line of a pane row: what it is doing, or where it is.
-  ///
-  /// An agent's is `{agent} · {status}` in herdr's format, so the state is in words and not
-  /// only colour. A stopped agent says `Stopped`, not herdr's `Blocked`. A shell shows its
-  /// directory, truncated from the head.
-  private func subtitle(for pane: Pane, stop: PaneStopBadge?) -> String? {
-    if let agent = pane.agent {
-      let status = stop?.label ?? agent.status.displayName
-      if pane.title.caseInsensitiveCompare(agent.name) == .orderedSame {
-        return [status, pane.directory].compactMap { $0 }.joined(separator: " · ")
-      }
-      return "\(agent.name) · \(status)"
-    }
-    return pane.directory
-  }
-
   private func paneLabel(_ pane: Pane) -> some View {
     // The same stop the Needs you row reads, for any agent pane, since a limited pane can
     // report idle or working while it waits.
@@ -631,7 +615,7 @@ struct SessionTreeView: View {
           Text(pane.title)
             .foregroundStyle(pane.agent == nil ? .secondary : .primary)
             .lineLimit(1)
-          if let subtitle = subtitle(for: pane, stop: badge) {
+          if let subtitle = pane.rowSubtitle(stop: badge) {
             Text(subtitle)
               .font(.caption)
               .foregroundStyle(.secondary)

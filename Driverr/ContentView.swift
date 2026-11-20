@@ -147,7 +147,8 @@ struct ContentView: View {
   /// The hook sheet on screen now, however it was opened. The dismiss setter reads it,
   /// because a waiting trust prompt makes `pendingHookOffer` return `nil`.
   @State private var shownHookSheet: HookSheetRequest?
-  /// Which host the detail column shows, and the sidebar's own selection.
+  /// Which host the detail column shows when no pane scene is up. The sidebar's selection
+  /// is derived from it and the open scene; see `derivedSidebarSelection`.
   ///
   /// A value, not a `NavigationLink` destination, so the chosen host survives the list
   /// rebuilding under it while the tree polls.
@@ -159,6 +160,10 @@ struct ContentView: View {
   /// Whether `selectedHostID` came from the user's own row tap. Only then may the host
   /// screen's connect offer the hooks. Written by the two tap setters, cleared by `.onChange`.
   @State private var hostPick = HostPick()
+  /// Which hosts, workspaces and tabs the iPad sidebar's pane tree has open. In memory only,
+  /// so a reconnect keeps it and a relaunch starts fresh. Apart from `SessionModel`'s own
+  /// expanded workspaces, so the sidebar and the host screen fold separately.
+  @State private var sidebarDisclosure = SidebarDisclosure()
   /// Whether this launch has already applied its starting selection. `.task` runs once per
   /// appearance, and a second restore would override the user's later choice.
   @State private var didApplyLaunchSelection = false
@@ -175,6 +180,11 @@ struct ContentView: View {
   /// `SidebarColumnWidth.ideal(scaledBase:)` then clamps it, in `DriverrCore`, where it is
   /// tested. Unclamped, 320 pt reaches about 900 at the largest size.
   @ScaledMetric(relativeTo: .body) private var scaledSidebarBase = SidebarColumnWidth.base
+
+  /// How far the list's own disclosure chevrons reach past a row's content edge, so the host
+  /// row's chevron can share their column. Measured on Driverr iPad: 2.5 pt at the default
+  /// size and 8 pt at AX3, which is the glyph's own growth, so it scales with the footnote.
+  @ScaledMetric(relativeTo: .footnote) private var disclosureOverhang: CGFloat = 2.5
 
   var body: some View {
     // The phone authors its own `NavigationStack` and the iPad keeps the split view (CLAUDE.md).
@@ -373,6 +383,13 @@ struct ContentView: View {
     .onChange(of: selectedHostID) { _, id in
       rememberSelection(id)
       hostPick.selectionChanged(to: id)
+    }
+    // A change of the open pane reveals its row: the switcher, a Needs-you row, a URL or a
+    // sub-agent can open a pane the sidebar has folded away. A fold the reader makes
+    // afterwards can hide the highlight until the next change. `initial`, for a pane opened
+    // at launch.
+    .onChange(of: sidebarReveal, initial: true) { _, target in
+      reveal(target)
     }
     // A request that arrives while the app is running. The launch case is drained by the
     // `.task` below.
@@ -933,42 +950,132 @@ struct ContentView: View {
     }
   }
 
-  /// The sidebar's selection, ending the pane scene on the way through.
+  /// What the sidebar highlights: the open pane, a plain shell's host, or the selected
+  /// host. Derived, never stored; see `SidebarSelection`.
+  private var derivedSidebarSelection: SidebarSelection? {
+    let scene = terminalPresenter.request?.scene
+    return SidebarSelection.derived(
+      selectedHostID: selectedHostID,
+      open: scene.map { ($0.host.id, $0.current) }
+    )
+  }
+
+  /// The sidebar's selection, ending the pane scene on a host tap and opening a pane on a
+  /// pane tap.
   ///
   /// A custom binding rather than `$selectedHostID` with `.onChange`, because SwiftUI writes
   /// through a selection binding only for the user's tap. `TerminalPresenter.select` also
   /// moves the selection, for a notification tap or a cross-host pick, and an `.onChange`
   /// would tear down the scene that pick had just presented. The binding also sees a tap on
   /// the already-selected host, which leaves the scene; `.onChange` would not fire for it.
-  private var sidebarSelection: Binding<DriverrCore.Host.ID?> {
+  ///
+  /// A pane tap goes through `present(hostID:paneID:)`, never `sidebarDidSelect`, which
+  /// closes the open scene. On the scene's own host it switches inside that scene.
+  private var sidebarSelection: Binding<SidebarSelection?> {
     Binding(
-      get: { selectedHostID },
-      set: { id in
-        // Regular width only, the one place a sidebar row and a pane scene are on screen
-        // together. On compact no tap can reach a row while the scene is up.
-        if terminalRoute == .detailColumn {
-          terminalPresenter.sidebarDidSelect(hostID: id)
+      get: { derivedSidebarSelection },
+      set: { selection in
+        switch SidebarSelection.effect(ofWrite: selection, current: derivedSidebarSelection) {
+        case .none:
+          break
+        case .openPane(let hostID, let paneID):
+          terminalPresenter.present(hostID: hostID, paneID: paneID)
+        case .selectHost(let id):
+          // Regular width only, the one place a sidebar row and a pane scene are on screen
+          // together. On compact no tap can reach a row while the scene is up.
+          if terminalRoute == .detailColumn {
+            terminalPresenter.sidebarDidSelect(hostID: id)
+          }
+          // A tap, by this binding's design.
+          hostPick.userPicked(id)
+          selectedHostID = id
         }
-        // A tap, by this binding's design.
-        hostPick.userPicked(id)
-        selectedHostID = id
       }
     )
+  }
+
+  /// What the sidebar must open to show the highlight: the open pane, and where its tree
+  /// puts it. The location is part of the value, so a pane opened before its host's tree
+  /// arrived is revealed when the tree lands.
+  private var sidebarReveal: SidebarReveal? {
+    guard case .pane(let hostID, let paneID) = derivedSidebarSelection else { return nil }
+    let tree = connections.existingModel(for: hostID)?.session?.tree(keeping: paneID)
+    let pane = tree?.pane(id: paneID)
+    return SidebarReveal(
+      hostID: hostID, paneID: paneID, workspaceID: pane?.workspaceID, tabID: pane?.tabID)
+  }
+
+  private func reveal(_ target: SidebarReveal?) {
+    guard let target,
+      let tree = connections.existingModel(for: target.hostID)?.session?.tree(keeping: target.paneID)
+    else { return }
+    sidebarDisclosure.reveal(paneID: target.paneID, hostID: target.hostID, tree: tree)
   }
 
   @ViewBuilder
   private func hostRows(_ model: HostListModel) -> some View {
     ForEach(model.hosts) { host in
       // `NavigationLink(value:)` on both routes, with the route's own value type. On regular
-      // width the value is the host id, which the link writes into the list's selection. On
+      // width the value is a `SidebarSelection`, which the link writes into the list's
+      // selection, and the host's pane tree follows it (`sidebarHost`). On
       // the phone it is the stack's `Route`, and the path setter writes `selectedHostID` from
       // it, so one selection drives both devices. A `Button` would lose the disclosure chevron
       // and row treatment on the phone.
       if sizeClass == .regular {
-        hostRowLink(host, value: host.id)
+        sidebarHost(host)
       } else {
         hostRowLink(host, value: PhoneStackPath.Route.host(host.id))
       }
+    }
+  }
+
+  /// A host in the iPad sidebar: its row and, once connected and ready, its pane tree in the
+  /// rows after it.
+  ///
+  /// **Not a `DisclosureGroup`.** As a group's label the host's link lost its highlight, and
+  /// a tap on it wrote `nil` into the selection, which emptied the detail column. The row
+  /// keeps its link, swipe and menu, and a chevron of its own opens and closes the tree.
+  @ViewBuilder
+  private func sidebarHost(_ host: DriverrCore.Host) -> some View {
+    let tree = sidebarTree(for: host)
+    hostRowLink(host, value: SidebarSelection.host(host.id), showsDisclosure: tree != nil)
+    if let tree, sidebarDisclosure.isHostExpanded(host.id) {
+      paneTree(host, tree: tree)
+    }
+  }
+
+  /// The tree the sidebar shows under `host`, or `nil` for a host with nothing to show.
+  ///
+  /// The host screen's condition (`HostDetailView`): connected, and herdr, a core or tmux
+  /// ready. The host with the open pane keeps that pane's group, as the switcher does, so
+  /// the highlight has a row. Every other host shows `tree`, which leaves out a machine
+  /// another connected host shows.
+  private func sidebarTree(for host: DriverrCore.Host) -> SessionTree? {
+    guard let model = connections.existingModel(for: host.id), case .connected = model.phase,
+      model.herdrAvailability?.isReady == true, let session = model.session
+    else { return nil }
+    let scene = terminalPresenter.request?.scene
+    var openPaneID: String?
+    if let scene, scene.host.id == host.id, case .pane(let id) = scene.current { openPaneID = id }
+    let tree = session.tree(keeping: openPaneID)
+    return tree.isEmpty ? nil : tree
+  }
+
+  private func paneTree(_ host: DriverrCore.Host, tree: SessionTree) -> some View {
+    let model = connections.existingModel(for: host.id)
+    return SidebarPaneTree(
+      hostID: host.id,
+      tree: tree,
+      disclosure: $sidebarDisclosure,
+      // The host is a plain row, so the outline starts one level in by hand.
+      indent: SidebarPaneTree.hostIndent,
+      // `existingModel` only: a row must not fetch a transcript. See `SessionTreeView`.
+      stop: { pane in model?.transcripts?.existingModel(for: pane.id)?.transcript?.agentStop },
+      session: model?.session
+    )
+    // Workspaces start from the first tree's default, once per host.
+    .onChange(of: tree.workspaces.map(\.id), initial: true) {
+      sidebarDisclosure.seed(hostID: host.id, tree: tree)
     }
   }
 
@@ -976,10 +1083,11 @@ struct ContentView: View {
   @ViewBuilder
   private func hostRowLink<Value: Hashable>(
     _ host: DriverrCore.Host,
-    value: Value
+    value: Value,
+    showsDisclosure: Bool = false
   ) -> some View {
     NavigationLink(value: value) {
-      hostRow(host)
+      hostRow(host, showsDisclosure: showsDisclosure)
     }
     .accessibilityIdentifier("hosts.row")
     .swipeActions {
@@ -1025,7 +1133,7 @@ struct ContentView: View {
   /// One host, answering "is anything waiting on me?" before it is opened. Every word comes
   /// from `DriverrCore.HostStatus`, where `swift test` covers it.
   @ViewBuilder
-  private func hostRow(_ host: DriverrCore.Host) -> some View {
+  private func hostRow(_ host: DriverrCore.Host, showsDisclosure: Bool) -> some View {
     let status = connections.status(for: host)
     HStack(spacing: 8) {
       VStack(alignment: .leading, spacing: 2) {
@@ -1034,16 +1142,54 @@ struct ContentView: View {
           .font(.caption)
           .foregroundStyle(.secondary)
       }
+      // First claim on the width in a row with the sidebar's chevron, or at AX3 the name
+      // breaks mid-word while its row is selected. Other rows lay out as they did.
+      .layoutPriority(showsDisclosure ? 1 : 0)
       Spacer(minLength: 8)
       connectionDot(status)
       if let badge = status.badge, let spoken = status.badgeAccessibilityLabel {
-        blockedBadge(host, badge: badge, spoken: spoken)
+        blockedBadge(host, badge: badge, spoken: spoken, growsWithCapsule: showsDisclosure)
       }
       // Draws nothing. Keeps the count above live. See `SessionPollHold`.
       if let session = connections.existingModel(for: host.id)?.session {
         SessionPollHold(session: session)
       }
+      if showsDisclosure {
+        hostDisclosure(host)
+      }
     }
+  }
+
+  /// The iPad sidebar's chevron for a host's pane tree, drawn as a `DisclosureGroup`'s is.
+  ///
+  /// A borderless button, so the row's link does not take the tap.
+  private func hostDisclosure(_ host: DriverrCore.Host) -> some View {
+    let isExpanded = sidebarDisclosure.isHostExpanded(host.id)
+    return Button {
+      withAnimation {
+        sidebarDisclosure.setHost(host.id, expanded: !isExpanded)
+      }
+    } label: {
+      Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+        // The width of the tree's own disclosure chevrons, measured on Driverr iPad: about
+        // 11.5 pt at the default size. It scales with them.
+        .font(.footnote.weight(.semibold))
+        .foregroundStyle(Color.primary)
+        // At least 20 pt of layout, trailing, so the glyph's right edge and centre line up
+        // with the tree's own chevrons. Not a fixed width: at the accessibility sizes the
+        // glyph outgrows it.
+        .frame(minWidth: 20, minHeight: 20, alignment: .trailing)
+    }
+    // The hit area is the layout plus 12 pt a side, so at least 44 pt, without growing the
+    // row. `contentShape` between the paddings, as on the blocked badge.
+    .padding(12)
+    .contentShape(Rectangle())
+    .padding(-12)
+    .padding(.trailing, -disclosureOverhang)
+    .buttonStyle(.borderless)
+    .accessibilityLabel(isExpanded ? "Hide panes" : "Show panes")
+    .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
+    .accessibilityIdentifier("sidebar.host.disclosure")
   }
 
   /// Whether Driverr is holding this host's connection, as a dot.
@@ -1096,11 +1242,16 @@ struct ContentView: View {
   /// A button when it names one pane, a label when it counts several: with two there is no
   /// single destination (`SessionTree.loneBlockedPane` is `nil`). `.buttonStyle(.borderless)`
   /// stops the enclosing `NavigationLink` row from taking the tap.
+  ///
+  /// `growsWithCapsule` is for a row that also draws the sidebar's chevron. Its layout box
+  /// takes the capsule's size, so at the accessibility sizes the capsule does not spill into
+  /// the chevron. Every other row keeps the fixed box, so the phone lays out as it did.
   @ViewBuilder
   private func blockedBadge(
     _ host: DriverrCore.Host,
     badge: String,
-    spoken: String
+    spoken: String,
+    growsWithCapsule: Bool
   ) -> some View {
     // Read through the optional: the registry may forget the host between reading the status
     // and this line.
@@ -1115,20 +1266,15 @@ struct ContentView: View {
       } label: {
         badgeCapsule(badge)
       }
-      // A 44 x 44 hit area on 20 x 20 of layout; keep these three modifiers in this order.
-      // A plain 44 pt `frame` would make these rows taller than their neighbours. `frame`
-      // sizes the hit box, `contentShape` makes all of it hittable, and the negative padding
-      // returns the layout space. `contentShape` before `frame` shapes only the capsule, and
-      // padding before `contentShape` shrinks the shape.
-      .frame(width: 44, height: 44)
-      .contentShape(Rectangle())
-      .padding(-12)
+      .badgeHitArea(growsWithCapsule: growsWithCapsule)
       .buttonStyle(.borderless)
       // The count, then what a tap does. `spoken` is already a sentence.
       .accessibilityLabel("\(spoken). Opens \(pane.title).")
       .accessibilityIdentifier("hosts.blocked")
     } else {
       badgeCapsule(badge)
+        // Fixed on a chevron row, where the name's layout priority would squeeze it.
+        .fixedSize(horizontal: growsWithCapsule, vertical: false)
         .accessibilityLabel(spoken)
         .accessibilityIdentifier("hosts.blocked")
     }
@@ -1147,6 +1293,32 @@ struct ContentView: View {
 }
 
 extension View {
+  /// The blocked badge's 44 pt hit area, without making its row taller.
+  ///
+  /// The fixed form: a 44 x 44 hit area on 20 x 20 of layout; keep these three modifiers in
+  /// this order. A plain 44 pt `frame` would make the rows taller than their neighbours.
+  /// `frame` sizes the hit box, `contentShape` makes all of it hittable, and the negative
+  /// padding returns the layout space. `contentShape` before `frame` shapes only the capsule,
+  /// and padding before `contentShape` shrinks the shape.
+  ///
+  /// The growing form takes the capsule's own size, at least 20 x 20, and pads the hit area
+  /// 12 pt past it on every side. `fixedSize`, so a neighbour with layout priority cannot
+  /// squeeze the capsule.
+  @ViewBuilder
+  fileprivate func badgeHitArea(growsWithCapsule: Bool) -> some View {
+    if growsWithCapsule {
+      fixedSize()
+        .frame(minWidth: 20, minHeight: 20)
+        .padding(12)
+        .contentShape(Rectangle())
+        .padding(-12)
+    } else {
+      frame(width: 44, height: 44)
+        .contentShape(Rectangle())
+        .padding(-12)
+    }
+  }
+
   /// Asks the split view for a sidebar this wide, or asks for nothing.
   ///
   /// `nil` applies no modifier, because any modifier replaces the platform's per-device width
@@ -1167,13 +1339,14 @@ extension View {
 }
 
 /// Keeps one connected host's session polling while its row is on screen, so the badge count
-/// stays live. `SessionModel` counts its holders, so several screens can hold it.
+/// and, on iPad, the sidebar's pane tree stay live. The host row and each sidebar workspace row
+/// hold one. `SessionModel` counts its holders, so several screens can hold it.
 ///
 /// A view of its own, not `.task`/`.onDisappear` on the row, so retain and release always
 /// balance. `stopLiveUpdates` clamps at zero, so an unmatched release would silently drop
 /// another screen's hold. The cost is the host screen's own poll, only for hosts already
 /// connected.
-private struct SessionPollHold: View {
+struct SessionPollHold: View {
   let session: SessionModel
 
   var body: some View {
@@ -1217,4 +1390,12 @@ final class BackgroundAssertion {
     UIApplication.shared.endBackgroundTask(identifier)
     identifier = .invalid
   }
+}
+
+/// The open pane and where its host's tree puts it. See `ContentView.sidebarReveal`.
+private struct SidebarReveal: Hashable {
+  let hostID: DriverrCore.Host.ID
+  let paneID: String
+  let workspaceID: String?
+  let tabID: String?
 }
