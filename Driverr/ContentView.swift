@@ -147,7 +147,8 @@ struct ContentView: View {
   /// The hook sheet on screen now, however it was opened. The dismiss setter reads it,
   /// because a waiting trust prompt makes `pendingHookOffer` return `nil`.
   @State private var shownHookSheet: HookSheetRequest?
-  /// Which host the detail column shows, and the sidebar's own selection.
+  /// Which host the detail column shows when no pane scene is up. The sidebar's selection
+  /// is derived from it and the open scene; see `derivedSidebarSelection`.
   ///
   /// A value, not a `NavigationLink` destination, so the chosen host survives the list
   /// rebuilding under it while the tree polls.
@@ -1009,7 +1010,8 @@ struct ContentView: View {
   private func hostRows(_ model: HostListModel) -> some View {
     ForEach(model.hosts) { host in
       // `NavigationLink(value:)` on both routes, with the route's own value type. On regular
-      // width the value is the host id, which the link writes into the list's selection. On
+      // width the value is a `SidebarSelection`, which the link writes into the list's
+      // selection, and the host's pane tree follows it (`sidebarHost`). On
       // the phone it is the stack's `Route`, and the path setter writes `selectedHostID` from
       // it, so one selection drives both devices. A `Button` would lose the disclosure chevron
       // and row treatment on the phone.
@@ -1301,7 +1303,8 @@ extension View {
 }
 
 /// Keeps one connected host's session polling while its row is on screen, so the badge count
-/// stays live. `SessionModel` counts its holders, so several screens can hold it.
+/// and, on iPad, the sidebar's pane tree stay live. The host row and each sidebar workspace row
+/// hold one. `SessionModel` counts its holders, so several screens can hold it.
 ///
 /// A view of its own, not `.task`/`.onDisappear` on the row, so retain and release always
 /// balance. `stopLiveUpdates` clamps at zero, so an unmatched release would silently drop
