@@ -5,20 +5,17 @@ import UIKit
 
 @testable import Driverr
 
-/// The phone's host row at the largest text size, with a blocked badge.
+/// The phone's host row with a blocked badge, at the default text size and at the largest.
 ///
-/// A short name must stay whole on one line, and the badge must keep its whole capsule. With
-/// neither held, the name gave way first: it hyphenated "workbox" to "work-" / "box". The
-/// name's layout priority alone squeezes the count capsule to a sliver instead. Both halves are
-/// checked.
+/// A short name must stay whole on one line, and the badge must keep its whole capsule. At the
+/// largest size the row cannot hold the name, the dot and the badge side by side: the name
+/// hyphenated "workbox" to "work-" / "box", and giving it layout priority squeezed the count
+/// capsule to a sliver instead. There the dot and the badge take a line of their own under the
+/// address. At the default size they stay beside the name.
 @MainActor
 @Suite("Host row label layout")
 struct HostRowLabelLayoutTests {
   private static let name = "workbox"
-
-  /// The size the UI tests launch with, `UICTContentSizeCategoryAccessibilityXXXL`. At
-  /// `.accessibility3` the row fits on main, so this test could not fail there.
-  private static let size = DynamicTypeSize.accessibility5
 
   /// The status the store tour's connected host shows, with `blocked` panes waiting.
   private static func status(blocked: Int) -> HostStatus {
@@ -33,10 +30,12 @@ struct HostRowLabelLayoutTests {
   /// The row as the phone's host list draws it: a link in a list on a navigation stack.
   private func row(
     blocked: Int,
-    lonePane: HostRowLonePane?,
+    size: DynamicTypeSize,
     reporting sink: @escaping @MainActor (HostRowPart, CGRect) -> Void
   ) -> some View {
-    NavigationStack {
+    // One blocked pane makes the badge a button that opens it; several make it a label.
+    let lonePane = blocked == 1 ? HostRowLonePane(title: "claude", open: {}) : nil
+    return NavigationStack {
       List {
         NavigationLink(value: 1) {
           HostRowLabel(
@@ -45,39 +44,46 @@ struct HostRowLabelLayoutTests {
         }
       }
     }
-    .environment(\.dynamicTypeSize, Self.size)
+    .environment(\.dynamicTypeSize, size)
   }
 
-  /// The name on one line and the capsule at its own size, both at `size`, with nothing to
-  /// squeeze them.
-  private func naturalSizes(badge: String) -> (name: CGSize, capsule: CGSize, dot: CGSize) {
+  /// The name on one line and the capsule at its own size, with nothing to squeeze them.
+  private func naturalSizes(
+    badge: String,
+    size: DynamicTypeSize
+  ) -> (name: CGSize, capsule: CGSize) {
     var name = CGSize.zero
     var capsule = CGSize.zero
-    var dot = CGSize.zero
     let window = HostedProbe.window(
       VStack(alignment: .leading) {
         Text(Self.name).fixedSize().measuredFrame { name = $0.size }
         HostBadgeCapsule(badge: badge).fixedSize().measuredFrame { capsule = $0.size }
-        Image(systemName: "circle.fill").font(.caption2).measuredFrame { dot = $0.size }
       }
-      .environment(\.dynamicTypeSize, Self.size)
+      .environment(\.dynamicTypeSize, size)
     )
     withExtendedLifetime(window) {}
-    return (name, capsule, dot)
+    return (name, capsule)
   }
 
-  private func check(blocked: Int, lonePane: HostRowLonePane?) throws {
-    let natural = naturalSizes(badge: String(blocked))
+  /// `.large` is the default size. `.accessibility5` is the size the UI tests launch with,
+  /// `UICTContentSizeCategoryAccessibilityXXXL`; at `.accessibility3` main's row still fits.
+  @Test(
+    "the name stays on one line and the capsule whole, with the dot and badge beside the name "
+      + "or under it",
+    arguments: [DynamicTypeSize.large, .accessibility5], [1, 2])
+  func nameAndBadgeStayWhole(size: DynamicTypeSize, blocked: Int) throws {
+    let natural = naturalSizes(badge: String(blocked), size: size)
     var frames: [HostRowPart: CGRect] = [:]
     let window = HostedProbe.window(
-      row(blocked: blocked, lonePane: lonePane, reporting: { frames[$0] = $1 }))
+      row(blocked: blocked, size: size, reporting: { frames[$0] = $1 }))
     defer { withExtendedLifetime(window) {} }
 
     let name = try #require(frames[.name], "The name never reported a frame.")
     let capsule = try #require(frames[.badge], "The badge never reported a frame.")
+    let dot = try #require(frames[.dot], "The dot never reported a frame.")
     let measured = """
-      name \(name), one line \(natural.name); \
-      capsule \(capsule), natural \(natural.capsule); dot \(natural.dot); window \(window.bounds.width) pt
+      name \(name), one line \(natural.name); capsule \(capsule), natural \(natural.capsule); \
+      dot \(dot)
       """
     #expect(
       abs(name.height - natural.name.height) < 1,
@@ -85,15 +91,12 @@ struct HostRowLabelLayoutTests {
     #expect(
       capsule.width >= natural.capsule.width - 0.5,
       "The capsule is squeezed: \(capsule.width) pt of \(natural.capsule.width) pt. \(measured)")
-  }
-
-  @Test("at the largest text size a row counting several blocked panes keeps its name and its capsule whole")
-  func countKeepsNameAndCapsule() throws {
-    try check(blocked: 2, lonePane: nil)
-  }
-
-  @Test("at the largest text size a row whose badge opens one pane keeps its name and its capsule whole")
-  func lonePaneKeepsNameAndCapsule() throws {
-    try check(blocked: 1, lonePane: HostRowLonePane(title: "claude", open: {}))
+    if size.isAccessibilitySize {
+      #expect(dot.minY >= name.maxY, "The dot is not under the name. \(measured)")
+      #expect(capsule.minY >= name.maxY, "The badge is not under the name. \(measured)")
+    } else {
+      #expect(dot.minX >= name.maxX, "The dot is not beside the name. \(measured)")
+      #expect(capsule.minX >= dot.maxX, "The badge is not after the dot. \(measured)")
+    }
   }
 }

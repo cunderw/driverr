@@ -13,6 +13,8 @@ enum HostRowPart {
   case name
   /// The drawn capsule of the blocked badge, not its layout box.
   case badge
+  /// The connection dot.
+  case dot
 }
 
 /// One host, answering "is anything waiting on me?" before it is opened. Every word comes
@@ -42,7 +44,7 @@ struct HostRowLabel<Accessory: View>: View {
       }
       // First claim on the width in a row with the sidebar's chevron, or at AX3 the name
       // breaks mid-word while its row is selected. Other rows lay out as they did.
-      .layoutPriority(1)
+      .layoutPriority(growsWithCapsule ? 1 : 0)
       Spacer(minLength: 8)
       connectionDot
       if let badge = status.badge, let spoken = status.badgeAccessibilityLabel {
@@ -62,6 +64,7 @@ struct HostRowLabel<Accessory: View>: View {
     Image(systemName: Self.glyph(for: status.connection.glyphRole))
       .font(.caption2)
       .foregroundStyle(Self.tint(for: status.connection.glyphRole))
+      .background { measurement(.dot) }
       .accessibilityLabel(status.connectionAccessibilityLabel)
       .accessibilityRemoveTraits(.isSelected)
       .accessibilityIdentifier(Self.identifier(for: status.connection))
@@ -114,7 +117,7 @@ struct HostRowLabel<Accessory: View>: View {
       } label: {
         capsule(badge)
       }
-      .badgeHitArea(growsWithCapsule: true)
+      .badgeHitArea(growsWithCapsule: growsWithCapsule)
       .buttonStyle(.borderless)
       // The count, then what a tap does. `spoken` is already a sentence.
       .accessibilityLabel("\(spoken). Opens \(lonePane.title).")
@@ -122,7 +125,7 @@ struct HostRowLabel<Accessory: View>: View {
     } else {
       capsule(badge)
         // Fixed on a chevron row, where the name's layout priority would squeeze it.
-        .fixedSize(horizontal: true, vertical: false)
+        .fixedSize(horizontal: growsWithCapsule, vertical: false)
         .accessibilityLabel(spoken)
         .accessibilityIdentifier("hosts.blocked")
     }
