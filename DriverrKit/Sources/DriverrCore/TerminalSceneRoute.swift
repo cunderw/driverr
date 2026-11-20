@@ -59,12 +59,29 @@ public enum TerminalSceneRoute: Equatable, Sendable {
   /// changes the sidebar's colour. With the sidebar collapsed the leading safe area is the
   /// device's own, such as a landscape Pro Max's Dynamic Island inset, and must be painted.
   ///
-  /// - Parameter isSidebarCollapsed: whether the split view's column visibility is
-  ///   `.detailOnly`. Ignored off the detail column.
+  /// - Parameter isSidebarCollapsed: whether nothing of the sidebar sits beside the detail
+  ///   column, from `isSidebarCollapsed(detailLeadingInset:windowLeadingInset:)`. Ignored off
+  ///   the detail column.
   public func fillsLeadingSafeArea(isSidebarCollapsed: Bool) -> Bool {
     switch self {
     case .detailColumn: isSidebarCollapsed
     case .stack, .none: true
     }
+  }
+
+  /// How far, in points, the detail column's leading inset may exceed the window's and still
+  /// count as equal. Rounding of a fractional inset, never a sidebar.
+  public static let sidebarInsetTolerance: Double = 1
+
+  /// Whether the sidebar is collapsed, judged from two leading safe-area insets.
+  ///
+  /// While the sidebar shows beside the detail, the detail column's leading inset is the
+  /// sidebar's width. With it collapsed the inset is the window's own (zero on an iPad, the
+  /// Dynamic Island's on a landscape Pro Max). An overlaid sidebar leaves the detail's inset
+  /// alone, so it counts as collapsed too, and a fill paints under it as under any overlay.
+  public static func isSidebarCollapsed(
+    detailLeadingInset: Double, windowLeadingInset: Double
+  ) -> Bool {
+    detailLeadingInset <= windowLeadingInset + sidebarInsetTolerance
   }
 }
