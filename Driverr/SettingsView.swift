@@ -3,9 +3,9 @@ import DriverrTerm
 import SwiftUI
 import UIKit
 
-/// The complete global settings screen: theme, font, font size, whether a captured pane
-/// screen wraps its long lines, whether an open tmux pane's window takes this screen's size,
-/// and whether Driverr draws Live Activities.
+/// The complete global settings screen: theme, font, font size, which surface an agent pane
+/// opens on, whether a captured pane screen wraps its long lines, whether an open tmux pane's
+/// window takes this screen's size, and whether Driverr draws Live Activities.
 ///
 /// That is the whole surface (CLAUDE.md, "Not a config surface"). There is no "Advanced"
 /// section for another setting to hide in.
@@ -82,6 +82,28 @@ struct SettingsView: View {
             fontSizeControl
               .accessibilityIdentifier("settings.fontsize")
           }
+        }
+
+        // Only the first surface of a pane never switched by hand. A pane's remembered
+        // surface outranks it (`PaneSurface.opening`). The identifiers are on the rows,
+        // because a container's identifier overwrites its children's.
+        Section {
+          ForEach(PaneSurface.allCases, id: \.self) { surface in
+            Button {
+              model.setPanesOpenOn(surface)
+            } label: {
+              row(
+                PanesOpenOnCopy.title(for: surface),
+                selected: model.settings.panesOpenOn == surface
+              )
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("settings.panesopenon.\(surface.rawValue)")
+          }
+        } header: {
+          Text(PanesOpenOnCopy.header)
+        } footer: {
+          Text(PanesOpenOnCopy.footer)
         }
 
         // The identifier is on the `Toggle`, not the `Section`, because `setSwitch` drives

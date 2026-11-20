@@ -36,12 +36,15 @@ struct DriverrApp: App {
   init() {
     let environment = AppEnvironment.forLaunch
     self.environment = environment
-    _settingsModel = State(
-      initialValue: SettingsModel(
-        store: environment.settingsStore,
-        // From the environment, so a test can pass a store that never writes to the shared
-        // container.
-        widgetTheme: environment.widgetTheme))
+    let settings = SettingsModel(
+      store: environment.settingsStore,
+      // From the environment, so a test can pass a store that never writes to the shared
+      // container.
+      widgetTheme: environment.widgetTheme)
+    _settingsModel = State(initialValue: settings)
+    // Set from `init`, before any scene is built, so the first pane opened already follows
+    // Open Panes In. The model lives as long as the app.
+    TerminalPresenter.shared.firstSurface = { settings.settings.panesOpenOn }
     _liveActivityPreferences = State(
       initialValue: LiveActivityPreferencesModel(store: environment.liveActivityPreferences))
     _savedPrompts = State(initialValue: SavedPromptsModel(store: environment.savedPrompts))

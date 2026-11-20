@@ -212,6 +212,58 @@ struct TerminalSettingsTests {
     #expect(Set(ids).count == ids.count)
     #expect(TerminalFont.bundled.contains(TerminalFont.default))
   }
+
+  /// Chat is what every agent pane opened on before the setting existed.
+  @Test("agent panes open on chat by default")
+  func panesOpenOnChatByDefault() {
+    #expect(TerminalSettings.default.panesOpenOn == .chat)
+  }
+
+  @Test("a blob written before the open-panes setting existed decodes to chat")
+  func oldBlobOpensOnChat() throws {
+    let data = Data(#"{"themeID":"nord","fontID":"menlo","fontSize":15}"#.utf8)
+    let decoded = try JSONDecoder().decode(TerminalSettings.self, from: data)
+    #expect(decoded.panesOpenOn == .chat)
+    #expect(decoded.themeID == "nord")
+  }
+
+  /// A throw would reset every setting, not only this one.
+  @Test("an open-panes value this build does not know falls back to chat and keeps the rest")
+  func unknownOpenPanesValueFallsBack() throws {
+    let json =
+      #"{"themeID":"nord","fontID":"menlo","fontSize":17,"wrapsScreenLines":false,"#
+      + #""liveActivities":false,"resizesTmuxWindows":false,"panesOpenOn":"split"}"#
+    let decoded = try JSONDecoder().decode(TerminalSettings.self, from: Data(json.utf8))
+    #expect(decoded.panesOpenOn == .chat)
+    #expect(decoded.themeID == "nord")
+    #expect(decoded.fontID == "menlo")
+    #expect(decoded.fontSize == 17)
+    #expect(!decoded.wrapsScreenLines)
+    #expect(!decoded.liveActivities)
+    #expect(!decoded.resizesTmuxWindows)
+  }
+
+  /// The raw strings are what a stored blob holds, so a rename is a migration.
+  @Test("the open-panes value is stored as chat or terminal", arguments: [
+    (PaneSurface.chat, "chat"), (PaneSurface.terminal, "terminal"),
+  ])
+  func openPanesRawValues(surface: PaneSurface, raw: String) throws {
+    let data = Data(#"{"panesOpenOn":"\#(raw)"}"#.utf8)
+    #expect(try JSONDecoder().decode(TerminalSettings.self, from: data).panesOpenOn == surface)
+
+    let encoded = try JSONEncoder().encode(TerminalSettings(panesOpenOn: surface))
+    let object = try #require(try JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+    #expect(object["panesOpenOn"] as? String == raw)
+  }
+
+  @Test("the open-panes choice round trips through JSON")
+  func openPanesRoundTrips() throws {
+    let original = TerminalSettings(themeID: "nord", panesOpenOn: .terminal)
+    let data = try JSONEncoder().encode(original)
+    let decoded = try JSONDecoder().decode(TerminalSettings.self, from: data)
+    #expect(decoded == original)
+    #expect(decoded.panesOpenOn == .terminal)
+  }
 }
 
 @Suite("SettingsStore")

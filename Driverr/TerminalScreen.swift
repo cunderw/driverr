@@ -276,6 +276,11 @@ struct TerminalScreen: View {
       .onChange(of: model.session?.reportedTree ?? .empty) { _, _ in
         scene.treeChanged()
       }
+      // A pane never switched by hand follows the setting, so what it holds on the host
+      // follows too. `firstSurface` reads the same value at every open.
+      .onChange(of: settingsModel.settings.panesOpenOn) { _, _ in
+        scene.firstSurfaceChanged()
+      }
       // Only `start()`, which needs no balancing half: a second call from a rebuilt view
       // returns early. The retain/release pairs live in `TerminalPresenter.beginPresentation`.
       .task { scene.start() }

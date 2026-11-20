@@ -51,6 +51,33 @@ struct TerminalPresenterTests {
     return model
   }
 
+  /// The scene is built with the setting, so an agent pane never draws a frame on the wrong
+  /// surface. `w1:p1` has an agent in `FakeControl.seededTree`.
+  @Test("a presented agent pane opens where the presenter's first surface says",
+    arguments: PaneSurface.allCases)
+  func theSceneTakesThePresentersFirstSurface(setting: PaneSurface) async throws {
+    let presenter = TerminalPresenter()
+    presenter.firstSurface = { setting }
+    let model = await connected(rememberingInto: InMemoryLastPaneStore())
+
+    presenter.present(host: host, model: model, pane: pane("w1:p1"))
+
+    #expect(try #require(presenter.request).scene.surface == setting)
+  }
+
+  @Test("Reply opens an agent pane on chat whatever the presenter's first surface says")
+  func replyOpensOnChatUnderTerminal() async throws {
+    let presenter = TerminalPresenter()
+    presenter.firstSurface = { .terminal }
+    let model = await connected(rememberingInto: InMemoryLastPaneStore())
+
+    presenter.reply(host: host, model: model, pane: pane("w1:p1"))
+
+    let scene = try #require(presenter.request).scene
+    #expect(scene.surface == .chat)
+    #expect(scene.takeComposerFocusRequest())
+  }
+
   @Test("two panes on one host are one presentation, showing different things")
   func panesShareOnePresentation() throws {
     let presenter = TerminalPresenter()

@@ -161,13 +161,34 @@ final class SettingsUITests: XCTestCase {
     )
   }
 
-  /// Settings are theme, font, size, wrap, tmux resize and Live Activities, and nothing else,
-  /// so a seventh section fails a test rather than passing a review.
+  /// Two rows, Chat selected with a fresh `InMemorySettingsStore`, so an existing user's panes
+  /// open where they always did. Never tapped here; `SettingsMutationUITests` owns the change.
+  /// The wiring from the store to the rows is what this covers; `TerminalSettingsTests` has
+  /// the default.
+  func testSettingsOffersWhereAgentPanesOpenWithChatSelected() {
+    let app = openSettings()
+    let chat = scrollIntoReach(app, "settings.panesopenon.chat")
+    XCTAssertTrue(chat.exists, "Expected a Chat row.\nTree was:\n\(app.debugDescription)")
+    let terminal = scrollIntoReach(app, "settings.panesopenon.terminal")
+    XCTAssertTrue(
+      terminal.exists, "Expected a Terminal row.\nTree was:\n\(app.debugDescription)")
+    XCTAssertTrue(
+      chat.isSelected,
+      "Agent panes must open on chat by default. Row was: \(chat.debugDescription)")
+    XCTAssertFalse(
+      terminal.isSelected,
+      "Only one surface can be the first. Row was: \(terminal.debugDescription)")
+  }
+
+  /// Settings are theme, font, size, where agent panes open, wrap, tmux resize and Live
+  /// Activities, and nothing else, so an eighth section fails a test rather than passing a
+  /// review.
   func testSettingsOffersNothingElse() {
     let app = openSettings()
     // In the form's order, because the walk only swipes forward.
     for header in [
-      "Preview", "Theme", "Font", "Font Size", "Pane Screen", "tmux", "Live Activities",
+      "Preview", "Theme", "Font", "Font Size", "Open Panes In", "Pane Screen", "tmux",
+      "Live Activities",
     ] {
       var seen = app.staticTexts[header].exists
       for _ in 0..<5 where !seen {
@@ -175,13 +196,30 @@ final class SettingsUITests: XCTestCase {
         seen = app.staticTexts[header].exists
       }
       XCTAssertTrue(seen, "Expected a '\(header)' section.\nTree was:\n\(app.debugDescription)")
+      // The Terminal row is a `Button`, and it publishes no `StaticText` labelled
+      // "Terminal": measured at 0 with the row on screen. So any such text is a section
+      // header or a row of another setting. Counted here, with the row in reach, so the
+      // check cannot pass because the row has scrolled away.
+      if header == "Open Panes In" {
+        scrollIntoReach(app, "settings.panesopenon.terminal")
+        XCTAssertEqual(
+          app.staticTexts.matching(NSPredicate(format: "label == 'Terminal'")).count,
+          0,
+          "Settings grew a 'Terminal' section or row beside Open Panes In.\nTree was:\n"
+            + "\(app.debugDescription)"
+        )
+      }
     }
-    // Anything a future setting would plausibly be filed under.
-    for absent in ["Advanced", "Terminal", "Behavior", "Behaviour", "Bell", "Scrollback"] {
+    // Anything a future setting would plausibly be filed under. "Terminal" stays: the Open
+    // Panes In row publishes no `StaticText` (see above).
+    for absent in [
+      "Advanced", "Terminal", "General", "Keyboard", "Behavior", "Behaviour", "Bell",
+      "Scrollback",
+    ] {
       XCTAssertFalse(
         app.staticTexts[absent].exists,
-        "Settings grew a '\(absent)' section. Driverr has six settings, and a "
-          + "seventh has to argue its case in its own issue."
+        "Settings grew a '\(absent)' section. Driverr has seven settings, and an "
+          + "eighth has to argue its case in its own issue."
       )
     }
   }
@@ -288,6 +326,25 @@ final class SettingsMutationUITests: XCTestCase {
       "Expected Live Activities to still be off on the way back in.\nTree was:\n"
         + "\(app.debugDescription)"
     )
+  }
+
+  /// Terminal stays chosen on the next visit, or agent panes would go back to opening on chat
+  /// for somebody who said otherwise. `scrollIntoReach` first, for the reason above.
+  func testPanesOpenOnChoicePersistsAcrossSettingsVisits() {
+    let app = launchApp()
+    openSettings(app)
+
+    scrollIntoReach(app, "settings.panesopenon.terminal").tap()
+    require(app, "settings.done", "Expected a way out of settings").tap()
+
+    openSettings(app)
+    let terminal = scrollIntoReach(app, "settings.panesopenon.terminal")
+    XCTAssertTrue(
+      terminal.isSelected,
+      "Expected Terminal to still be selected. Row was: \(terminal.debugDescription)")
+    XCTAssertFalse(
+      element(app, "settings.panesopenon.chat").isSelected,
+      "Expected Chat to no longer be selected.\nTree was:\n\(app.debugDescription)")
   }
 
   /// Resizing stays off on the next visit, or the phone would size the desk's window for

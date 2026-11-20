@@ -982,16 +982,21 @@ struct AppEnvironment {
   /// `-uiTestingWrapOff` exists because `scripts/look.sh` taps identifiers, and tapping a
   /// `Toggle`'s identifier does not flip it (see `setSwitch`), so a look pass cannot turn
   /// wrapping off.
+  ///
+  /// `-uiTestingPanesOpenOnTerminal` starts with agent panes opening on the terminal, so a
+  /// test or a look pass reaches a pane without a trip through Settings first.
   static var seededSettings: TerminalSettings {
     let arguments = ProcessInfo.processInfo.arguments
-    let wraps = !arguments.contains("-uiTestingWrapOff")
-    guard let flag = arguments.firstIndex(of: "-uiTestingTheme"),
-      arguments.index(after: flag) < arguments.endIndex
-    else { return TerminalSettings(wrapsScreenLines: wraps) }
-    return TerminalSettings(
-      themeID: Theme.bundled(id: arguments[arguments.index(after: flag)]).id,
-      wrapsScreenLines: wraps
+    var settings = TerminalSettings(
+      wrapsScreenLines: !arguments.contains("-uiTestingWrapOff"),
+      panesOpenOn: arguments.contains("-uiTestingPanesOpenOnTerminal") ? .terminal : .chat
     )
+    if let flag = arguments.firstIndex(of: "-uiTestingTheme"),
+      arguments.index(after: flag) < arguments.endIndex
+    {
+      settings.themeID = Theme.bundled(id: arguments[arguments.index(after: flag)]).id
+    }
+    return settings
   }
 
   /// Whether this launch starts with a host already in the list, so tests not about the

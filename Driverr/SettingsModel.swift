@@ -61,6 +61,13 @@ final class SettingsModel {
     update { $0.resizesTmuxWindows = on }
   }
 
+  /// Which surface an agent pane never switched by hand opens on. `TerminalSceneModel`
+  /// reads it through its `firstSurface` closure at every open, and `TerminalScreen` tells
+  /// the scene on screen when it changes.
+  func setPanesOpenOn(_ surface: PaneSurface) {
+    update { $0.panesOpenOn = surface }
+  }
+
   func growFont() { update { $0.growFont() } }
   func shrinkFont() { update { $0.shrinkFont() } }
 

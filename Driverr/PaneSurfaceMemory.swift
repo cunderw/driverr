@@ -6,8 +6,10 @@ import Observation
 /// The scene ends when the reader leaves the pane, so it cannot hold this. The scene owns
 /// which surface is open, and this remembers the choice across leaving and reopening.
 ///
-/// **State, not a setting.** Driverr is not a config surface (see CLAUDE.md), and per-pane
-/// memory needs nobody to set it and lets two panes differ.
+/// **State, not a setting.** Per-pane memory needs nobody to set it and lets two panes
+/// differ. The surface a pane never switched opens on is a setting,
+/// `TerminalSettings.panesOpenOn`, and this memory outranks it: a pane switched by hand
+/// reopens where it was left whatever the setting says. `PaneSurface.opening` holds the rule.
 ///
 /// Keyed by pane id, like the caches on `ConnectionModel`. Only a pane with a chat surface
 /// (`TerminalSceneModel.hasChatSurface(for:)`) gets an entry. It is not rebuilt per
@@ -22,7 +24,7 @@ final class PaneSurfaceMemory {
   private var surfaces: [String: PaneSurface] = [:]
 
   /// The surface this pane was last left on, or `nil` if it has never been switched, in
-  /// which case the caller applies the first-open rule.
+  /// which case the setting decides (`PaneSurface.opening`).
   func surface(for paneID: String) -> PaneSurface? { surfaces[paneID] }
 
   func remember(_ surface: PaneSurface, for paneID: String) {
