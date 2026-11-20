@@ -45,6 +45,9 @@ final class FakeTmuxControlStream: HerdrStream, @unchecked Sendable {
   /// Lines that wait for `resumeHeld()`: the first one holding `heldText`, and every line after.
   private var heldText: String?
   private var held: [String] = []
+  /// Set while `resumeHeld()` runs the held lines. A line written meanwhile joins them, so tmux's
+  /// answers keep the order the lines were written in (#143).
+  private var isResuming = false
   private var isSilent = false
   /// Pane output tmux had queued before a paint line ran, written ahead of its replies.
   private var staleOutput: [String: String] = [:]
@@ -95,14 +98,23 @@ final class FakeTmuxControlStream: HerdrStream, @unchecked Sendable {
   /// as on a link where the answers are on their way.
   func hold(linesContaining text: String) { lock.withLock { heldText = text } }
 
-  /// Runs the held lines, in order, and stops holding.
+  /// Runs the held lines, in order, and stops holding. A line written while they run is held
+  /// too, and runs after them, because tmux answers commands in the order they arrive.
   func resumeHeld() {
-    let lines: [String] = lock.withLock {
+    // Cleared before the drain, so a `hold(linesContaining:)` made during it still holds.
+    lock.withLock {
       heldText = nil
-      defer { held = [] }
-      return held
+      isResuming = true
     }
-    for line in lines { execute(line) }
+    while let line = lock.withLock({ () -> String? in
+      guard !held.isEmpty else {
+        isResuming = false
+        return nil
+      }
+      return held.removeFirst()
+    }) {
+      execute(line)
+    }
   }
   /// From here on, lines are recorded and nothing is answered, as on a link that went quiet.
   func goSilent() { lock.withLock { isSilent = true } }
@@ -141,7 +153,7 @@ final class FakeTmuxControlStream: HerdrStream, @unchecked Sendable {
     let runs: Bool = lock.withLock {
       received.append(line)
       if isSilent { return false }
-      if let heldText, line.contains(heldText) || !held.isEmpty {
+      if isResuming || !held.isEmpty || heldText.map({ line.contains($0) }) == true {
         held.append(line)
         return false
       }
