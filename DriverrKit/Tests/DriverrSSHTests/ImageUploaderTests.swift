@@ -35,8 +35,8 @@ struct ImageUploaderTests {
       username: "carson"
     )
     let coordinator = ConnectionCoordinator(transport: NIOSSHTransport())
-    // Every teardown in a `defer`, the client's too, or a throwing body leaks the transport's
-    // event loop group.
+    // Every teardown in a `defer`, the client's too, or a throwing body leaves the
+    // transport's connection and the server running.
     defer {
       Task {
         await coordinator.disconnect()
@@ -249,6 +249,44 @@ struct ImageUploaderTests {
     }
   }
 
+  /// The disconnect lands between a send's `isActive` guard and its write, the window a
+  /// loaded machine hit in #151. While teardown shut the event loop down, the write went to
+  /// a dead loop, which dropped it, and the upload waited out its idle deadline and
+  /// reported `.stalled`. The deadline is short so the failure arrives fast; a drop must
+  /// not need it.
+  @Test("a disconnect landing between a send's guard and its write fails as a dropped channel")
+  func reportsADroppedChannelWhenTheDisconnectLandsMidSend() async throws {
+    try await withUploadHost { coordinator, _ in
+      let count = 512 * 1024
+      let uploader = ImageUploader(
+        coordinator: coordinator,
+        bytes: payload(count),
+        command: InboxUploadCommand(script: "cat > /dev/null", byteCount: count),
+        idleDeadline: .seconds(5)
+      )
+      let disconnected = DoneFlag()
+
+      let result = await ChannelWriteHook.$afterGuard.withValue({
+        guard !disconnected.isSet else { return }
+        disconnected.set()
+        await coordinator.disconnect()
+      }) {
+        await Task { try await uploader.upload() }.result
+      }
+
+      #expect(disconnected.isSet, "no send reached the write, so the test proved nothing")
+      switch result {
+      case .success(let outcome):
+        Issue.record("the upload should not have completed, got \(outcome.hostPath)")
+      case .failure(let error):
+        guard let failure = error as? ImageUploadFailure, case .channelDropped = failure else {
+          Issue.record("expected channelDropped, got \(error)")
+          return
+        }
+      }
+    }
+  }
+
   /// One event per 32 KB write, plus a zero at the start so a bar can draw at 0.
   @Test("progress reports every chunk, in order, ending at the total")
   func reportsProgress() async throws {
@@ -432,9 +470,9 @@ private final class DoneFlag: @unchecked Sendable {
   var isSet: Bool { lock.withLock { value } }
 }
 
-/// `ExecStream.close()` settles on the channel's event loop, and
-/// `NIOSSHTransport.disconnect()` shuts that loop's group down. A `close()` after a
-/// disconnect awaited a promise nobody would settle and parked the whole test process.
+/// `ExecStream.close()` settles on the channel's event loop. While
+/// `NIOSSHTransport.disconnect()` shut that loop's group down (until #151), a `close()` after
+/// a disconnect awaited a promise nobody would settle and parked the whole test process.
 /// Each case runs on a deadline, so a suspension is a named failure rather than a hang.
 @Suite("Closing a channel after the connection has gone")
 struct ChannelCloseAfterDisconnectTests {
@@ -544,6 +582,44 @@ struct ChannelCloseAfterDisconnectTests {
       let call = try await outcome { try await pty.send(Data("ls\n".utf8)) }
 
       #expect(call.finished, "PTYChannel.send() suspended after the connection was torn down")
+      #expect(throws: AppError.self) { try call.rethrowing() }
+    }
+  }
+
+  /// The disconnect lands after the `isActive` guard has passed (#151). The guard only
+  /// narrows the window. While teardown shut the event loop down, the write went to a
+  /// dead loop and the send suspended for ever.
+  @Test("an exec stream's send fails rather than suspending when a disconnect lands mid-send")
+  func execSendFailsWhenADisconnectLandsMidSend() async throws {
+    try await withConnection { coordinator in
+      let stream = try await coordinator.openStream(command: "cat > /dev/null")
+
+      let call = try await ChannelWriteHook.$afterGuard.withValue({
+        await coordinator.disconnect()
+      }) {
+        try await outcome { try await stream.send(Data("x".utf8)) }
+      }
+
+      #expect(call.finished, "ExecStream.send() suspended when the disconnect landed mid-send")
+      #expect(throws: AppError.self) { try call.rethrowing() }
+      // The write fails on a closed channel, so the reason says so (#151).
+      #expect(call.thrown as? AppError == .channelFailed(reason: "The connection closed."))
+    }
+  }
+
+  /// The same window in a terminal, where it drops a keystroke with no error.
+  @Test("a PTY channel's send fails rather than suspending when a disconnect lands mid-send")
+  func ptySendFailsWhenADisconnectLandsMidSend() async throws {
+    try await withConnection { coordinator in
+      let pty = try await coordinator.openPTY(size: TerminalSize(columns: 80, rows: 24))
+
+      let call = try await ChannelWriteHook.$afterGuard.withValue({
+        await coordinator.disconnect()
+      }) {
+        try await outcome { try await pty.send(Data("ls\n".utf8)) }
+      }
+
+      #expect(call.finished, "PTYChannel.send() suspended when the disconnect landed mid-send")
       #expect(throws: AppError.self) { try call.rethrowing() }
     }
   }

@@ -500,7 +500,8 @@ struct CoreConnectionTests {
   }
 }
 
-/// A stream whose `close` never returns, like NIO's after the event loop has shut down.
+/// A stream whose `close` never returns, as NIO's did while a disconnect shut the event loop
+/// down (until #151). Any stream may still hang, so the core must not wait on it.
 private struct HangingCloseStream: HerdrStream {
   let output = AsyncThrowingStream<Data, any Error> { _ in }
   var end: ProcessEnd? { get async { nil } }

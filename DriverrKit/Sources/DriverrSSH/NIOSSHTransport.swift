@@ -16,7 +16,6 @@ import NIOSSH
 /// delegate parks on a promise that `authenticate` fulfils later, so `connect` returns
 /// when key exchange is done.
 public actor NIOSSHTransport: SSHTransport {
-  private var group: MultiThreadedEventLoopGroup?
   private var channel: Channel?
   private var coordinator: HandshakeCoordinator?
   private var host: DriverrCore.Host?
@@ -37,17 +36,20 @@ public actor NIOSSHTransport: SSHTransport {
     to host: DriverrCore.Host,
     hostKeyValidator: any HostKeyValidator
   ) async throws {
-    let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
+    // One loop of NIO's shared group, never shut down (#151). A per-connection group that
+    // teardown shut down dropped any write a concurrent send had already started, and its
+    // promise never settled. On a live loop a write to a closed channel fails instead.
+    // The coordinator is confined to the channel's loop, so both take this one loop.
+    let loop = MultiThreadedEventLoopGroup.singleton.next()
     let coordinator = HandshakeCoordinator(
-      eventLoop: group.next(),
+      eventLoop: loop,
       host: host,
       validator: hostKeyValidator
     )
-    self.group = group
     self.coordinator = coordinator
     self.host = host
 
-    let bootstrap = ClientBootstrap(group: group)
+    let bootstrap = ClientBootstrap(group: loop)
       .channelInitializer { channel in
         channel.eventLoop.makeCompletedFuture {
           try channel.pipeline.syncOperations.addHandlers([
@@ -66,6 +68,9 @@ public actor NIOSSHTransport: SSHTransport {
         }
       }
 
+    // A disconnect during the TCP connect does not end it; NIO's connect timeout does
+    // (10 s). A socket that connects after the disconnect is closed by the `catch` below,
+    // because the disconnect has already failed the host-key decision.
     let connected: Channel
     do {
       connected = try await bootstrap.connect(host: host.hostname, port: host.port).get()
@@ -74,7 +79,7 @@ public actor NIOSSHTransport: SSHTransport {
       await teardown()
       throw AppError.connectionFailed(
         host: host.hostname,
-        reason: Self.readableReason(for: error)
+        reason: Self.readableReason(for: error, whileConnecting: true)
       )
     }
 
@@ -264,19 +269,26 @@ public actor NIOSSHTransport: SSHTransport {
     closureSignal?.finish()
     closureSignal = nil
     closureStream = nil
-    // Before the event loop goes away, while promises can still be settled on it.
+    // The loop is NIO's shared one and stays up, so these promises always settle.
     if let coordinator { await coordinator.cancelPendingWork() }
     if let channel { try? await channel.close().get() }
     channel = nil
     coordinator = nil
-    if let group { try? await group.shutdownGracefully() }
-    group = nil
     isAuthenticated = false
   }
 
   /// Turns an upstream error into text for a person. NIO's own descriptions are type
   /// dumps.
-  static func readableReason(for error: any Error) -> String {
+  ///
+  /// A closed channel reads "The connection closed." for a send or a channel open that a
+  /// disconnect overtook (#151). A connect keeps the generic reason, because
+  /// `connectionFailed` already says "Could not reach <host>".
+  static func readableReason(for error: any Error, whileConnecting: Bool = false) -> String {
+    if !whileConnecting, let channelError = error as? ChannelError,
+      case .ioOnClosedChannel = channelError
+    {
+      return "The connection closed."
+    }
     if let channelError = error as? NIOConnectionError {
       _ = channelError
       return "The host refused the connection or is unreachable."
@@ -312,6 +324,9 @@ final class HandshakeCoordinator: NIOSSHClientServerAuthenticationDelegate,
   private var authenticationSettled = false
   private var hostKeySettled = false
   private var credentialSettled = false
+  /// Set by `cancelPendingWork`. Not `hostKeySettled`, which is also true after a trusted
+  /// first key exchange, when a re-key asks again.
+  private var isCancelled = false
 
   init(eventLoop: EventLoop, host: DriverrCore.Host, validator: any HostKeyValidator) {
     self.eventLoop = eventLoop
@@ -341,6 +356,7 @@ final class HandshakeCoordinator: NIOSSHClientServerAuthenticationDelegate,
   /// disconnect without authentication leaves the credential promise open.
   func cancelPendingWork() async {
     try? await eventLoop.submit { [self] in
+      isCancelled = true
       if !credentialSettled {
         credentialSettled = true
         credentialAvailable.fail(AppError.cancelled)
@@ -362,6 +378,13 @@ final class HandshakeCoordinator: NIOSSHClientServerAuthenticationDelegate,
     hostKey: NIOSSHPublicKey,
     validationCompletePromise: EventLoopPromise<Void>
   ) {
+    // Do not ask the person about a connection that a disconnect has cancelled. The loop
+    // stays up now (#151), so a socket that connects after a teardown can still reach key
+    // exchange before its close lands.
+    guard !isCancelled else {
+      validationCompletePromise.fail(AppError.cancelled)
+      return
+    }
     let domainKey = SSHHostKey(niosshPublicKey: hostKey)
     let host = host
     let validator = validator
@@ -369,12 +392,22 @@ final class HandshakeCoordinator: NIOSSHClientServerAuthenticationDelegate,
     Task { [self] in
       let decision = await validator.validate(domainKey, for: host)
       eventLoop.execute { [self] in
-        guard !hostKeySettled else { return }
+        // NIOSSH's promise is settled on every path. An unsettled one stalls its key
+        // exchange, and NIO traps on a promise released unfulfilled.
+        //
+        // A disconnect while the prompt was up cancelled the handshake.
+        guard !isCancelled else {
+          validationCompletePromise.fail(AppError.cancelled)
+          return
+        }
+        // A re-key asks again after the first exchange settled `hostKeyDecided`. Answer
+        // NIOSSH, and leave the settled promises alone.
+        let isFirstDecision = !hostKeySettled
         hostKeySettled = true
         switch decision {
         case .trust:
           validationCompletePromise.succeed(())
-          hostKeyDecided.succeed(())
+          if isFirstDecision { hostKeyDecided.succeed(()) }
         case .reject, .mismatch:
           // A mismatch keeps its own error: the UI must never offer a way past it.
           let error =
@@ -382,8 +415,9 @@ final class HandshakeCoordinator: NIOSSHClientServerAuthenticationDelegate,
             ? AppError.hostKeyMismatch(host: host.hostname)
             : AppError.hostKeyRejected(host: host.hostname)
           validationCompletePromise.fail(error)
-          hostKeyDecided.fail(error)
-          // Nothing will supply a credential now; unblock any waiter.
+          if isFirstDecision { hostKeyDecided.fail(error) }
+          // Nothing will supply a credential now; unblock any waiter. A no-op once
+          // authentication has settled.
           settleAuthentication(with: error)
         }
       }
@@ -765,6 +799,15 @@ final class ExitStatusBox: @unchecked Sendable {
   }
 }
 
+#if DEBUG
+  /// A test seam. It runs in a channel's `send`, after the `isActive` guard and before the
+  /// write, which is the window a concurrent disconnect can land in (#151). Nil outside
+  /// tests, and absent from a Release build.
+  enum ChannelWriteHook {
+    @TaskLocal static var afterGuard: (@Sendable () async -> Void)?
+  }
+#endif
+
 /// The `ExecStream` handed to callers; owns the NIO child channel.
 private final class NIOExecStream: ExecStream, @unchecked Sendable {
   let output: AsyncThrowingStream<Data, any Error>
@@ -799,6 +842,9 @@ private final class NIOExecStream: ExecStream, @unchecked Sendable {
     guard channel.isActive else {
       throw AppError.channelFailed(reason: "The command is no longer running.")
     }
+    #if DEBUG
+      if let hook = ChannelWriteHook.afterGuard { await hook() }
+    #endif
     var buffer = channel.allocator.buffer(capacity: data.count)
     buffer.writeBytes(data)
     do {
@@ -808,13 +854,12 @@ private final class NIOExecStream: ExecStream, @unchecked Sendable {
     }
   }
 
-  /// **Do not await the close.** Its promise settles on the channel's event loop, and
-  /// `NIOSSHTransport.teardown()` shuts that loop down. After a disconnect the await
-  /// never returns.
+  /// Not awaited, and guarded on `isActive`. No caller needs the close to complete; the
+  /// streams finish synchronously above.
   ///
-  /// The `isActive` guard alone cannot fix it, because a concurrent disconnect can land
-  /// between the check and the await. No caller needs the close to complete; the streams
-  /// finish synchronously above.
+  /// Both were the fix while `NIOSSHTransport.teardown()` shut the channel's event loop
+  /// down, and an await on that loop never returned. The loop is now NIO's shared one and
+  /// stays up (#151), so they are belt-and-braces.
   func close() async {
     outputContinuation.finish()
     errorContinuation.finish()
@@ -855,12 +900,16 @@ private final class NIOPTYChannel: PTYChannel, @unchecked Sendable {
     self.continuation = continuation
   }
 
-  /// Guarded because a write to a shut-down loop never settles. See
+  /// Guarded on `isActive`, which is belt-and-braces now. A write that a disconnect
+  /// overtakes fails as a closed channel, because the event loop stays up (#151). See
   /// `NIOExecStream.close()`.
   func send(_ data: Data) async throws {
     guard channel.isActive else {
       throw AppError.channelFailed(reason: "The terminal is no longer open.")
     }
+    #if DEBUG
+      if let hook = ChannelWriteHook.afterGuard { await hook() }
+    #endif
     var buffer = channel.allocator.buffer(capacity: data.count)
     buffer.writeBytes(data)
     do {

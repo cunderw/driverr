@@ -216,9 +216,11 @@ public actor ConnectionCoordinator {
         // **`cancelAll` alone cannot end the handshake.** `NIOSSHTransport.connect` waits
         // on `EventLoopFuture.get()`, which ignores cancellation, and the group waits for
         // its children. Without the disconnect the deadline never fires on a real
-        // transport. Closing the transport fails those futures, as the user's Cancel
-        // does. Call the transport's `disconnect`, not this actor's, which would set the
-        // phase to `.idle`. The caller's `catch` sets the phase.
+        // transport. The transport's `disconnect` fails the handshake's futures, as the
+        // user's Cancel does. A TCP connect still in progress is not failed: it ends on
+        // NIO's own connect timeout (10 s, shorter than this deadline), and a socket that
+        // connects late is closed. Call the transport's `disconnect`, not this actor's,
+        // which would set the phase to `.idle`. The caller's `catch` sets the phase.
         group.cancelAll()
         await transport.disconnect()
         throw error
