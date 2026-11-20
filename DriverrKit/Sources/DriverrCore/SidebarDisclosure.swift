@@ -11,8 +11,9 @@ import Foundation
 /// - Workspaces start from `SessionTree.defaultExpandedWorkspaceIDs`, read once per host by
 ///   `seed(hostID:tree:)`. A workspace that appears later starts closed, as on the host
 ///   screen.
-/// - `reveal(paneID:hostID:tree:)` opens every level above a pane, so the highlight is
-///   never inside a closed row.
+/// - `reveal(paneID:hostID:tree:)` opens every level above a pane. `ContentView` calls it
+///   when the open pane changes, so a newly opened pane's row is in view. A fold the reader
+///   makes afterwards can hide the highlight until the next change.
 public struct SidebarDisclosure: Equatable, Sendable {
   private var collapsedHosts: Set<UUID> = []
   private var collapsedTabs: [UUID: Set<String>] = [:]

@@ -384,9 +384,10 @@ struct ContentView: View {
       rememberSelection(id)
       hostPick.selectionChanged(to: id)
     }
-    // The highlight is never inside a closed row: the switcher, a Needs-you row, a URL or a
-    // sub-agent can open a pane the sidebar has folded away. `initial`, for a pane opened at
-    // launch.
+    // A change of the open pane reveals its row: the switcher, a Needs-you row, a URL or a
+    // sub-agent can open a pane the sidebar has folded away. A fold the reader makes
+    // afterwards can hide the highlight until the next change. `initial`, for a pane opened
+    // at launch.
     .onChange(of: sidebarReveal, initial: true) { _, target in
       reveal(target)
     }

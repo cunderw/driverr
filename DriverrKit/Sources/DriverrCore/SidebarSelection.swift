@@ -10,14 +10,6 @@ public enum SidebarSelection: Hashable, Sendable {
   case host(UUID)
   case pane(hostID: UUID, paneID: String)
 
-  /// The host this selection is on.
-  public var hostID: UUID {
-    switch self {
-    case .host(let id): id
-    case .pane(let hostID, _): hostID
-    }
-  }
-
   /// What the sidebar highlights now.
   ///
   /// The open scene wins, because it is what the detail column shows. A plain shell names no

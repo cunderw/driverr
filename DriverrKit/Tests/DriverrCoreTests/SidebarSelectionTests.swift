@@ -56,10 +56,4 @@ struct SidebarSelectionTests {
     let open = SidebarSelection.pane(hostID: host, paneID: "w1:p2")
     #expect(SidebarSelection.effect(ofWrite: open, current: open) == .none)
   }
-
-  @Test("each selection names its host")
-  func hostID() {
-    #expect(SidebarSelection.host(host).hostID == host)
-    #expect(SidebarSelection.pane(hostID: other, paneID: "p").hostID == other)
-  }
 }
