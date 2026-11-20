@@ -44,4 +44,31 @@ struct FakeTmuxControlStreamTests {
     }
     #expect(answeredFirst == heldCount, "every held line is answered before the line after them")
   }
+
+  /// A `hold(linesContaining:)` made while `resumeHeld()` runs the held lines still holds once
+  /// they are done. Cleared at the end of the drain, it would be lost.
+  @Test("a hold made while held lines run still holds after them")
+  func holdDuringResumeSurvives() async throws {
+    var state = TmuxPaneState()
+    state.height = 2
+    let stream = FakeTmuxControlStream(panes: [
+      "%3": FakeTmuxControlStream.Pane(window: "@1", state: state, screen: ["$ "])
+    ])
+    stream.hold(linesContaining: "refresh-client -C @1:")
+    for index in 1...1_000 {
+      try await stream.send(Data("refresh-client -C @1:\(index)x10\n".utf8))
+    }
+    let resuming = Task.detached { stream.resumeHeld() }
+    var answers = stream.output.makeAsyncIterator()
+    // The first held answer is out, so `resumeHeld()` is running. Hold the keys now.
+    while let chunk = try await answers.next() {
+      if String(decoding: chunk, as: UTF8.self).contains("%end 9 ") { break }
+    }
+    stream.hold(linesContaining: "send-keys")
+    await resuming.value
+    try await stream.send(Data("send-keys -t %3 -H 61\n".utf8))
+    #expect(stream.keys(for: "%3").isEmpty, "the keys wait for the next resume")
+    stream.resumeHeld()
+    #expect(stream.keys(for: "%3") == Data([0x61]))
+  }
 }

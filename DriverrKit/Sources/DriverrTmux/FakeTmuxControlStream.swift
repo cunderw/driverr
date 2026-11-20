@@ -101,10 +101,13 @@ final class FakeTmuxControlStream: HerdrStream, @unchecked Sendable {
   /// Runs the held lines, in order, and stops holding. A line written while they run is held
   /// too, and runs after them, because tmux answers commands in the order they arrive.
   func resumeHeld() {
-    lock.withLock { isResuming = true }
+    // Cleared before the drain, so a `hold(linesContaining:)` made during it still holds.
+    lock.withLock {
+      heldText = nil
+      isResuming = true
+    }
     while let line = lock.withLock({ () -> String? in
       guard !held.isEmpty else {
-        heldText = nil
         isResuming = false
         return nil
       }
