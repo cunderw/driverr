@@ -190,6 +190,80 @@ final class PaneDetailColumnUITests: XCTestCase {
     )
   }
 
+  /// A pane row in the sidebar opens that pane in the detail column and carries the
+  /// highlight. The tap goes through the list's selection, so a row that opened the pane
+  /// without selecting, or selected without opening, fails one of the two. Then the host's
+  /// chevron folds and unfolds the tree with the pane still open and still highlighted.
+  func testASidebarPaneRowOpensThePaneAndTakesTheHighlight() throws {
+    let app = connectedHostApp()
+    try requireRegularWidth(app)
+
+    let row = app.descendants(matching: .any)
+      .matching(identifier: "sidebar.pane")
+      .matching(NSPredicate(format: "label CONTAINS %@", "needs a decision"))
+      .firstMatch
+    XCTAssertTrue(
+      row.waitForExistence(timeout: 20),
+      "Expected the pane's row in the sidebar's tree.\nTree was:\n\(app.debugDescription)"
+    )
+    row.tap()
+
+    waitFor(app, "pane.chat", "Expected the pane to open in the detail column", timeout: 20)
+    let selected = selectedSidebarPane(app)
+    XCTAssertTrue(
+      selected.label.contains("needs a decision"),
+      "The highlight is on '\(selected.label)', not the row that was tapped."
+    )
+    // The host screen left the column for the pane.
+    requireGone(app, "connect.terminal", "Expected the pane scene to replace the host screen")
+
+    // The host's chevron folds its tree and changes nothing else. A chevron that also wrote
+    // the selection would close the pane or move the highlight.
+    waitFor(app, "sidebar.host.disclosure", "Expected the host's chevron").tap()
+    requireGone(app, "sidebar.pane", "Expected the chevron to fold the host's tree")
+    XCTAssertTrue(
+      element(app, "pane.chat").exists,
+      "Folding the host's tree closed the pane.\nTree was:\n\(app.debugDescription)"
+    )
+    XCTAssertFalse(
+      element(app, "connect.terminal").exists,
+      "Folding the host's tree put the host screen back.\nTree was:\n\(app.debugDescription)"
+    )
+
+    waitFor(app, "sidebar.host.disclosure", "Expected the host's chevron").tap()
+    let unfolded = selectedSidebarPane(app)
+    XCTAssertTrue(
+      unfolded.label.contains("needs a decision"),
+      "After unfolding, the highlight is on '\(unfolded.label)', not the open pane."
+    )
+    XCTAssertTrue(
+      element(app, "pane.chat").exists,
+      "Unfolding the host's tree closed the pane.\nTree was:\n\(app.debugDescription)"
+    )
+  }
+
+  /// The one sidebar pane row that is selected, once there is exactly one.
+  private func selectedSidebarPane(
+    _ app: XCUIApplication,
+    file: StaticString = #filePath,
+    line: UInt = #line
+  ) -> XCUIElement {
+    let selected = app.descendants(matching: .any)
+      .matching(identifier: "sidebar.pane")
+      .matching(NSPredicate(format: "selected == true"))
+    let waiter = XCTNSPredicateExpectation(
+      predicate: NSPredicate(format: "count == 1"), object: selected)
+    XCTAssertEqual(
+      XCTWaiter().wait(for: [waiter], timeout: 10),
+      .completed,
+      "Expected exactly one selected sidebar pane row; found \(selected.count).\nTree was:\n"
+        + app.debugDescription,
+      file: file,
+      line: line
+    )
+    return selected.firstMatch
+  }
+
   /// A cross-host pick from the switcher moves the sidebar highlight to that host.
   ///
   /// `isSelected` is the highlight. Leaving the scene afterwards proves the selection itself
@@ -239,9 +313,18 @@ final class PaneDetailColumnUITests: XCTestCase {
       betaRow.waitForExistence(timeout: 10),
       "Expected beta's row in the sidebar.\nTree was:\n\(app.debugDescription)"
     )
-    XCTAssertTrue(
+    // The highlight is on the pane, which sits under beta's row. Pane titles repeat across
+    // the two seeded hosts, so the row is told apart by where it is, not by its label.
+    let selectedPane = selectedSidebarPane(app)
+    XCTAssertGreaterThan(
+      selectedPane.frame.minY,
+      betaRow.frame.minY,
+      "The highlighted pane is not under beta's row, so the sidebar is still on the host the "
+        + "scene left.\nTree was:\n\(app.debugDescription)"
+    )
+    XCTAssertFalse(
       betaRow.isSelected,
-      "The sidebar is still highlighting the host the scene left.\nTree was:\n"
+      "With a pane open, the pane's row carries the highlight, not its host's.\nTree was:\n"
         + app.debugDescription
     )
 
