@@ -8,13 +8,17 @@ format, `DriverrHC` confines herdr-core's, `DriverrTmux` confines tmux's, and
 `DriverrTranscript` reads agent session files. No backend of our own: Driverr talks
 directly to the user's own machines over SSH.
 
-**Not a config surface.** Global settings are theme, font, font size, whether a captured
-pane screen wraps its long lines, whether Driverr draws Live Activities, and whether an
-open tmux pane's window takes the phone's size. Live Activities are on the list because a
-card drawn outside the app has to be refusable from inside it. The tmux resize is on the
-list because without it a desk-width tmux pane is unusable on the phone, and the resize
-changes the desk's window, so it has to be refusable. A seventh setting still has to argue
-its case. Driverr is **not a paid product**. It is described as an SSH client everywhere:
+**Not a config surface.** Global settings are theme, font, font size, which surface an
+agent pane opens on (chat or terminal), whether a captured pane screen wraps its long
+lines, whether Driverr draws Live Activities, and whether an open tmux pane's window takes
+the phone's size. Live Activities are on the list because a card drawn outside the app has
+to be refusable from inside it. The tmux resize is on the list because without it a
+desk-width tmux pane is unusable on the phone, and the resize changes the desk's window, so
+it has to be refusable. The first surface is on the list because the owner asked for it:
+some readers want an agent's output as the raw TUI, and switching every pane by hand does
+not scale. It sets only the first surface. A pane switched by hand keeps its own choice
+(`PaneSurfaceMemory`), a pane with no agent always opens on the terminal, and Reply always
+opens the chat. An eighth setting still has to argue its case. Driverr is **not a paid product**. It is described as an SSH client everywhere:
 herdr's and tmux's own persistence covers reattachment, so there is no mosh support and
 none is planned.
 

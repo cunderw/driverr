@@ -88,7 +88,8 @@ final class PaneChatUITests: XCTestCase {
     notificationsAuthorized: Bool = false,
     subagents: Bool = false,
     endingSubagents: Bool = false,
-    codexPicker: Bool = false
+    codexPicker: Bool = false,
+    panesOpenOnTerminal: Bool = false
   ) -> XCUIApplication {
     XCUIDevice.shared.orientation = .portrait
     var flags: [String] = []
@@ -144,6 +145,8 @@ final class PaneChatUITests: XCTestCase {
     if endingSubagents { flags += ["-uiTestingSubagentsEnding"] }
     // `index rebuild`'s Codex shows its `/permissions` picker until anything is sent.
     if codexPicker { flags += ["-uiTestingCodexPicker"] }
+    // Settings start on Open Panes In: Terminal.
+    if panesOpenOnTerminal { flags += ["-uiTestingPanesOpenOnTerminal"] }
     // Seeded, because this class is not about connecting.
     let app = connectedHostApp(flags)
     require(app, "session.workspace", "Expected the session tree")
@@ -1914,6 +1917,21 @@ final class PaneChatUITests: XCTestCase {
       "Reopening the pane did not land on the terminal it was left on"
     )
     requireGone(app, "pane.chat", "The reopened pane came back on its chat")
+  }
+
+  /// With Open Panes In set to Terminal, an agent pane never switched opens on its terminal.
+  ///
+  /// `TerminalSceneModelTests` covers the scene given the setting. This covers the wiring a
+  /// unit test cannot: the stored setting through `DriverrApp` and `TerminalPresenter` to the
+  /// scene the presenter builds. `pane.chat` gone is asserted for the reason above.
+  func testAnAgentPaneOpensOnItsTerminalWhenSettingsSayTerminal() {
+    let app = connectedHost(panesOpenOnTerminal: true)
+
+    tapPane(app, titled: "needs a decision")
+
+    require(app, "terminal.view", "The pane did not open on its terminal under the setting")
+    requireGone(app, "pane.chat", "The pane opened on its chat under the Terminal setting")
+    require(app, "pane.surface.chat", "Expected the Show Chat toggle, because it has an agent")
   }
 
   // MARK: - The captured screen
