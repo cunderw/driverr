@@ -1130,26 +1130,15 @@ struct ContentView: View {
     }
   }
 
-  /// One host, answering "is anything waiting on me?" before it is opened. Every word comes
-  /// from `DriverrCore.HostStatus`, where `swift test` covers it.
+  /// One host's row. The label is `HostRowLabel`; this supplies the live state.
   @ViewBuilder
   private func hostRow(_ host: DriverrCore.Host, showsDisclosure: Bool) -> some View {
     let status = connections.status(for: host)
-    HStack(spacing: 8) {
-      VStack(alignment: .leading, spacing: 2) {
-        Text(host.displayName)
-        Text(status.subtitle)
-          .font(.caption)
-          .foregroundStyle(.secondary)
-      }
-      // First claim on the width in a row with the sidebar's chevron, or at AX3 the name
-      // breaks mid-word while its row is selected. Other rows lay out as they did.
-      .layoutPriority(showsDisclosure ? 1 : 0)
-      Spacer(minLength: 8)
-      connectionDot(status)
-      if let badge = status.badge, let spoken = status.badgeAccessibilityLabel {
-        blockedBadge(host, badge: badge, spoken: spoken, growsWithCapsule: showsDisclosure)
-      }
+    HostRowLabel(
+      name: host.displayName,
+      status: status,
+      lonePane: lonePane(host, status: status)
+    ) {
       // Draws nothing. Keeps the count above live. See `SessionPollHold`.
       if let session = connections.existingModel(for: host.id)?.session {
         SessionPollHold(session: session)
@@ -1157,6 +1146,22 @@ struct ContentView: View {
       if showsDisclosure {
         hostDisclosure(host)
       }
+    }
+  }
+
+  /// The one blocked pane the row's badge opens, or `nil` when there is no badge or it counts
+  /// several (`SessionTree.loneBlockedPane`).
+  private func lonePane(_ host: DriverrCore.Host, status: HostStatus) -> HostRowLonePane? {
+    // Read through the optional: the registry may forget the host between reading the status
+    // and this line.
+    guard status.badge != nil,
+      let pane = connections.existingModel(for: host.id)?.session?.tree.loneBlockedPane
+    else { return nil }
+    return .init(title: pane.title) {
+      // Through `open`, the entry point notification taps use. The host is connected, so
+      // `open` presents at once. `open`, not `reply`: the badge says something is waiting,
+      // not that you are answering.
+      Task { await terminalPresenter.open(hostID: host.id, paneID: pane.id) }
     }
   }
 
@@ -1191,134 +1196,9 @@ struct ContentView: View {
     .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
     .accessibilityIdentifier("sidebar.host.disclosure")
   }
-
-  /// Whether Driverr is holding this host's connection, as a dot.
-  ///
-  /// The label matters, not the colour: one element that says the word, without the trait
-  /// a symbol can bring. Three shapes, because a dropped link must not look like a host never
-  /// reached. `HostConnectionState.glyphRole` decides which kind; the view picks symbol and
-  /// colour.
-  private func connectionDot(_ status: HostStatus) -> some View {
-    Image(systemName: Self.glyph(for: status.connection.glyphRole))
-      .font(.caption2)
-      .foregroundStyle(Self.tint(for: status.connection.glyphRole))
-      .accessibilityLabel(status.connectionAccessibilityLabel)
-      .accessibilityRemoveTraits(.isSelected)
-      .accessibilityIdentifier(Self.identifier(for: status.connection))
-  }
-
-  private static func glyph(for role: HostConnectionGlyphRole) -> String {
-    switch role {
-    case .none: "circle"
-    case .ok: "circle.fill"
-    // A filled circle, not a triangle: the other states here are `circle` and `circle.fill`,
-    // and a triangle carries more ink, so one lost host would outweigh ten connected ones. The
-    // detail pill keeps the triangle.
-    case .warning: "exclamationmark.circle.fill"
-    }
-  }
-
-  private static func tint(for role: HostConnectionGlyphRole) -> Color {
-    switch role {
-    case .none: .secondary
-    case .ok: .green
-    case .warning: .orange
-    }
-  }
-
-  private static func identifier(for connection: HostConnectionState) -> String {
-    switch connection {
-    case .idle: "hosts.disconnected"
-    case .connected: "hosts.connected"
-    case .lost: "hosts.lost"
-    }
-  }
-
-  /// How many of this host's panes are waiting on a human.
-  ///
-  /// Red and filled, like `AgentStatus.blocked`, because it is the one thing that wants you.
-  /// Spoken as "2 panes need you".
-  ///
-  /// A button when it names one pane, a label when it counts several: with two there is no
-  /// single destination (`SessionTree.loneBlockedPane` is `nil`). `.buttonStyle(.borderless)`
-  /// stops the enclosing `NavigationLink` row from taking the tap.
-  ///
-  /// `growsWithCapsule` is for a row that also draws the sidebar's chevron. Its layout box
-  /// takes the capsule's size, so at the accessibility sizes the capsule does not spill into
-  /// the chevron. Every other row keeps the fixed box, so the phone lays out as it did.
-  @ViewBuilder
-  private func blockedBadge(
-    _ host: DriverrCore.Host,
-    badge: String,
-    spoken: String,
-    growsWithCapsule: Bool
-  ) -> some View {
-    // Read through the optional: the registry may forget the host between reading the status
-    // and this line.
-    if let model = connections.existingModel(for: host.id),
-      let pane = model.session?.tree.loneBlockedPane
-    {
-      Button {
-        // Through `open`, the entry point notification taps use. The host is connected, so
-        // `open` presents at once. `open`, not `reply`: the badge says something is waiting,
-        // not that you are answering.
-        Task { await terminalPresenter.open(hostID: host.id, paneID: pane.id) }
-      } label: {
-        badgeCapsule(badge)
-      }
-      .badgeHitArea(growsWithCapsule: growsWithCapsule)
-      .buttonStyle(.borderless)
-      // The count, then what a tap does. `spoken` is already a sentence.
-      .accessibilityLabel("\(spoken). Opens \(pane.title).")
-      .accessibilityIdentifier("hosts.blocked")
-    } else {
-      badgeCapsule(badge)
-        // Fixed on a chevron row, where the name's layout priority would squeeze it.
-        .fixedSize(horizontal: growsWithCapsule, vertical: false)
-        .accessibilityLabel(spoken)
-        .accessibilityIdentifier("hosts.blocked")
-    }
-  }
-
-  /// The badge itself, with nothing said about whether it does anything.
-  private func badgeCapsule(_ badge: String) -> some View {
-    Text(badge)
-      .font(.caption2.weight(.semibold))
-      .monospacedDigit()
-      .foregroundStyle(.white)
-      .padding(.horizontal, 6)
-      .padding(.vertical, 2)
-      .background(Color.red, in: Capsule())
-  }
 }
 
 extension View {
-  /// The blocked badge's 44 pt hit area, without making its row taller.
-  ///
-  /// The fixed form: a 44 x 44 hit area on 20 x 20 of layout; keep these three modifiers in
-  /// this order. A plain 44 pt `frame` would make the rows taller than their neighbours.
-  /// `frame` sizes the hit box, `contentShape` makes all of it hittable, and the negative
-  /// padding returns the layout space. `contentShape` before `frame` shapes only the capsule,
-  /// and padding before `contentShape` shrinks the shape.
-  ///
-  /// The growing form takes the capsule's own size, at least 20 x 20, and pads the hit area
-  /// 12 pt past it on every side. `fixedSize`, so a neighbour with layout priority cannot
-  /// squeeze the capsule.
-  @ViewBuilder
-  fileprivate func badgeHitArea(growsWithCapsule: Bool) -> some View {
-    if growsWithCapsule {
-      fixedSize()
-        .frame(minWidth: 20, minHeight: 20)
-        .padding(12)
-        .contentShape(Rectangle())
-        .padding(-12)
-    } else {
-      frame(width: 44, height: 44)
-        .contentShape(Rectangle())
-        .padding(-12)
-    }
-  }
-
   /// Asks the split view for a sidebar this wide, or asks for nothing.
   ///
   /// `nil` applies no modifier, because any modifier replaces the platform's per-device width
