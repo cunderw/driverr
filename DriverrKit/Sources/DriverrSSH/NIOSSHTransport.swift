@@ -16,7 +16,6 @@ import NIOSSH
 /// delegate parks on a promise that `authenticate` fulfils later, so `connect` returns
 /// when key exchange is done.
 public actor NIOSSHTransport: SSHTransport {
-  private var group: MultiThreadedEventLoopGroup?
   private var channel: Channel?
   private var coordinator: HandshakeCoordinator?
   private var host: DriverrCore.Host?
@@ -37,17 +36,20 @@ public actor NIOSSHTransport: SSHTransport {
     to host: DriverrCore.Host,
     hostKeyValidator: any HostKeyValidator
   ) async throws {
-    let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
+    // One loop of NIO's shared group, never shut down (#151). A per-connection group that
+    // teardown shut down dropped any write a concurrent send had already started, and its
+    // promise never settled. On a live loop a write to a closed channel fails instead.
+    // The coordinator is confined to the channel's loop, so both take this one loop.
+    let loop = MultiThreadedEventLoopGroup.singleton.next()
     let coordinator = HandshakeCoordinator(
-      eventLoop: group.next(),
+      eventLoop: loop,
       host: host,
       validator: hostKeyValidator
     )
-    self.group = group
     self.coordinator = coordinator
     self.host = host
 
-    let bootstrap = ClientBootstrap(group: group)
+    let bootstrap = ClientBootstrap(group: loop)
       .channelInitializer { channel in
         channel.eventLoop.makeCompletedFuture {
           try channel.pipeline.syncOperations.addHandlers([
@@ -264,13 +266,11 @@ public actor NIOSSHTransport: SSHTransport {
     closureSignal?.finish()
     closureSignal = nil
     closureStream = nil
-    // Before the event loop goes away, while promises can still be settled on it.
+    // The loop is NIO's shared one and stays up, so these promises always settle.
     if let coordinator { await coordinator.cancelPendingWork() }
     if let channel { try? await channel.close().get() }
     channel = nil
     coordinator = nil
-    if let group { try? await group.shutdownGracefully() }
-    group = nil
     isAuthenticated = false
   }
 
@@ -765,11 +765,14 @@ final class ExitStatusBox: @unchecked Sendable {
   }
 }
 
-/// A test seam. It runs in a channel's `send`, after the `isActive` guard and before the
-/// write, which is the window a concurrent disconnect can land in (#151). Nil outside tests.
-enum ChannelWriteHook {
-  @TaskLocal static var afterGuard: (@Sendable () async -> Void)?
-}
+#if DEBUG
+  /// A test seam. It runs in a channel's `send`, after the `isActive` guard and before the
+  /// write, which is the window a concurrent disconnect can land in (#151). Nil outside
+  /// tests, and absent from a Release build.
+  enum ChannelWriteHook {
+    @TaskLocal static var afterGuard: (@Sendable () async -> Void)?
+  }
+#endif
 
 /// The `ExecStream` handed to callers; owns the NIO child channel.
 private final class NIOExecStream: ExecStream, @unchecked Sendable {
@@ -805,7 +808,9 @@ private final class NIOExecStream: ExecStream, @unchecked Sendable {
     guard channel.isActive else {
       throw AppError.channelFailed(reason: "The command is no longer running.")
     }
-    if let hook = ChannelWriteHook.afterGuard { await hook() }
+    #if DEBUG
+      if let hook = ChannelWriteHook.afterGuard { await hook() }
+    #endif
     var buffer = channel.allocator.buffer(capacity: data.count)
     buffer.writeBytes(data)
     do {
@@ -815,13 +820,12 @@ private final class NIOExecStream: ExecStream, @unchecked Sendable {
     }
   }
 
-  /// **Do not await the close.** Its promise settles on the channel's event loop, and
-  /// `NIOSSHTransport.teardown()` shuts that loop down. After a disconnect the await
-  /// never returns.
+  /// Not awaited, and guarded on `isActive`. No caller needs the close to complete; the
+  /// streams finish synchronously above.
   ///
-  /// The `isActive` guard alone cannot fix it, because a concurrent disconnect can land
-  /// between the check and the await. No caller needs the close to complete; the streams
-  /// finish synchronously above.
+  /// Both were the fix while `NIOSSHTransport.teardown()` shut the channel's event loop
+  /// down, and an await on that loop never returned. The loop is now NIO's shared one and
+  /// stays up (#151), so they are belt-and-braces.
   func close() async {
     outputContinuation.finish()
     errorContinuation.finish()
@@ -862,13 +866,16 @@ private final class NIOPTYChannel: PTYChannel, @unchecked Sendable {
     self.continuation = continuation
   }
 
-  /// Guarded because a write to a shut-down loop never settles. See
+  /// Guarded on `isActive`, which is belt-and-braces now. A write that a disconnect
+  /// overtakes fails as a closed channel, because the event loop stays up (#151). See
   /// `NIOExecStream.close()`.
   func send(_ data: Data) async throws {
     guard channel.isActive else {
       throw AppError.channelFailed(reason: "The terminal is no longer open.")
     }
-    if let hook = ChannelWriteHook.afterGuard { await hook() }
+    #if DEBUG
+      if let hook = ChannelWriteHook.afterGuard { await hook() }
+    #endif
     var buffer = channel.allocator.buffer(capacity: data.count)
     buffer.writeBytes(data)
     do {

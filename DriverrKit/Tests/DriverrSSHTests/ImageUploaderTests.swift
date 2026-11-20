@@ -250,9 +250,10 @@ struct ImageUploaderTests {
   }
 
   /// The disconnect lands between a send's `isActive` guard and its write, the window a
-  /// loaded machine hit in #151. The write then goes to an event loop that has shut down,
-  /// which drops it, and the upload waited out its idle deadline and reported `.stalled`.
-  /// The deadline is short so the failure arrives fast; a drop must not need it.
+  /// loaded machine hit in #151. While teardown shut the event loop down, the write went to
+  /// a dead loop, which dropped it, and the upload waited out its idle deadline and
+  /// reported `.stalled`. The deadline is short so the failure arrives fast; a drop must
+  /// not need it.
   @Test("a disconnect landing between a send's guard and its write fails as a dropped channel")
   func reportsADroppedChannelWhenTheDisconnectLandsMidSend() async throws {
     try await withUploadHost { coordinator, _ in
@@ -586,7 +587,8 @@ struct ChannelCloseAfterDisconnectTests {
   }
 
   /// The disconnect lands after the `isActive` guard has passed (#151). The guard only
-  /// narrows the window; the write still goes to a loop that has shut down.
+  /// narrows the window. While teardown shut the event loop down, the write went to a
+  /// dead loop and the send suspended for ever.
   @Test("an exec stream's send fails rather than suspending when a disconnect lands mid-send")
   func execSendFailsWhenADisconnectLandsMidSend() async throws {
     try await withConnection { coordinator in
