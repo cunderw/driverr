@@ -45,6 +45,9 @@ struct PaneSurfaceOpeningTests {
     #expect(PanesOpenOnCopy.header == "Open Panes In")
     #expect(PanesOpenOnCopy.title(for: .chat) == "Chat")
     #expect(PanesOpenOnCopy.title(for: .terminal) == "Terminal")
-    #expect(PanesOpenOnCopy.footer.contains("without an agent"))
+    #expect(
+      PanesOpenOnCopy.footer
+        == "A pane you change between chat and terminal opens where you left it. A pane "
+        + "without an agent always opens in the terminal.")
   }
 }

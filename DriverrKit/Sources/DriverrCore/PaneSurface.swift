@@ -48,6 +48,6 @@ public enum PanesOpenOnCopy {
   }
 
   public static let footer =
-    "A pane you switch by hand opens again where you left it. A pane without an agent "
-    + "always opens in the terminal."
+    "A pane you change between chat and terminal opens where you left it. A pane without "
+    + "an agent always opens in the terminal."
 }

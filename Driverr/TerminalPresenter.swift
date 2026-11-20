@@ -38,6 +38,14 @@ final class TerminalPresenter {
   /// this same object, so a pending request cannot land on a presenter nobody drains.
   @MainActor static let shared = TerminalPresenter()
 
+  /// The Settings choice of where an agent pane never switched by hand opens, read at every
+  /// open. `DriverrApp.init` points it at the app's `SettingsModel`.
+  ///
+  /// Handed to each scene at init, not later from a `.task`, or an agent pane would draw its
+  /// chat for a frame and then flip to the terminal. The default is the setting's default,
+  /// for a unit test that never sets it.
+  @ObservationIgnored var firstSurface: @MainActor () -> PaneSurface = { .chat }
+
   // MARK: - Opening a host by id
 
   /// What `open(hostID:paneID:)` needs, handed over once by `ContentView`. Held, because
@@ -289,7 +297,8 @@ final class TerminalPresenter {
     // Another host is another presentation. The standing one ends here, not in the view
     // being replaced; see `beginPresentation`.
     endPresentation()
-    let scene = TerminalSceneModel(host: host, model: model, initialTarget: target)
+    let scene = TerminalSceneModel(
+      host: host, model: model, initialTarget: target, firstSurface: firstSurface)
     request = Request(scene: scene)
     beginPresentation(scene)
   }
@@ -319,6 +328,9 @@ final class TerminalPresenter {
 
   /// Reply: the pane on its chat side, with the composer asking for the keyboard, so the
   /// reply sits under the conversation it answers.
+  ///
+  /// The chat side under either Settings choice, and remembered for the pane, because the
+  /// composer is only on the chat. `TerminalSceneModel.focusComposer()` does both.
   ///
   /// **No terminal is attached.** The chat side takes a read-only observer, not herdr's
   /// exclusive attach token, so answering does not lock the pane on the user's desk.
