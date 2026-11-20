@@ -1242,11 +1242,11 @@ struct ContentView: View {
   /// A button when it names one pane, a label when it counts several: with two there is no
   /// single destination (`SessionTree.loneBlockedPane` is `nil`). `.buttonStyle(.borderless)`
   /// stops the enclosing `NavigationLink` row from taking the tap.
-  @ViewBuilder
   ///
   /// `growsWithCapsule` is for a row that also draws the sidebar's chevron. Its layout box
   /// takes the capsule's size, so at the accessibility sizes the capsule does not spill into
   /// the chevron. Every other row keeps the fixed box, so the phone lays out as it did.
+  @ViewBuilder
   private func blockedBadge(
     _ host: DriverrCore.Host,
     badge: String,
