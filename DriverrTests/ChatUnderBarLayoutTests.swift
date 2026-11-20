@@ -53,12 +53,13 @@ struct ChatUnderBarLayoutTests {
     var typeSize: DynamicTypeSize = .large
     /// The composer's height. A tall one stands in for the keyboard under it.
     var composerHeight: CGFloat = ChatUnderBarLayoutTests.composer
+    var opensStop = false
 
     var body: some View {
       NavigationStack {
         PaneChatView(
           model: model, agentName: "Claude", screen: screen, onCapsulesFrame: onCapsules,
-          continueAtReset: continueAtReset)
+          continueAtReset: continueAtReset, opensStopForLayoutTest: opensStop)
           // As `TerminalScreen.paneSurfaces` attaches the composer.
           .safeAreaBar(edge: .bottom, spacing: 0) {
             Color.green
@@ -138,8 +139,8 @@ struct ChatUnderBarLayoutTests {
 
   /// When the stack is taller than the room between the bar and the composer, as the open
   /// stack is at AX5 with the keyboard up, it scrolls inside that room rather than riding up
-  /// under the status bar and the bar's buttons. A composer tall enough to leave less room than
-  /// the folded notice stands in for the keyboard.
+  /// under the status bar and the bar's buttons. A composer that leaves the room a phone has
+  /// with the keyboard up, about 280 pt, stands in for the keyboard, and the notice is open.
   @Test("a stop stack taller than the room scrolls inside it, below the bar")
   func aStopStackTallerThanTheRoomScrolls() async {
     let model = PreviewSupport.transcript(
@@ -160,7 +161,8 @@ struct ChatUnderBarLayoutTests {
         onCapsules: { capsules = $0 },
         continueAtReset: .constant(false),
         typeSize: .accessibility5,
-        composerHeight: 700),
+        composerHeight: 478,
+        opensStop: true),
       size: HostedProbe.phone)
     pump(until: {
       first(UICollectionView.self, in: window) != nil && composer.width > 100
@@ -179,9 +181,54 @@ struct ChatUnderBarLayoutTests {
       must stay inside that room and scroll; scroll views: \(scrollViews(in: window)).
       """
     print(report)
-    #expect(composer.minY - barBottom < 100, "\(report)")
+    #expect(abs(composer.minY - barBottom - 280) < 20, "\(report)")
+    #expect(scrollViews(in: window).count == 2, "The open stack must scroll. \(report)")
     #expect(capsules.minY >= barBottom - 0.5, "\(report)")
     #expect(capsules.maxY <= composer.minY + 0.5, "\(report)")
+    withExtendedLifetime(window) {}
+  }
+
+  /// The folded notice keeps to two lines at AX5 on the phone for every reset form: today,
+  /// tomorrow, within the week and further out. Today's form is the reference; the others may
+  /// not be taller than it. The forms are `AgentStopTests`; this measures them drawn.
+  @Test("the folded notice keeps to two lines at AX5 for every reset form")
+  func theFoldedNoticeKeepsToTwoLines() {
+    let calendar = Calendar.current
+    let now = Date()
+    // 7:53 PM, the widest the minutes get in practice, on a day `days` from today.
+    func evening(_ days: Int) -> Date {
+      calendar.date(
+        byAdding: DateComponents(day: days, hour: 19, minute: 53),
+        to: calendar.startOfDay(for: now))!
+    }
+    // Today's reset a minute ahead, so it is today unless this runs in the last minute of a day.
+    let resets = [now.addingTimeInterval(60), evening(1), evening(3), evening(9)]
+    var heights = [CGFloat](repeating: 0, count: resets.count)
+    let gutter = ChatColumn.gutter(forColumnWidth: HostedProbe.phone.width)
+    let window = HostedProbe.window(
+      VStack(spacing: 0) {
+        ForEach(resets.indices, id: \.self) { index in
+          AgentStopRow(
+            stop: AgentStop(kind: .rateLimit, resetsAt: resets[index]),
+            expanded: .constant(false)
+          )
+          .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { heights[index] = $0 }
+        }
+      }
+      .padding(.horizontal, gutter)
+      .frame(width: HostedProbe.phone.width)
+      .environment(\.dynamicTypeSize, .accessibility5),
+      size: HostedProbe.phone)
+    pump(until: { heights.allSatisfy { $0 > 0 } })
+    let lines = resets.map {
+      AgentStopNotice(stop: AgentStop(kind: .rateLimit, resetsAt: $0), asOf: now).compactLine
+    }
+    let report = "At AX5 on the phone the folded notices are \(Array(zip(lines, heights)))."
+    print(report)
+    #expect(heights[0] > 60, "Today's form must take two lines. \(report)")
+    for index in 1..<heights.count {
+      #expect(heights[index] <= heights[0] + 0.5, "\(report)")
+    }
     withExtendedLifetime(window) {}
   }
 

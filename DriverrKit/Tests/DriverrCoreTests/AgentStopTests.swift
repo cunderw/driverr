@@ -46,9 +46,19 @@ struct AgentStopTests {
     #expect(
       Self.notice(Self.limit, secondsBeforeReset: 3_600).compactLine
         == "Resets at \(Self.time("5:40 PM"))")
+    // Short enough for two lines at AX5 on an iPhone 17, which `ChatUnderBarLayoutTests` measures.
+    #expect(
+      Self.notice(Self.limit, secondsBeforeReset: 86_400).compactLine
+        == "Tomorrow \(Self.time("5:40 PM"))")
     #expect(
       Self.notice(Self.limit, secondsBeforeReset: 3 * 86_400).compactLine
-        == "Resets on Sun, Sep 27 at \(Self.time("5:40 PM"))")
+        == "Sun \(Self.time("5:40 PM"))")
+    #expect(
+      Self.notice(Self.limit, secondsBeforeReset: 6 * 86_400).compactLine
+        == "Sun \(Self.time("5:40 PM"))")
+    #expect(
+      Self.notice(Self.limit, secondsBeforeReset: 7 * 86_400).compactLine
+        == "Sep 27 \(Self.time("5:40 PM"))")
     #expect(Self.notice(Self.limit, secondsBeforeReset: -60).compactLine == "Usage limit reset")
     let noTime = AgentStopNotice(
       stop: AgentStop(kind: .rateLimit, message: "You've hit your session limit"),

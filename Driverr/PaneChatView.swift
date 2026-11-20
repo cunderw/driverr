@@ -198,6 +198,10 @@ struct PaneChatView: View {
   /// opt-in. `nil` draws no control. See `AgentStopRow.continueAtReset`.
   var continueAtReset: Binding<Bool>?
 
+  /// Opens a folding stop notice on appearance, for a hosted layout test, which cannot tap.
+  /// See `floatingCapsules(for:)`.
+  var opensStopForLayoutTest = false
+
   /// VoiceOver focus, moved to the newest turn when the transcript first renders, where a
   /// sighted reader's eye lands anyway.
   @AccessibilityFocusState private var focusedTurnID: TranscriptTurn.ID?
@@ -1437,23 +1441,35 @@ struct PaneChatView: View {
   /// chat (#107). With no stop, Show the Screen floats alone at every size.
   ///
   /// Open at AX5 with the keyboard up, the stack is taller than the room between the bar and
-  /// the composer. The bar would then push it up under the status bar and the bar's buttons, so
-  /// a folding stack that does not fit scrolls inside the room instead. A stack that fits draws
-  /// as it would without the scroll view.
+  /// the composer. The bar would then push it up under the status bar and the bar's buttons.
+  /// So a folding stack that does not fit keeps the notice, and with it the fold, where it is,
+  /// and scrolls the rest under it inside the room. A stack that fits draws as it would
+  /// without the scroll view.
   @ViewBuilder
   private func floatingCapsules(for transcript: Transcript) -> some View {
     let stop = floatingStop(in: transcript)
     let folds = stop != nil && dynamicTypeSize.isAccessibilitySize
     if stop != nil || offersScreenCapsule {
       Group {
-        if folds {
+        if folds, let stop {
           ViewThatFits(in: .vertical) {
             capsuleStack(stop: stop, folds: true)
-            ScrollView { capsuleStack(stop: stop, folds: true) }
+            VStack(spacing: 0) {
+              inChatColumn(stopRow(stop, folds: true, part: .notice))
+              ScrollView {
+                inChatColumn(
+                  VStack(spacing: 0) {
+                    stopRow(stop, folds: true, part: .continueControl)
+                    if offersScreenCapsule, isStopExpanded { showScreenCapsule }
+                  },
+                  top: 0)
+              }
               .scrollBounceBehavior(.basedOnSize)
-              // A scroll view reaches into the safe areas around it, so unclipped the stack
-              // scrolls up under the bar's buttons and draws down under the composer.
+              .scrollEdgeEffectStyle(.soft, for: .vertical)
+              // A scroll view reaches into the safe area around it, so unclipped the stack
+              // draws down under the composer.
               .clipped()
+            }
           }
         } else {
           capsuleStack(stop: stop, folds: false)
@@ -1469,24 +1485,33 @@ struct PaneChatView: View {
           }
         }
       }
+      .onAppear { if opensStopForLayoutTest { isStopExpanded = true } }
     }
   }
 
   /// The stop notice over Show the Screen, in the chat's column. See `floatingCapsules(for:)`.
   private func capsuleStack(stop: AgentStop?, folds: Bool) -> some View {
-    VStack(spacing: 0) {
-      if let stop {
-        AgentStopRow(
-          stop: stop, continueAtReset: continueAtReset,
-          expanded: folds ? $isStopExpanded : nil)
-      }
-      if offersScreenCapsule, !folds || isStopExpanded { showScreenCapsule }
-    }
-    .frame(maxWidth: ChatColumn.width)
-    // The gutter, because the stack is not a cell and section insets do not reach it.
-    .padding(.horizontal, chatGutter)
-    .padding(.top, 6)
-    .frame(maxWidth: .infinity)
+    inChatColumn(
+      VStack(spacing: 0) {
+        if let stop { stopRow(stop, folds: folds, part: .all) }
+        if offersScreenCapsule, !folds || isStopExpanded { showScreenCapsule }
+      })
+  }
+
+  private func stopRow(_ stop: AgentStop, folds: Bool, part: AgentStopRow.Part) -> some View {
+    AgentStopRow(
+      stop: stop, continueAtReset: continueAtReset,
+      expanded: folds ? $isStopExpanded : nil, part: part)
+  }
+
+  /// The floating capsules' column: the chat's width and gutter, `top` below the bar.
+  private func inChatColumn(_ content: some View, top: CGFloat = 6) -> some View {
+    content
+      .frame(maxWidth: ChatColumn.width)
+      // The gutter, because the stack is not a cell and section insets do not reach it.
+      .padding(.horizontal, chatGutter)
+      .padding(.top, top)
+      .frame(maxWidth: .infinity)
   }
 
   /// The stop the stop capsule shows, or `nil`. See `floatingCapsules(for:)`.

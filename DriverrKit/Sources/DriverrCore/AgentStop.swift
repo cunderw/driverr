@@ -87,9 +87,10 @@ public struct AgentStopNotice: Hashable, Sendable {
 
   /// The notice in one short line, for the folded capsule at accessibility text sizes.
   ///
-  /// A live limit with a reset time keeps the reset time, `Resets at 5:40 PM`, because that is
-  /// the one fact the reader waits on, and the glyph says it is a limit. Every other stop is
-  /// its title. The full notice is one tap away, and VoiceOver reads `accessibilityLabel`.
+  /// A live limit with a reset time keeps the reset time, `Resets at 5:40 PM` (see
+  /// `compactResetPhrase`), because that is the one fact the reader waits on, and the glyph
+  /// says it is a limit. Every other stop is its title. The full notice is one tap away, and
+  /// VoiceOver reads `accessibilityLabel`.
   public let compactLine: String
 
   public init(
@@ -115,7 +116,8 @@ public struct AgentStopNotice: Hashable, Sendable {
       } else {
         title = "Usage limit reached"
         detail = "Resets \(when)."
-        compactLine = "Resets \(when)"
+        compactLine = Self.compactResetPhrase(
+          resetsAt, asOf: now, timeZone: timeZone, locale: locale)
       }
     case .loginExpired:
       title = "Sign-in required"
@@ -158,6 +160,28 @@ public struct AgentStopNotice: Hashable, Sendable {
       var style = Date.FormatStyle(locale: locale, timeZone: timeZone)
       style = style.weekday(.abbreviated).month(.abbreviated).day()
       return "on \(date.formatted(style)) at \(time)"
+    }
+  }
+
+  /// The reset for `compactLine`: `Resets at 5:40 PM` today, `Tomorrow 5:40 PM`, `Tue 5:40 PM`
+  /// within the week, `Sep 29 5:40 PM` further out. Two lines at most beside the glyph and the
+  /// chevron on an iPhone 17 at the largest text size; `Resets tomorrow at 5:40 PM` took three.
+  static func compactResetPhrase(
+    _ date: Date, asOf now: Date, timeZone: TimeZone, locale: Locale
+  ) -> String {
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = timeZone
+    let time = date.formatted(
+      Date.FormatStyle(date: .omitted, time: .shortened, locale: locale, timeZone: timeZone))
+    let days = calendar.dateComponents(
+      [.day], from: calendar.startOfDay(for: now), to: calendar.startOfDay(for: date)
+    ).day ?? 0
+    let style = Date.FormatStyle(locale: locale, timeZone: timeZone)
+    switch days {
+    case ...0: return "Resets at \(time)"
+    case 1: return "Tomorrow \(time)"
+    case 2...6: return "\(date.formatted(style.weekday(.abbreviated))) \(time)"
+    default: return "\(date.formatted(style.month(.abbreviated).day())) \(time)"
     }
   }
 

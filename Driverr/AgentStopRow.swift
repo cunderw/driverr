@@ -30,6 +30,17 @@ struct AgentStopRow: View {
   /// Whether the folded notice is open. `nil` at the sizes where the notice never folds, so
   /// the notice is not a button there and lays out as it always did.
   var expanded: Binding<Bool>?
+  /// Which of the row's two capsules to draw. `PaneChatView` draws them apart when the open
+  /// stack does not fit, so the notice and its fold stay put while the opt-in scrolls.
+  var part: Part = .all
+
+  enum Part {
+    case all
+    /// The notice capsule only.
+    case notice
+    /// The Continue opt-in only.
+    case continueControl
+  }
 
   /// One width for all five glyphs, so the text does not move when the glyph changes.
   /// `wifi.exclamationmark`, the widest, is about 19 pt. Scaled with Dynamic Type.
@@ -50,14 +61,16 @@ struct AgentStopRow: View {
     TimelineView(.explicit(stop.resetsAt.map { [$0.addingTimeInterval(1)] } ?? [])) { _ in
       let notice = AgentStopNotice(stop: stop, asOf: Date())
       VStack(spacing: 0) {
-        if let expanded {
-          foldingCapsule(notice, expanded: expanded)
-        } else {
-          capsule(notice)
+        if part != .continueControl {
+          if let expanded {
+            foldingCapsule(notice, expanded: expanded)
+          } else {
+            capsule(notice)
+          }
         }
         // Only while the reset is ahead: after it there is no alert left to change.
-        if let continueAtReset, stop.kind == .rateLimit, stop.resetsAt != nil, !notice.isStale,
-          expanded?.wrappedValue ?? true
+        if part != .notice, let continueAtReset, stop.kind == .rateLimit, stop.resetsAt != nil,
+          !notice.isStale, expanded?.wrappedValue ?? true
         {
           continueControl(continueAtReset)
         }
