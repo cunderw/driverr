@@ -765,6 +765,12 @@ final class ExitStatusBox: @unchecked Sendable {
   }
 }
 
+/// A test seam. It runs in a channel's `send`, after the `isActive` guard and before the
+/// write, which is the window a concurrent disconnect can land in (#151). Nil outside tests.
+enum ChannelWriteHook {
+  @TaskLocal static var afterGuard: (@Sendable () async -> Void)?
+}
+
 /// The `ExecStream` handed to callers; owns the NIO child channel.
 private final class NIOExecStream: ExecStream, @unchecked Sendable {
   let output: AsyncThrowingStream<Data, any Error>
@@ -799,6 +805,7 @@ private final class NIOExecStream: ExecStream, @unchecked Sendable {
     guard channel.isActive else {
       throw AppError.channelFailed(reason: "The command is no longer running.")
     }
+    if let hook = ChannelWriteHook.afterGuard { await hook() }
     var buffer = channel.allocator.buffer(capacity: data.count)
     buffer.writeBytes(data)
     do {
@@ -861,6 +868,7 @@ private final class NIOPTYChannel: PTYChannel, @unchecked Sendable {
     guard channel.isActive else {
       throw AppError.channelFailed(reason: "The terminal is no longer open.")
     }
+    if let hook = ChannelWriteHook.afterGuard { await hook() }
     var buffer = channel.allocator.buffer(capacity: data.count)
     buffer.writeBytes(data)
     do {
