@@ -273,16 +273,17 @@ final class FakeCoreStream: HerdrStream, @unchecked Sendable {
   func finish() { continuation.finish() }
 
   /// Writes every answer held so far, in one chunk, and stops holding.
+  ///
+  /// The write is inside the lock, so an answer that `respond` makes next finds the held ones
+  /// already written. `write` takes no lock of its own.
   func flushHeld() {
-    let bytes = lock.withLock {
-      defer {
-        held = Data()
-        heldCount = 0
-        holdsReplies = false
-      }
-      return held
+    lock.withLock {
+      let bytes = held
+      held = Data()
+      heldCount = 0
+      holdsReplies = false
+      write(bytes)
     }
-    write(bytes)
   }
 
   private func answerHello() {
