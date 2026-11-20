@@ -9,6 +9,9 @@ import UIKit
 /// inherits `ContentView`'s environment, so the caller injects nothing.
 struct TranscriptImageViewer: View {
   let image: TranscriptImage
+  /// The safe-area edges the backdrop ignores. `TerminalScreen` leaves out the leading edge
+  /// in the detail column while the sidebar shows, so the glass sidebar keeps its colour.
+  var backdropEdges: Edge.Set = .all
   let onClose: () -> Void
 
   @Environment(\.displayScale) private var displayScale
@@ -32,7 +35,7 @@ struct TranscriptImageViewer: View {
       // stays clear of the home indicator.
       Rectangle()
         .fill(.ultraThinMaterial)
-        .ignoresSafeArea()
+        .ignoresSafeArea(edges: backdropEdges)
         // A tap on the backdrop closes, as in every photo viewer.
         .onTapGesture(perform: onClose)
 

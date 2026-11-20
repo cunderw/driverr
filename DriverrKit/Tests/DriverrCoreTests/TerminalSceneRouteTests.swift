@@ -30,6 +30,28 @@ struct TerminalSceneRouteTests {
     #expect(TerminalSceneRoute.none.readableContentWidth == nil)
   }
 
+  /// The glass sidebar takes its colour from what is painted under it.
+  @Test("the detail column paints the leading safe area only with the sidebar collapsed")
+  func theDetailColumnLeavesTheSidebarUnpainted() {
+    #expect(!TerminalSceneRoute.detailColumn.fillsLeadingSafeArea(isSidebarCollapsed: false))
+    #expect(TerminalSceneRoute.detailColumn.fillsLeadingSafeArea(isSidebarCollapsed: true))
+    #expect(TerminalSceneRoute.stack.fillsLeadingSafeArea(isSidebarCollapsed: false))
+    #expect(TerminalSceneRoute.stack.fillsLeadingSafeArea(isSidebarCollapsed: true))
+  }
+
+  /// A sidebar beside the detail moves the detail's leading inset past the window's.
+  @Test("the sidebar is collapsed when the detail's leading inset is the window's own")
+  func theSidebarIsCollapsedWhenTheInsetsMatch() {
+    // An iPad with the sidebar beside the detail, and collapsed.
+    #expect(!TerminalSceneRoute.isSidebarCollapsed(detailLeadingInset: 320, windowLeadingInset: 0))
+    #expect(TerminalSceneRoute.isSidebarCollapsed(detailLeadingInset: 0, windowLeadingInset: 0))
+    // A landscape Pro Max, collapsed: the Dynamic Island's inset on both.
+    #expect(TerminalSceneRoute.isSidebarCollapsed(detailLeadingInset: 62, windowLeadingInset: 62))
+    // Within the tolerance, and just past it.
+    #expect(TerminalSceneRoute.isSidebarCollapsed(detailLeadingInset: 62.5, windowLeadingInset: 62))
+    #expect(!TerminalSceneRoute.isSidebarCollapsed(detailLeadingInset: 63.5, windowLeadingInset: 62))
+  }
+
   @Test("the readable measure is 680 pt")
   func theMeasureIsSixEighty() {
     #expect(TerminalSceneRoute.readableWidth == 680)

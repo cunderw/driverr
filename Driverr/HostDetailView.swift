@@ -48,6 +48,10 @@ struct HostDetailView: View {
   /// user start the connect, and only then may it offer the hooks. A restored launch, a Live
   /// Activity, a notification and a URL connect with nobody having asked.
   private let offersHooksOnConnect: Bool
+  /// Whether nothing of the sidebar covers the detail column's leading edge. `ContentView`
+  /// measures it from two safe-area insets (see `ContentView.isSidebarCollapsed`). See
+  /// `readableDetailColumn`.
+  private let isSidebarCollapsed: Bool
 
   init(
     host: DriverrCore.Host,
@@ -56,7 +60,8 @@ struct HostDetailView: View {
     onInstallHooks: ((DriverrCore.Host) -> Void)? = nil,
     onInstallKey: ((DriverrCore.Host) -> Void)? = nil,
     onNewAgent: ((DriverrCore.Host) -> Void)? = nil,
-    offersHooksOnConnect: Bool = false
+    offersHooksOnConnect: Bool = false,
+    isSidebarCollapsed: Bool = false
   ) {
     seed = host
     self.hosts = hosts
@@ -65,6 +70,7 @@ struct HostDetailView: View {
     self.onInstallKey = onInstallKey
     self.onNewAgent = onNewAgent
     self.offersHooksOnConnect = offersHooksOnConnect
+    self.isSidebarCollapsed = isSidebarCollapsed
   }
 
   /// This host, as the list has it now.
@@ -105,7 +111,8 @@ struct HostDetailView: View {
     form
       // A reading measure for the prose on a wide iPad column. Compact width applies nothing,
       // as in `TerminalSceneRoute.readableContentWidth`.
-      .readableDetailColumn(isRegularWidth: sizeClass == .regular)
+      .readableDetailColumn(
+        isRegularWidth: sizeClass == .regular, isSidebarCollapsed: isSidebarCollapsed)
   }
 
   /// The screen itself, before the column it is set in.
@@ -717,12 +724,20 @@ extension View {
   /// cap the width, give the capped view the full column to centre in, and paint the strips
   /// either side, or the grouped `Form` looks like it floats. `isRegularWidth` is a parameter
   /// so `HostDetailColumnLayoutTests` can drive both answers.
+  ///
+  /// The fill leaves out the leading safe area while the sidebar shows. In the detail column
+  /// that is the sidebar's width, and the glass sidebar would tint itself with this fill.
+  /// See `TerminalSceneRoute.fillsLeadingSafeArea(isSidebarCollapsed:)`.
   @ViewBuilder
-  func readableDetailColumn(isRegularWidth: Bool) -> some View {
+  func readableDetailColumn(isRegularWidth: Bool, isSidebarCollapsed: Bool = false) -> some View {
     if isRegularWidth {
       frame(maxWidth: CGFloat(TerminalSceneRoute.readableWidth))
         .frame(maxWidth: .infinity)
-        .background(Color(.systemGroupedBackground).ignoresSafeArea())
+        .background(
+          Color(.systemGroupedBackground)
+            .ignoresSafeArea(
+              edges: TerminalSceneRoute.detailColumn.fillEdges(
+                isSidebarCollapsed: isSidebarCollapsed)))
     } else {
       self
     }

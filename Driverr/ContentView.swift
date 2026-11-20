@@ -122,6 +122,10 @@ struct ContentView: View {
 
   @State private var model: HostListModel?
   @State private var isShowingKeys = false
+  /// The window's leading safe-area inset, read on the split view. See `isSidebarCollapsed`.
+  @State private var windowLeadingInset: Double?
+  /// The detail column's leading safe-area inset. See `isSidebarCollapsed`.
+  @State private var detailLeadingInset: Double?
   /// The host form, when it is up, and which host it is for.
   ///
   /// `.sheet(item:)`, not `.sheet(isPresented:)` beside a separate value: with `isPresented`
@@ -540,6 +544,21 @@ struct ContentView: View {
 
   // MARK: - The iPad's split view
 
+  /// Whether nothing of the sidebar covers the detail column's leading edge, read from two
+  /// measured insets. Not measured yet counts as not collapsed.
+  ///
+  /// **Not from a `columnVisibility` binding.** Bound at `.automatic`, the split view
+  /// launched with the sidebar hidden on the 13-inch iPad, and the value never read
+  /// `.detailOnly` while it was hidden. See `TerminalSceneRoute.isSidebarCollapsed`.
+  ///
+  /// The detail fills read this and paint, or not, behind the content. They never change
+  /// the column's safe area, so the measurement cannot feed back into itself.
+  private var isSidebarCollapsed: Bool {
+    guard let windowLeadingInset, let detailLeadingInset else { return false }
+    return TerminalSceneRoute.isSidebarCollapsed(
+      detailLeadingInset: detailLeadingInset, windowLeadingInset: windowLeadingInset)
+  }
+
   /// The host list beside the detail column. Regular width only; `phoneStack` serves compact.
   private var splitView: some View {
     NavigationSplitView {
@@ -557,50 +576,62 @@ struct ContentView: View {
       // (`testTheComposerGrowingKeepsTheEndOfTheAnswerOnScreen`).
       //
       // No environment is injected: the column descends from the root's `.environment` lines.
-      if terminalRoute == .detailColumn, let request = terminalPresenter.request {
-        TerminalScreen(
-          scene: request.scene, route: .detailColumn,
-          isBehindRootPresentation: hasRootPresentation
-        )
+      Group {
+        if terminalRoute == .detailColumn, let request = terminalPresenter.request {
+          TerminalScreen(
+            scene: request.scene, route: .detailColumn,
+            isBehindRootPresentation: hasRootPresentation,
+            isSidebarCollapsed: isSidebarCollapsed
+          )
+        }
+        // The host screen for the selected id, or a placeholder below when nothing is chosen.
+        else if let model, let selectedHostID,
+          let host = model.hosts.first(where: { $0.id == selectedHostID })
+        {
+          // `.id(host.id)` matters on iPad. The detail column persists, so SwiftUI would reuse
+          // this `HostDetailView` for another host and keep the first host's `@State`. A new
+          // identity per host fixes that. The connection lives in `ConnectionRegistry`, so
+          // switching hosts leaves both connections up.
+          HostDetailView(
+            host: host,
+            hosts: model,
+            onEdit: { edited in
+              // The detail column cannot present this itself. See `HostDetailView.onEdit`.
+              hostForm = HostFormRequest(host: edited)
+            },
+            onInstallHooks: { requestHookInstall(for: $0) },
+            onInstallKey: { keySheet = KeySheetRequest(host: $0) },
+            onNewAgent: { requestNewAgent(on: $0) },
+            offersHooksOnConnect: hostPick.offersHooksOnConnect(for: host.id),
+            isSidebarCollapsed: isSidebarCollapsed
+          )
+          .id(host.id)
+        }
+        // Two placeholders: "Select a host" is advice nobody can take when the list is empty.
+        else if model?.hosts.isEmpty ?? true {
+          ContentUnavailableView(
+            "No Hosts",
+            systemImage: "server.rack",
+            description: Text("Add a host to connect over SSH.")
+          )
+          .accessibilityIdentifier("detail.empty")
+        } else {
+          ContentUnavailableView(
+            "No Host Selected",
+            systemImage: "terminal",
+            description: Text("Select a host to connect.")
+          )
+          .accessibilityIdentifier("detail.empty")
+        }
       }
-      // The host screen for the selected id, or a placeholder below when nothing is chosen.
-      else if let model, let selectedHostID,
-        let host = model.hosts.first(where: { $0.id == selectedHostID })
-      {
-        // `.id(host.id)` matters on iPad. The detail column persists, so SwiftUI would reuse
-        // this `HostDetailView` for another host and keep the first host's `@State`. A new
-        // identity per host fixes that. The connection lives in `ConnectionRegistry`, so
-        // switching hosts leaves both connections up.
-        HostDetailView(
-          host: host,
-          hosts: model,
-          onEdit: { edited in
-            // The detail column cannot present this itself. See `HostDetailView.onEdit`.
-            hostForm = HostFormRequest(host: edited)
-          },
-          onInstallHooks: { requestHookInstall(for: $0) },
-          onInstallKey: { keySheet = KeySheetRequest(host: $0) },
-          onNewAgent: { requestNewAgent(on: $0) },
-          offersHooksOnConnect: hostPick.offersHooksOnConnect(for: host.id)
-        )
-        .id(host.id)
+      // The column's own leading inset: the sidebar's width while the sidebar is beside it.
+      .onGeometryChange(for: Double.self) { Double($0.safeAreaInsets.leading) } action: {
+        detailLeadingInset = $0
       }
-      // Two placeholders: "Select a host" is advice nobody can take when the list is empty.
-      else if model?.hosts.isEmpty ?? true {
-        ContentUnavailableView(
-          "No Hosts",
-          systemImage: "server.rack",
-          description: Text("Add a host to connect over SSH.")
-        )
-        .accessibilityIdentifier("detail.empty")
-      } else {
-        ContentUnavailableView(
-          "No Host Selected",
-          systemImage: "terminal",
-          description: Text("Select a host to connect.")
-        )
-        .accessibilityIdentifier("detail.empty")
-      }
+    }
+    // The window's own leading inset, the baseline the detail column's is compared with.
+    .onGeometryChange(for: Double.self) { Double($0.safeAreaInsets.leading) } action: {
+      windowLeadingInset = $0
     }
     // ⌘, on a zero-size button behind the split view, not on `settings.open`, which is inside
     // a `Menu` and not built until the menu opens. It does not reach the phone's stack; see
