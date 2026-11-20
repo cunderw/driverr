@@ -62,6 +62,13 @@ public struct AgentStop: Hashable, Sendable {
     self.init(kind: kind, resetsAt: kind == .rateLimit ? resetsAt : nil, message: message, at: at)
   }
 
+  /// Whether `other` would draw the same notice: the same kind, reset time and text. `at` is
+  /// left out, because a re-read of the same record is the same notice to the reader, and a
+  /// fake host stamps its records afresh on every read.
+  public func isSameNotice(as other: AgentStop) -> Bool {
+    kind == other.kind && resetsAt == other.resetsAt && message == other.message
+  }
+
   /// Whether the stop still holds at `now`. Only a limit with a reset time lapses on its
   /// own. Anything else holds until a later record clears it, which is the parser's call.
   public func isLive(at now: Date) -> Bool {

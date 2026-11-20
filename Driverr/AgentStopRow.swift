@@ -101,16 +101,16 @@ struct AgentStopRow: View {
         Text(detail)
           .foregroundStyle(Color.secondary)
           .lineLimit(lineLimit)
-          .fixedSize(horizontal: false, vertical: true)
-          // The column's width, so the card lines up with the header rather than hugging
-          // its wrapped lines.
-          .frame(maxWidth: .infinity, alignment: .leading),
+          .fixedSize(horizontal: false, vertical: true),
         notice)
     }
   }
 
   private func bodyCard(_ content: some View, _ notice: AgentStopNotice) -> some View {
     content
+      // The column's width, so the card lines up with the header rather than hugging its
+      // wrapped lines.
+      .frame(maxWidth: .infinity, alignment: .leading)
       .noticeGlass()
       .accessibilityElement(children: .ignore)
       .accessibilityLabel(notice.accessibilityLabel)

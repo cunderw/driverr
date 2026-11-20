@@ -475,12 +475,12 @@ struct PaneChatView: View {
       // The next pane's stop, if it has one, opens folded.
       isStopExpanded = false
     }
-    // A new stop on the same pane opens folded too. Only a different stop: `transcript` is
-    // `nil` while a page or a refresh loads, and a reload of the same record is equal, and
-    // neither may fold a notice the reader opened.
+    // A new stop on the same pane opens folded too. Only a different notice: `transcript` is
+    // `nil` while a page or a refresh loads, and a re-read of the same record may carry
+    // another `at` (`AgentStop.isSameNotice`), and neither may fold a notice the reader opened.
     .onChange(of: model.transcript?.agentStop, initial: true) { _, stop in
-      guard let stop, stop != lastStop else { return }
-      if lastStop != nil { isStopExpanded = false }
+      guard let stop else { return }
+      if let lastStop, !stop.isSameNotice(as: lastStop) { isStopExpanded = false }
       lastStop = stop
     }
   }

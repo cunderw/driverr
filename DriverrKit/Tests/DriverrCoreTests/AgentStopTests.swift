@@ -75,6 +75,23 @@ struct AgentStopTests {
     #expect(Self.notice(AgentStop(kind: .other), secondsBeforeReset: 0).compactLine == "API error")
   }
 
+  @Test("a stop re-read at another time is the same notice; another reset or text is not")
+  func sameNotice() {
+    let first = AgentStop(
+      kind: .rateLimit, resetsAt: Self.resetsAt, message: "limit", at: Self.resetsAt)
+    let reread = AgentStop(
+      kind: .rateLimit, resetsAt: Self.resetsAt, message: "limit",
+      at: Self.resetsAt.addingTimeInterval(5))
+    #expect(first.isSameNotice(as: reread))
+    #expect(
+      !first.isSameNotice(
+        as: AgentStop(
+          kind: .rateLimit, resetsAt: Self.resetsAt.addingTimeInterval(3_600), message: "limit")))
+    #expect(!first.isSameNotice(as: AgentStop(kind: .serverError, message: "limit")))
+    #expect(
+      !first.isSameNotice(as: AgentStop(kind: .rateLimit, resetsAt: Self.resetsAt, message: "x")))
+  }
+
   @Test("the folding header speaks the title, and the reset where the header shows one")
   func headerAccessibilityLabel() {
     #expect(
