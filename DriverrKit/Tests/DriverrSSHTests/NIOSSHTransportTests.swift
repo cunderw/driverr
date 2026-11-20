@@ -1,6 +1,7 @@
 import Crypto
 import DriverrCore
 import Foundation
+import NIOCore
 import NIOSSH
 import Testing
 @testable import DriverrSSH
@@ -295,6 +296,26 @@ struct NIOSSHTransportTests {
     await #expect(throws: AppError.self) {
       try await transport.connect(to: host, hostKeyValidator: RecordingValidator())
     }
+  }
+
+  /// A send or channel open that a disconnect overtakes fails on a closed channel (#151).
+  /// The reason says the connection closed, not that it could not be made.
+  @Test("a closed channel reads as a closed connection")
+  func aClosedChannelReadsAsAClosedConnection() {
+    #expect(
+      NIOSSHTransport.readableReason(for: ChannelError.ioOnClosedChannel)
+        == "The connection closed."
+    )
+  }
+
+  /// A connect that fails reads "Could not reach <host>.", and "The connection closed."
+  /// after it would say the host was reached. The connect keeps the generic reason.
+  @Test("a connect that fails on a closed channel keeps the generic reason")
+  func aConnectOnAClosedChannelKeepsTheGenericReason() {
+    #expect(
+      NIOSSHTransport.readableReason(for: ChannelError.ioOnClosedChannel, whileConnecting: true)
+        == "The connection could not be established."
+    )
   }
 
   @Test("running a command before authenticating throws instead of hanging")

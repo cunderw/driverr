@@ -76,7 +76,7 @@ public actor NIOSSHTransport: SSHTransport {
       await teardown()
       throw AppError.connectionFailed(
         host: host.hostname,
-        reason: Self.readableReason(for: error)
+        reason: Self.readableReason(for: error, whileConnecting: true)
       )
     }
 
@@ -276,7 +276,16 @@ public actor NIOSSHTransport: SSHTransport {
 
   /// Turns an upstream error into text for a person. NIO's own descriptions are type
   /// dumps.
-  static func readableReason(for error: any Error) -> String {
+  ///
+  /// A closed channel reads "The connection closed." for a send or a channel open that a
+  /// disconnect overtook (#151). A connect keeps the generic reason, because
+  /// `connectionFailed` already says "Could not reach <host>".
+  static func readableReason(for error: any Error, whileConnecting: Bool = false) -> String {
+    if !whileConnecting, let channelError = error as? ChannelError,
+      case .ioOnClosedChannel = channelError
+    {
+      return "The connection closed."
+    }
     if let channelError = error as? NIOConnectionError {
       _ = channelError
       return "The host refused the connection or is unreachable."

@@ -470,9 +470,9 @@ private final class DoneFlag: @unchecked Sendable {
   var isSet: Bool { lock.withLock { value } }
 }
 
-/// `ExecStream.close()` settles on the channel's event loop, and
-/// `NIOSSHTransport.disconnect()` shuts that loop's group down. A `close()` after a
-/// disconnect awaited a promise nobody would settle and parked the whole test process.
+/// `ExecStream.close()` settles on the channel's event loop. While
+/// `NIOSSHTransport.disconnect()` shut that loop's group down (until #151), a `close()` after
+/// a disconnect awaited a promise nobody would settle and parked the whole test process.
 /// Each case runs on a deadline, so a suspension is a named failure rather than a hang.
 @Suite("Closing a channel after the connection has gone")
 struct ChannelCloseAfterDisconnectTests {
@@ -602,6 +602,8 @@ struct ChannelCloseAfterDisconnectTests {
 
       #expect(call.finished, "ExecStream.send() suspended when the disconnect landed mid-send")
       #expect(throws: AppError.self) { try call.rethrowing() }
+      // The write fails on a closed channel, so the reason says so (#151).
+      #expect(call.thrown as? AppError == .channelFailed(reason: "The connection closed."))
     }
   }
 
