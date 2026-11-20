@@ -24,7 +24,8 @@ import SwiftUI
 /// the glyph, `AgentStopNotice.compactLine` and a chevron, the same card folded or open. A
 /// tap opens the body under it: the whole notice, in its own card, and the opt-in. The
 /// header speaks a short label and the body card the whole notice, so VoiceOver does not read
-/// the notice twice when it is open. `PaneChatView` places the two and draws Show the Screen after the body.
+/// the notice twice when it is open. `PaneChatView` places the two and draws Show the Screen
+/// after the body.
 struct AgentStopRow: View {
   let stop: AgentStop
   /// Whether this pane's reset alert offers Continue. `nil` draws no control.
@@ -64,12 +65,12 @@ struct AgentStopRow: View {
         switch part {
         case .all:
           capsule(notice)
-          continueControl(for: notice)
+          continueControl(for: notice, fillsColumn: false)
         case .header(let expanded):
           foldingCapsule(notice, expanded: expanded)
         case .body:
           card(notice)
-          continueControl(for: notice)
+          continueControl(for: notice, fillsColumn: true)
         }
       }
     }
@@ -156,22 +157,32 @@ struct AgentStopRow: View {
   /// The opt-in, only for a live limit with a reset time: after the reset there is no alert
   /// left to change.
   @ViewBuilder
-  private func continueControl(for notice: AgentStopNotice) -> some View {
+  private func continueControl(for notice: AgentStopNotice, fillsColumn: Bool) -> some View {
     if let continueAtReset, stop.kind == .rateLimit, stop.resetsAt != nil, !notice.isStale {
-      continueControl(continueAtReset)
+      continueControl(continueAtReset, fillsColumn: fillsColumn)
     }
   }
 
   /// The opt-in for the reset alert's Continue. A button with a check, not a `Toggle`, so it
   /// sits in the chat's glass like Show the Screen. Its target is 44 pt, as that capsule's is.
-  private func continueControl(_ isOn: Binding<Bool>) -> some View {
+  ///
+  /// In the open body at accessibility sizes it fills the column, as the notice card above it
+  /// does (`bodyCard`). At other sizes it hugs its label, as it always has.
+  private func continueControl(_ isOn: Binding<Bool>, fillsColumn: Bool) -> some View {
     Button { isOn.wrappedValue.toggle() } label: {
-      HStack(spacing: 6) {
+      let row = HStack(spacing: 6) {
         Image(systemName: isOn.wrappedValue ? "checkmark.circle.fill" : "circle")
           .foregroundStyle(isOn.wrappedValue ? themeAccent : Color.secondary)
           .frame(width: glyphWidth, alignment: .center)
         Text(LimitResetReminder.optInTitle)
           .foregroundStyle(Color.primary)
+      }
+      Group {
+        if fillsColumn {
+          row.frame(maxWidth: .infinity, alignment: .leading)
+        } else {
+          row
+        }
       }
       .font(.footnote.weight(.semibold))
       .padding(.leading, 10)
