@@ -17,6 +17,10 @@ struct SidebarPaneTree: View {
   @Binding var disclosure: SidebarDisclosure
   /// Added before every row's content, because the host above is a plain row and the
   /// `List`'s outline starts at the host's own level. Nesting adds the levels below it.
+  ///
+  /// Dropped at the accessibility sizes. There the title column is the scarce thing: at AX3 in
+  /// a 420 pt sidebar it is narrower than "connection" with the indent in, and a title then
+  /// breaks mid-word. The deeper levels keep the list's own indent.
   var indent: CGFloat = 0
   /// The stop a pane's transcript ends on, or `nil`. `ContentView` reads it through
   /// `existingModel` only, so drawing a row never fetches a transcript.
@@ -28,6 +32,8 @@ struct SidebarPaneTree: View {
   var onPaneTitleFrame: (@MainActor (String, CGRect) -> Void)?
 
   @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+  private var appliedIndent: CGFloat { dynamicTypeSize.isAccessibilitySize ? 0 : indent }
 
   /// One outline level, as the sidebar `List` indents a `DisclosureGroup`'s rows (measured
   /// on Driverr iPad). The host level is drawn by hand with it.
@@ -75,7 +81,7 @@ struct SidebarPaneTree: View {
     ForEach(tab.panes) { pane in
       NavigationLink(value: SidebarSelection.pane(hostID: hostID, paneID: pane.id)) {
         SidebarPaneRow(pane: pane, stop: stop(pane), onTitleFrame: titleFrameReport(for: pane))
-          .padding(.leading, indent)
+          .padding(.leading, appliedIndent)
       }
       // On the link, as `hosts.row` is, so the row is one element and one selection.
       .accessibilityIdentifier("sidebar.pane")
@@ -113,7 +119,7 @@ struct SidebarPaneTree: View {
         SessionPollHold(session: session)
       }
     }
-    .padding(.leading, indent)
+    .padding(.leading, appliedIndent)
     .accessibilityElement(children: .combine)
     .accessibilityIdentifier("sidebar.workspace")
   }
@@ -131,7 +137,7 @@ struct SidebarPaneTree: View {
         .foregroundStyle(.secondary)
       Spacer(minLength: 0)
     }
-    .padding(.leading, indent)
+    .padding(.leading, appliedIndent)
     .accessibilityElement(children: .combine)
     .accessibilityIdentifier("sidebar.tab")
   }
