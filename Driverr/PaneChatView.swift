@@ -239,6 +239,9 @@ struct PaneChatView: View {
   /// start it open.
   @State var isStopExpanded = false
 
+  /// The last stop this pane showed, so only a different one folds the notice.
+  @State private var lastStop: AgentStop?
+
   @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
   /// Show the Screen capsule's vertical padding, 8 pt at the default text size.
@@ -472,8 +475,14 @@ struct PaneChatView: View {
       // The next pane's stop, if it has one, opens folded.
       isStopExpanded = false
     }
-    // A new stop on the same pane opens folded too. A refresh of the same record is equal.
-    .onChange(of: model.transcript?.agentStop) { isStopExpanded = false }
+    // A new stop on the same pane opens folded too. Only a different stop: `transcript` is
+    // `nil` while a page or a refresh loads, and a reload of the same record is equal, and
+    // neither may fold a notice the reader opened.
+    .onChange(of: model.transcript?.agentStop, initial: true) { _, stop in
+      guard let stop, stop != lastStop else { return }
+      if lastStop != nil { isStopExpanded = false }
+      lastStop = stop
+    }
   }
 
   // MARK: - A conversation
