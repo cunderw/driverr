@@ -58,11 +58,11 @@ final class HostBadgeUITests: XCTestCase {
       row.height,
       70,
       "The badge's tap target grew the host row to \(row.height) pt. The negative padding "
-        + "in ContentView.blockedBadge is what hands that height back to the layout."
+        + "in HostRowLabel's badgeHitArea is what hands that height back to the layout."
     )
 
     // Tapped 18 pt up and left of centre, outside the drawn capsule (about 19 by 17 pt) and
-    // inside the 44 pt target. `ContentView.blockedBadge` grows the hit area with a
+    // inside the 44 pt target. `HostRowLabel`'s `badgeHitArea` grows the hit area with a
     // `contentShape` and hands the space back with negative padding.
     //
     // Both the frame and the tap are checked. The accessibility frame reads 44 by 44 even
