@@ -18,10 +18,30 @@ import SwiftUI
 /// A live limit with a reset time also offers the reset alert's Continue, off until the
 /// reader turns it on, as a second capsule under the notice. It is its own accessibility
 /// element, because the notice's capsule ignores its children.
+///
+/// At accessibility text sizes the notice, the opt-in and Show the Screen covered most of a
+/// phone's chat (#107), so there the row draws in two parts. The header is one capsule with
+/// the glyph, `AgentStopNotice.compactLine` and a chevron, the same card folded or open. A
+/// tap opens the body under it: the whole notice, in its own card, and the opt-in. The
+/// header speaks a short label and the body card the whole notice, so VoiceOver does not read
+/// the notice twice when it is open. `PaneChatView` places the two and draws Show the Screen
+/// after the body.
 struct AgentStopRow: View {
   let stop: AgentStop
   /// Whether this pane's reset alert offers Continue. `nil` draws no control.
   var continueAtReset: Binding<Bool>?
+  /// What to draw. `.all` at the sizes where the notice never folds, so it lays out as it
+  /// always did.
+  var part: Part = .all
+
+  enum Part {
+    /// The notice and the opt-in under it.
+    case all
+    /// The folding header at accessibility sizes, a button that opens and closes the body.
+    case header(expanded: Binding<Bool>)
+    /// The open body at accessibility sizes: the whole notice and the opt-in under it.
+    case body
+  }
 
   /// One width for all five glyphs, so the text does not move when the glyph changes.
   /// `wifi.exclamationmark`, the widest, is about 19 pt. Scaled with Dynamic Type.
@@ -42,10 +62,15 @@ struct AgentStopRow: View {
     TimelineView(.explicit(stop.resetsAt.map { [$0.addingTimeInterval(1)] } ?? [])) { _ in
       let notice = AgentStopNotice(stop: stop, asOf: Date())
       VStack(spacing: 0) {
-        capsule(notice)
-        // Only while the reset is ahead: after it there is no alert left to change.
-        if let continueAtReset, stop.kind == .rateLimit, stop.resetsAt != nil, !notice.isStale {
-          continueControl(continueAtReset)
+        switch part {
+        case .all:
+          capsule(notice)
+          continueControl(for: notice, fillsColumn: false)
+        case .header(let expanded):
+          foldingCapsule(notice, expanded: expanded)
+        case .body:
+          card(notice)
+          continueControl(for: notice, fillsColumn: true)
         }
       }
     }
@@ -53,33 +78,111 @@ struct AgentStopRow: View {
 
   private func capsule(_ notice: AgentStopNotice) -> some View {
     HStack(alignment: .firstTextBaseline, spacing: 6) {
-      Image(systemName: notice.symbolName)
-        .foregroundStyle(notice.isStale ? Color.secondary : Color.orange)
-        .frame(width: glyphWidth, alignment: .center)
-        .accessibilityHidden(true)
+      glyph(notice)
       words(for: notice)
     }
-    .font(.footnote)
-    .padding(.leading, 10)
-    .padding(.trailing, 14)
-    .padding(.vertical, 8)
-    .chatCapsuleGlass(RoundedRectangle(cornerRadius: ChatCapsuleGlass.radius, style: .continuous))
+    .noticeGlass()
     // One accessibility element, so VoiceOver reads title and detail as one statement.
     .accessibilityElement(children: .ignore)
     .accessibilityLabel(notice.accessibilityLabel)
     .accessibilityIdentifier("pane.chat.agentStop")
   }
 
+  /// The body's notice, in the notice's glass, without the glyph the header already shows.
+  /// Title and detail for a live limit, whose header shows the reset; the detail alone for a
+  /// stop whose header is its title (`AgentStopNotice.foldedBodyTitle`), and no card at all
+  /// when that stop has no detail. One accessibility element reading the whole notice, as the
+  /// notice is at other sizes.
+  @ViewBuilder
+  private func card(_ notice: AgentStopNotice) -> some View {
+    if notice.foldedBodyTitle != nil {
+      bodyCard(words(for: notice), notice)
+    } else if let detail = notice.detail {
+      bodyCard(
+        Text(detail)
+          .foregroundStyle(Color.secondary)
+          .lineLimit(lineLimit)
+          .fixedSize(horizontal: false, vertical: true),
+        notice)
+    }
+  }
+
+  private func bodyCard(_ content: some View, _ notice: AgentStopNotice) -> some View {
+    content
+      // The column's width, so the card lines up with the header rather than hugging its
+      // wrapped lines.
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .noticeGlass()
+      .accessibilityElement(children: .ignore)
+      .accessibilityLabel(notice.accessibilityLabel)
+      .accessibilityIdentifier("pane.chat.agentStop.detail")
+  }
+
+  /// The header at accessibility sizes: a button that opens and closes the body. The glyph and
+  /// the compact line, at most two lines on an iPhone 17 at the largest size, in both states,
+  /// so it keeps its height as the body opens. The chevron says which state. VoiceOver reads
+  /// `AgentStopNotice.headerAccessibilityLabel`, with the fold as the value; the body card
+  /// reads the whole notice.
+  private func foldingCapsule(_ notice: AgentStopNotice, expanded: Binding<Bool>) -> some View {
+    Button { expanded.wrappedValue.toggle() } label: {
+      HStack(alignment: .firstTextBaseline, spacing: 6) {
+        glyph(notice)
+        Text(notice.compactLine)
+          .fontWeight(.semibold)
+          .foregroundStyle(notice.isStale ? Color.secondary : Color.primary)
+          .fixedSize(horizontal: false, vertical: true)
+        Image(systemName: expanded.wrappedValue ? "chevron.up" : "chevron.down")
+          .fontWeight(.semibold)
+          .foregroundStyle(Color.secondary)
+          .accessibilityHidden(true)
+      }
+      .noticeGlass()
+      .contentShape(RoundedRectangle(cornerRadius: ChatCapsuleGlass.radius, style: .continuous))
+    }
+    .buttonStyle(.plain)
+    .accessibilityElement(children: .ignore)
+    .accessibilityLabel(notice.headerAccessibilityLabel)
+    .accessibilityValue(expanded.wrappedValue ? "Expanded" : "Collapsed")
+    .accessibilityAddTraits(.isButton)
+    .accessibilityIdentifier("pane.chat.agentStop")
+  }
+
+  private func glyph(_ notice: AgentStopNotice) -> some View {
+    Image(systemName: notice.symbolName)
+      .foregroundStyle(notice.isStale ? Color.secondary : Color.orange)
+      .frame(width: glyphWidth, alignment: .center)
+      .accessibilityHidden(true)
+  }
+
+  /// The opt-in, only for a live limit with a reset time: after the reset there is no alert
+  /// left to change.
+  @ViewBuilder
+  private func continueControl(for notice: AgentStopNotice, fillsColumn: Bool) -> some View {
+    if let continueAtReset, stop.kind == .rateLimit, stop.resetsAt != nil, !notice.isStale {
+      continueControl(continueAtReset, fillsColumn: fillsColumn)
+    }
+  }
+
   /// The opt-in for the reset alert's Continue. A button with a check, not a `Toggle`, so it
   /// sits in the chat's glass like Show the Screen. Its target is 44 pt, as that capsule's is.
-  private func continueControl(_ isOn: Binding<Bool>) -> some View {
+  ///
+  /// In the open body at accessibility sizes it fills the column, as the notice card above it
+  /// does (`bodyCard`). At other sizes it hugs its label, as it always has.
+  private func continueControl(_ isOn: Binding<Bool>, fillsColumn: Bool) -> some View {
     Button { isOn.wrappedValue.toggle() } label: {
-      HStack(spacing: 6) {
+      let row = HStack(spacing: 6) {
         Image(systemName: isOn.wrappedValue ? "checkmark.circle.fill" : "circle")
           .foregroundStyle(isOn.wrappedValue ? themeAccent : Color.secondary)
           .frame(width: glyphWidth, alignment: .center)
         Text(LimitResetReminder.optInTitle)
           .foregroundStyle(Color.primary)
+      }
+      Group {
+        if fillsColumn {
+          row.frame(maxWidth: .infinity, alignment: .leading)
+        } else {
+          row
+        }
       }
       .font(.footnote.weight(.semibold))
       .padding(.leading, 10)
@@ -167,6 +270,16 @@ enum ChatCapsuleGlass {
 }
 
 extension View {
+  /// The stop notice's type, padding and glass, shared by its plain and folding forms.
+  fileprivate func noticeGlass() -> some View {
+    font(.footnote)
+      .padding(.leading, 10)
+      .padding(.trailing, 14)
+      .padding(.vertical, 8)
+      .chatCapsuleGlass(
+        RoundedRectangle(cornerRadius: ChatCapsuleGlass.radius, style: .continuous))
+  }
+
   /// The composer's material and border, in `shape`.
   func chatCapsuleGlass<S: InsettableShape>(_ shape: S) -> some View {
     background(.regularMaterial, in: shape)

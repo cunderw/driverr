@@ -62,6 +62,13 @@ public struct AgentStop: Hashable, Sendable {
     self.init(kind: kind, resetsAt: kind == .rateLimit ? resetsAt : nil, message: message, at: at)
   }
 
+  /// Whether `other` would draw the same notice: the same kind, reset time and text. `at` is
+  /// left out, because a re-read of the same record is the same notice to the reader, and a
+  /// fake host stamps its records afresh on every read.
+  public func isSameNotice(as other: AgentStop) -> Bool {
+    kind == other.kind && resetsAt == other.resetsAt && message == other.message
+  }
+
   /// Whether the stop still holds at `now`. Only a limit with a reset time lapses on its
   /// own. Anything else holds until a later record clears it, which is the parser's call.
   public func isLive(at now: Date) -> Bool {
@@ -85,6 +92,14 @@ public struct AgentStopNotice: Hashable, Sendable {
   /// cannot drift.
   public let symbolName: String
 
+  /// The notice in one short line, for the folded capsule at accessibility text sizes.
+  ///
+  /// A live limit with a reset time keeps the reset time, `Resets at 5:40 PM` (see
+  /// `compactResetPhrase`), because that is the one fact the reader waits on, and the glyph
+  /// says it is a limit. Every other stop is its title. The full notice is one tap away, and
+  /// VoiceOver reads `accessibilityLabel`.
+  public let compactLine: String
+
   public init(
     stop: AgentStop, asOf now: Date, timeZone: TimeZone = .current, locale: Locale = .current
   ) {
@@ -97,26 +112,45 @@ public struct AgentStopNotice: Hashable, Sendable {
       guard let resetsAt = stop.resetsAt else {
         title = "Usage limit reached"
         detail = Self.nonEmpty(stop.message)
+        compactLine = title
         return
       }
       let when = Self.resetPhrase(resetsAt, asOf: now, timeZone: timeZone, locale: locale)
       if isStale {
         title = "Usage limit reset"
         detail = "It reset \(when)."
+        compactLine = title
       } else {
         title = "Usage limit reached"
         detail = "Resets \(when)."
+        compactLine = Self.compactResetPhrase(
+          resetsAt, asOf: now, timeZone: timeZone, locale: locale)
       }
     case .loginExpired:
       title = "Sign-in required"
       detail = Self.nonEmpty(stop.message)
+      compactLine = title
     case .serverError:
       title = "API request failed"
       detail = Self.nonEmpty(stop.message)
+      compactLine = title
     case .other:
       title = "API error"
       detail = Self.nonEmpty(stop.message)
+      compactLine = title
     }
+  }
+
+  /// The title the open body shows under the folded header at accessibility sizes, or `nil`
+  /// where the header already says it: every stop whose `compactLine` is its title. Only a
+  /// live limit with a reset time shows its title again, because its header shows the reset.
+  public var foldedBodyTitle: String? { compactLine == title ? nil : title }
+
+  /// The folding header's VoiceOver label at accessibility sizes: the title, and the compact
+  /// line where it says more. The open body's card reads `accessibilityLabel`, so the notice
+  /// is not read twice.
+  public var headerAccessibilityLabel: String {
+    compactLine == title ? title : "\(title). \(compactLine)"
   }
 
   /// Title and detail as one sentence pair, for VoiceOver.
@@ -145,6 +179,28 @@ public struct AgentStopNotice: Hashable, Sendable {
       var style = Date.FormatStyle(locale: locale, timeZone: timeZone)
       style = style.weekday(.abbreviated).month(.abbreviated).day()
       return "on \(date.formatted(style)) at \(time)"
+    }
+  }
+
+  /// The reset for `compactLine`: `Resets at 5:40 PM` today, `Tomorrow 5:40 PM`, `Tue 5:40 PM`
+  /// within the week, `Sep 29 5:40 PM` further out. Two lines at most beside the glyph and the
+  /// chevron on an iPhone 17 at the largest text size; `Resets tomorrow at 5:40 PM` took three.
+  static func compactResetPhrase(
+    _ date: Date, asOf now: Date, timeZone: TimeZone, locale: Locale
+  ) -> String {
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = timeZone
+    let time = date.formatted(
+      Date.FormatStyle(date: .omitted, time: .shortened, locale: locale, timeZone: timeZone))
+    let days = calendar.dateComponents(
+      [.day], from: calendar.startOfDay(for: now), to: calendar.startOfDay(for: date)
+    ).day ?? 0
+    let style = Date.FormatStyle(locale: locale, timeZone: timeZone)
+    switch days {
+    case ...0: return "Resets at \(time)"
+    case 1: return "Tomorrow \(time)"
+    case 2...6: return "\(date.formatted(style.weekday(.abbreviated))) \(time)"
+    default: return "\(date.formatted(style.month(.abbreviated).day())) \(time)"
     }
   }
 

@@ -41,6 +41,87 @@ struct AgentStopTests {
     #expect(tokyo.detail == "Resets tomorrow at \(Self.time("7:40 AM")).")
   }
 
+  @Test("the folded line keeps a live limit's reset time, and is the title otherwise")
+  func compactLine() {
+    #expect(
+      Self.notice(Self.limit, secondsBeforeReset: 3_600).compactLine
+        == "Resets at \(Self.time("5:40 PM"))")
+    // Short enough for two lines at AX5 on an iPhone 17, which `ChatUnderBarLayoutTests` measures.
+    #expect(
+      Self.notice(Self.limit, secondsBeforeReset: 86_400).compactLine
+        == "Tomorrow \(Self.time("5:40 PM"))")
+    #expect(
+      Self.notice(Self.limit, secondsBeforeReset: 3 * 86_400).compactLine
+        == "Sun \(Self.time("5:40 PM"))")
+    #expect(
+      Self.notice(Self.limit, secondsBeforeReset: 6 * 86_400).compactLine
+        == "Sun \(Self.time("5:40 PM"))")
+    #expect(
+      Self.notice(Self.limit, secondsBeforeReset: 7 * 86_400).compactLine
+        == "Sep 27 \(Self.time("5:40 PM"))")
+    #expect(Self.notice(Self.limit, secondsBeforeReset: -60).compactLine == "Usage limit reset")
+    let noTime = AgentStopNotice(
+      stop: AgentStop(kind: .rateLimit, message: "You've hit your session limit"),
+      asOf: .distantFuture, timeZone: Self.chicago, locale: Self.enUS)
+    #expect(noTime.compactLine == "Usage limit reached")
+    let login = Self.notice(
+      AgentStop(kind: .loginExpired, message: "Login expired · Please run /login"),
+      secondsBeforeReset: 0)
+    #expect(login.compactLine == "Sign-in required")
+    let server = Self.notice(
+      AgentStop(kind: .serverError, message: "API Error: Can't reach the API server"),
+      secondsBeforeReset: 0)
+    #expect(server.compactLine == "API request failed")
+    #expect(Self.notice(AgentStop(kind: .other), secondsBeforeReset: 0).compactLine == "API error")
+  }
+
+  @Test("a stop re-read at another time is the same notice; another reset or text is not")
+  func sameNotice() {
+    let first = AgentStop(
+      kind: .rateLimit, resetsAt: Self.resetsAt, message: "limit", at: Self.resetsAt)
+    let reread = AgentStop(
+      kind: .rateLimit, resetsAt: Self.resetsAt, message: "limit",
+      at: Self.resetsAt.addingTimeInterval(5))
+    #expect(first.isSameNotice(as: reread))
+    #expect(
+      !first.isSameNotice(
+        as: AgentStop(
+          kind: .rateLimit, resetsAt: Self.resetsAt.addingTimeInterval(3_600), message: "limit")))
+    #expect(!first.isSameNotice(as: AgentStop(kind: .serverError, message: "limit")))
+    #expect(
+      !first.isSameNotice(as: AgentStop(kind: .rateLimit, resetsAt: Self.resetsAt, message: "x")))
+  }
+
+  @Test("the folding header speaks the title, and the reset where the header shows one")
+  func headerAccessibilityLabel() {
+    #expect(
+      Self.notice(Self.limit, secondsBeforeReset: 3_600).headerAccessibilityLabel
+        == "Usage limit reached. Resets at \(Self.time("5:40 PM"))")
+    let server = Self.notice(
+      AgentStop(kind: .serverError, message: "API Error: Can't reach the API server"),
+      secondsBeforeReset: 0)
+    #expect(server.headerAccessibilityLabel == "API request failed")
+    #expect(
+      Self.notice(Self.limit, secondsBeforeReset: -60).headerAccessibilityLabel
+        == "Usage limit reset")
+  }
+
+  @Test("the open body repeats no title the folded header already shows")
+  func foldedBodyTitle() {
+    #expect(
+      Self.notice(Self.limit, secondsBeforeReset: 3_600).foldedBodyTitle == "Usage limit reached")
+    #expect(Self.notice(Self.limit, secondsBeforeReset: -60).foldedBodyTitle == nil)
+    let noTime = AgentStopNotice(
+      stop: AgentStop(kind: .rateLimit, message: "You've hit your session limit"),
+      asOf: .distantFuture, timeZone: Self.chicago, locale: Self.enUS)
+    #expect(noTime.foldedBodyTitle == nil)
+    for kind in [AgentStop.Kind.loginExpired, .serverError, .other] {
+      #expect(
+        Self.notice(AgentStop(kind: kind, message: "x"), secondsBeforeReset: 0).foldedBodyTitle
+          == nil)
+    }
+  }
+
   @Test("a limit that resets days away does not print a bare time")
   func weeklyLimit() {
     let notice = Self.notice(Self.limit, secondsBeforeReset: 3 * 86_400)

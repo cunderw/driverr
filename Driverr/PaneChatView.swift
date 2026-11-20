@@ -234,6 +234,16 @@ struct PaneChatView: View {
   /// See `ChatCollectionView.Coordinator.applyInsets`.
   @State private var chatSlotTopInset: CGFloat = 0
 
+  /// Whether the stop notice is open, at accessibility sizes, where it folds. See
+  /// `floatingCapsules(for:)`. Not private, so a hosted layout test, which cannot tap, can
+  /// start it open.
+  @State var isStopExpanded = false
+
+  /// The last stop this pane showed, so only a different one folds the notice.
+  @State private var lastStop: AgentStop?
+
+  @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
   /// Show the Screen capsule's vertical padding, 8 pt at the default text size.
   @ScaledMetric private var showScreenCapsulePadding: CGFloat = 8
 
@@ -462,6 +472,16 @@ struct PaneChatView: View {
       // The reader's state belongs to the old conversation; the coordinator reports the new
       // one within a layout pass.
       readerState = ChatReaderState()
+      // The next pane's stop, if it has one, opens folded.
+      isStopExpanded = false
+    }
+    // A new stop on the same pane opens folded too. Only a different notice: `transcript` is
+    // `nil` while a page or a refresh loads, and a re-read of the same record may carry
+    // another `at` (`AgentStop.isSameNotice`), and neither may fold a notice the reader opened.
+    .onChange(of: model.transcript?.agentStop, initial: true) { _, stop in
+      guard let stop else { return }
+      if let lastStop, !stop.isSameNotice(as: lastStop) { isStopExpanded = false }
+      lastStop = stop
     }
   }
 
@@ -1423,19 +1443,64 @@ struct PaneChatView: View {
   /// The stack hugs its capsules and carries no background or content shape, so the
   /// conversation around them still takes touches. First in VoiceOver's order, ahead of the
   /// conversation, as the pinned rows were.
+  ///
+  /// At accessibility sizes a stop folds to one header capsule, and the whole notice, the
+  /// Continue opt-in and Show the Screen wait in a body behind it, one tap away: unfolded, the
+  /// three covered most of a phone's chat (#107). With no stop, Show the Screen floats alone at
+  /// every size.
+  ///
+  /// The header is the same card open or folded and never moves, so the fold is always one
+  /// tap away. Open at AX5 with the keyboard up, the body is taller than the room left between
+  /// the header and the composer, and the bar would push the whole stack up under the status
+  /// bar. So a body that does not fit scrolls in that room, its ends faded. A body that fits
+  /// draws as it would without the scroll view.
   @ViewBuilder
   private func floatingCapsules(for transcript: Transcript) -> some View {
     let stop = floatingStop(in: transcript)
+    let folds = stop != nil && dynamicTypeSize.isAccessibilitySize
     if stop != nil || offersScreenCapsule {
-      VStack(spacing: 0) {
-        if let stop { AgentStopRow(stop: stop, continueAtReset: continueAtReset) }
-        if offersScreenCapsule { showScreenCapsule }
+      Group {
+        if folds, let stop {
+          VStack(spacing: 0) {
+            inChatColumn(
+              AgentStopRow(
+                stop: stop, continueAtReset: continueAtReset,
+                part: .header(expanded: $isStopExpanded)))
+            if isStopExpanded {
+              ViewThatFits(in: .vertical) {
+                inChatColumn(foldedBody(stop))
+                ScrollView { inChatColumn(foldedBody(stop), top: 0) }
+                  .scrollBounceBehavior(.basedOnSize)
+                  // A scroll view reaches into the safe area around it, so unmasked the body
+                  // draws down under the composer. The mask also fades both ends over 12 pt
+                  // rather than cutting through the glass: `scrollEdgeEffectStyle(.soft, …)`
+                  // drew nothing here, in a bar with no bar of its own.
+                  .mask {
+                    VStack(spacing: 0) {
+                      LinearGradient(
+                        colors: [.clear, .black], startPoint: .top, endPoint: .bottom
+                      )
+                      .frame(height: 12)
+                      Color.black
+                      LinearGradient(
+                        colors: [.black, .clear], startPoint: .top, endPoint: .bottom
+                      )
+                      .frame(height: 12)
+                    }
+                  }
+                  // Below the header, so the top fade does not start under its edge.
+                  .padding(.top, 6)
+              }
+            }
+          }
+        } else {
+          inChatColumn(
+            VStack(spacing: 0) {
+              if let stop { AgentStopRow(stop: stop, continueAtReset: continueAtReset) }
+              if offersScreenCapsule { showScreenCapsule }
+            })
+        }
       }
-      .frame(maxWidth: ChatColumn.width)
-      // The gutter, because the stack is not a cell and section insets do not reach it.
-      .padding(.horizontal, chatGutter)
-      .padding(.top, 6)
-      .frame(maxWidth: .infinity)
       .accessibilitySortPriority(1)
       .background {
         // `onGeometryChange`, not `onAppear`: in a `NavigationStack` the first frame is laid
@@ -1447,6 +1512,24 @@ struct PaneChatView: View {
         }
       }
     }
+  }
+
+  /// The open body under the header: the whole notice, the opt-in, and Show the Screen.
+  private func foldedBody(_ stop: AgentStop) -> some View {
+    VStack(spacing: 0) {
+      AgentStopRow(stop: stop, continueAtReset: continueAtReset, part: .body)
+      if offersScreenCapsule { showScreenCapsule }
+    }
+  }
+
+  /// The floating capsules' column: the chat's width and gutter, `top` below what is above.
+  private func inChatColumn(_ content: some View, top: CGFloat = 6) -> some View {
+    content
+      .frame(maxWidth: ChatColumn.width)
+      // The gutter, because the stack is not a cell and section insets do not reach it.
+      .padding(.horizontal, chatGutter)
+      .padding(.top, top)
+      .frame(maxWidth: .infinity)
   }
 
   /// The stop the stop capsule shows, or `nil`. See `floatingCapsules(for:)`.
