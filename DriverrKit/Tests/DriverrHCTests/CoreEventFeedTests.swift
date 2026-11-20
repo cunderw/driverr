@@ -26,21 +26,27 @@ private final class Streams: @unchecked Sendable {
   }
 }
 
-/// Counts signals, so a wait on one fails at a deadline and not at the suite's time limit.
-private final class SignalCount: @unchecked Sendable {
+/// The newest tree read on a signal, so a wait on it fails at a deadline and not at the suite's
+/// time limit.
+///
+/// **A signal is a prompt to read, not a count of changes.** `CoreSignalPacer` merges changes
+/// inside a gap into one signal and `CoreChangeSignal` keeps only the newest, so how many
+/// signals arrive is the design's to choose. What it promises is a signal after the last change,
+/// and the tree that read shows it.
+private final class SignalledTree: @unchecked Sendable {
   private let lock = NSLock()
-  private var count = 0
+  private var latest: SessionTree?
 
-  var value: Int { lock.withLock { count } }
+  var value: SessionTree? { lock.withLock { latest } }
 
-  func add() {
-    lock.withLock { count += 1 }
-  }
-
-  /// Counts what `changes` says, until cancelled.
-  func listen(to changes: AsyncStream<Void>) -> Task<Void, Never> {
-    Task {
-      for await _ in changes { add() }
+  /// Reads `control`'s tree on every signal, until cancelled.
+  func follow(_ control: CoreControl) throws -> Task<Void, Never> {
+    let changes = try #require(control.changes)
+    return Task {
+      for await _ in changes {
+        guard let tree = try? await control.snapshot() else { continue }
+        lock.withLock { latest = tree }
+      }
     }
   }
 }
@@ -343,16 +349,14 @@ struct CoreEventFeedTests {
   @Test("a document read that got no answer is asked again, and stops once it has one")
   func documentRetried() async throws {
     let stream = subscribing(shell)
-    stream.replies["doc.get"] = .error("unavailable")
+    stream.queued["doc.get"] = [.error("unavailable")]
     let control = control(Streams(stream), heartbeatTick: .milliseconds(50))
     _ = try await control.snapshot()
 
-    stream.replies["doc.get"] = .result(FakeCoreStream.noDocument)
-    try await waitUntil("the second read") { stream.calls(of: "doc.get") == 2 }
-    for _ in 0..<30 {
-      stream.emit(#"{"jsonrpc":"2.0","method":"heartbeat","params":{"seq":0}}"#)
-      try await Task.sleep(for: .milliseconds(10))
-    }
+    try await waitUntil("the second read") { stream.calls(of: "doc.get") >= 2 }
+    // Nothing is sent, so nine ticks later the connection closes. A third read would have been
+    // asked for by one of them, and only a read that got no answer asks again.
+    try await waitUntil("the close") { stream.closes == 1 }
     #expect(stream.calls(of: "doc.get") == 2)
   }
 
@@ -365,10 +369,9 @@ struct CoreEventFeedTests {
     let control = control(Streams(stream), heartbeatTick: .milliseconds(50))
     _ = try await control.snapshot()
 
-    for _ in 0..<30 {
-      stream.emit(#"{"jsonrpc":"2.0","method":"heartbeat","params":{"seq":0}}"#)
-      try await Task.sleep(for: .milliseconds(10))
-    }
+    // Nothing is sent, so nine ticks later the connection closes. Any of them would have asked
+    // again, if an unreadable document were asked for again.
+    try await waitUntil("the close") { stream.closes == 1 }
     #expect(stream.calls(of: "doc.get") == 1)
   }
 
@@ -387,21 +390,22 @@ struct CoreEventFeedTests {
     let stream = subscribing(spaces)
     let control = control(stream)
     _ = try await control.snapshot()
-    try await quiet()
-    let signals = SignalCount()
-    let listener = signals.listen(to: try #require(control.changes))
+    let signalled = SignalledTree()
+    let listener = try signalled.follow(control)
     defer { listener.cancel() }
 
     stream.replies["doc.get"] = .result(
       #"{"value":{"spaces":[{"id":"b","name":"Bee","tabs":[]}]},"version":8}"#)
     stream.event("doc", #"{"name":"herdr-app","version":8}"#)
 
-    try await waitUntil("the signal") { signals.value >= 1 }
-    #expect(try await control.snapshot().workspaces.map(\.id) == ["core:b", "core:a"])
+    try await waitUntil("a signal that shows the document") {
+      signalled.value?.workspaces.map(\.id) == ["core:b", "core:a"]
+    }
   }
 
-  /// `/clear`'s status has been signalled by the time the read lands, and the new id is what a
-  /// chat needs to hear.
+  /// `/clear`'s status is signalled before the read lands, and the new id is what a chat needs
+  /// to hear. The read is held until a signal has already shown the status with the old id, so
+  /// the tree can show the new id only through a signal the read itself raised.
   @Test("a session id that moved reaches the screen by its own signal")
   func sessionSignals() async throws {
     let home = "/home/x"
@@ -417,17 +421,20 @@ struct CoreEventFeedTests {
     stream.files = [path: record("before")]
     let control = CoreControl(binaryPath: "hc", home: home, open: { _ in stream })
     _ = try await control.snapshot()
-    try await quiet()
-    let signals = SignalCount()
-    let listener = signals.listen(to: try #require(control.changes))
+    let signalled = SignalledTree()
+    let listener = try signalled.follow(control)
     defer { listener.cancel() }
+    let session = { signalled.value?.pane(id: "core:t1")?.agent?.session?.identifier }
 
-    stream.files = [path: .late(#"{"text":"{\"pid\":101,\"sessionId\":\"after\"}"}"#, delay: .milliseconds(100))]
-    stream.event("status", on: "t1", #"{"status":{"app":"claude-code","state":"idle"}}"#)
+    stream.files = [path: record("after")]
+    stream.holdsReplies = true
+    stream.event("status", on: "t1", #"{"status":{"app":"claude-code","state":"working"}}"#)
+    try await waitUntil("a signal that shows the status, with the old id") {
+      status(signalled.value ?? .empty) == .working && session() == "before"
+    }
 
-    try await waitUntil("the status's signal, then the read's") { signals.value >= 2 }
-    #expect(
-      try await control.snapshot().pane(id: "core:t1")?.agent?.session?.identifier == "after")
+    stream.flushHeld()
+    try await waitUntil("a signal that shows the new id") { session() == "after" }
   }
 
   @Test("a connection that dies signals, and the read that follows subscribes on a new one")

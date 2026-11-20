@@ -54,6 +54,13 @@ final class FakeCoreStream: HerdrStream, @unchecked Sendable {
     "machine.list": .result(FakeCoreStream.noMachines),
   ]
 
+  /// Answers a method gives once each, in order, before it goes back to `replies`.
+  ///
+  /// For a reply that is wrong for one call only. Swapping `replies` from the test's own task
+  /// races with whatever else is calling, and the call that lands one tick late gets the old
+  /// answer. Set before the first call that needs one: the test writes it without the lock.
+  var queued: [String: [Reply]] = [:]
+
   /// What `file.read` answers, by path. A path with no entry is a file that is not there.
   var files: [String: Reply] = [:]
   /// What `machine.exec` answers, from its `line` and `on`, in place of `replies` once set.
@@ -143,8 +150,18 @@ final class FakeCoreStream: HerdrStream, @unchecked Sendable {
         let terminal = try required(params?["terminal"] as? String)
         answer(id: id, reply: screens[terminal] ?? .error("no terminal \(terminal)"))
       } else {
-        answer(id: id, reply: replies[method] ?? .error("no such method"))
+        let reply = nextQueued(for: method) ?? replies[method] ?? .error("no such method")
+        answer(id: id, reply: reply)
       }
+    }
+  }
+
+  private func nextQueued(for method: String) -> Reply? {
+    lock.withLock {
+      guard var waiting = queued[method], !waiting.isEmpty else { return nil }
+      let next = waiting.removeFirst()
+      queued[method] = waiting
+      return next
     }
   }
 
@@ -256,16 +273,17 @@ final class FakeCoreStream: HerdrStream, @unchecked Sendable {
   func finish() { continuation.finish() }
 
   /// Writes every answer held so far, in one chunk, and stops holding.
+  ///
+  /// The write is inside the lock, so an answer that `respond` makes next finds the held ones
+  /// already written. `write` takes no lock of its own.
   func flushHeld() {
-    let bytes = lock.withLock {
-      defer {
-        held = Data()
-        heldCount = 0
-        holdsReplies = false
-      }
-      return held
+    lock.withLock {
+      let bytes = held
+      held = Data()
+      heldCount = 0
+      holdsReplies = false
+      write(bytes)
     }
-    write(bytes)
   }
 
   private func answerHello() {
