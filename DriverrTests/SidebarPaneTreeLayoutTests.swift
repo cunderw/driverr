@@ -8,8 +8,8 @@ import UIKit
 /// The iPad sidebar's pane tree at the largest text sizes, in a narrow sidebar.
 ///
 /// Three levels of indent (host, workspace, tab) come out of the title's width before a word
-/// is drawn. At AX3 in a 420 pt column the title must still hold a usable width, and every row
-/// must stay a 44 pt target.
+/// is drawn. At AX3 in a 420 pt column the title must still hold every word whole, and every
+/// row must stay a 44 pt target.
 @MainActor
 @Suite("Sidebar pane tree layout")
 struct SidebarPaneTreeLayoutTests {
@@ -27,7 +27,7 @@ struct SidebarPaneTreeLayoutTests {
           panes: [
             Pane(
               id: "w1:p1", tabID: "w1:t1", workspaceID: "w1",
-              title: "needs a decision about the connection pool",
+              title: longTitle,
               agent: Agent(name: "claude", status: .blocked), directory: "~/dev/driverr"),
             Pane(
               id: "w1:p2", tabID: "w1:t1", workspaceID: "w1", title: "zsh",
@@ -71,21 +71,43 @@ struct SidebarPaneTreeLayoutTests {
     return found.sorted { $0.minY < $1.minY }
   }
 
-  @Test("at AX3 in a narrow sidebar every pane title keeps a usable width")
-  func titlesKeepTheirWidth() {
-    var titles: [String: CGRect] = [:]
+  /// The longest title in the tree, whose every word has to fit the column whole.
+  private static let longTitle = "needs a decision about the connection pool"
+
+  /// How wide each word of `longTitle` is at AX3, in the row title's font.
+  private func wordWidths() -> [String: CGFloat] {
+    var widths: [String: CGFloat] = [:]
+    let words = Self.longTitle.split(separator: " ").map(String.init)
     let window = HostedProbe.window(
-      sidebar(reporting: { titles[$0] = $1 }),
+      VStack(alignment: .leading) {
+        ForEach(words, id: \.self) { word in
+          Text(word).fixedSize().measuredFrame { widths[word] = $0.width }
+        }
+      }
+      .environment(\.dynamicTypeSize, .accessibility3),
+      size: CGSize(width: Self.width, height: HostedProbe.pad.height)
+    )
+    withExtendedLifetime(window) {}
+    return widths
+  }
+
+  /// "Usable" is measured, not guessed: the column must hold the title's widest word without
+  /// breaking it. Three levels of indent and the badge come out of the row first.
+  @Test("at AX3 in a narrow sidebar every title column holds the widest word whole")
+  func titlesKeepTheirWidth() throws {
+    let widest = try #require(wordWidths().values.max())
+    var columns: [String: CGRect] = [:]
+    let window = HostedProbe.window(
+      sidebar(reporting: { columns[$0] = $1 }),
       size: CGSize(width: Self.width, height: HostedProbe.pad.height)
     )
     defer { withExtendedLifetime(window) {} }
 
-    #expect(titles.count == 3, "Expected all three pane rows to lay out; got \(titles.keys).")
-    // Half the column. Less, and an AX3 title holds one short word per line.
-    for (id, frame) in titles {
+    #expect(columns.count == 3, "Expected all three pane rows to lay out; got \(columns.keys).")
+    for (id, frame) in columns {
       #expect(
-        frame.width >= Self.width / 2,
-        "\(id)'s title is \(frame.width) pt wide in a \(Self.width) pt sidebar.")
+        frame.width >= widest,
+        "\(id)'s title column is \(frame.width) pt wide; the widest word needs \(widest) pt.")
     }
   }
 

@@ -160,7 +160,6 @@ struct SidebarPaneRow: View {
             // Two lines at the accessibility sizes, where one holds a word or two after
             // three levels of indent.
             .lineLimit(dynamicTypeSize.isAccessibilitySize ? 2 : 1)
-            .background { titleMeasurement }
           if let subtitle = pane.rowSubtitle(stop: badge) {
             Text(subtitle)
               .font(.caption)
@@ -171,13 +170,16 @@ struct SidebarPaneRow: View {
               .truncationMode(.head)
           }
         }
-        Spacer(minLength: 0)
+        // The column takes the rest of the row, so its frame is the room the title has.
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background { titleMeasurement }
       }
     }
     .accessibilityElement(children: .combine)
   }
 
-  /// Where a hosted layout test reads the title's frame. A `GeometryReader` in a background
+  /// Where a hosted layout test reads the frame of the title's column: the room the title
+  /// has, whatever its length. A `GeometryReader` in a background
   /// takes no part in layout, and nothing is installed when `nil`. See `ProvenanceRow`.
   var onTitleFrame: (@MainActor (CGRect) -> Void)?
 
