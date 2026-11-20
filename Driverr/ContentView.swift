@@ -1273,6 +1273,8 @@ struct ContentView: View {
       .accessibilityIdentifier("hosts.blocked")
     } else {
       badgeCapsule(badge)
+        // Fixed on a chevron row, where the name's layout priority would squeeze it.
+        .fixedSize(horizontal: growsWithCapsule, vertical: false)
         .accessibilityLabel(spoken)
         .accessibilityIdentifier("hosts.blocked")
     }
