@@ -50,18 +50,20 @@ struct HostRowLabelLayoutTests {
 
   /// The name on one line and the capsule at its own size, both at `size`, with nothing to
   /// squeeze them.
-  private func naturalSizes(badge: String) -> (name: CGSize, capsule: CGSize) {
+  private func naturalSizes(badge: String) -> (name: CGSize, capsule: CGSize, dot: CGSize) {
     var name = CGSize.zero
     var capsule = CGSize.zero
+    var dot = CGSize.zero
     let window = HostedProbe.window(
       VStack(alignment: .leading) {
         Text(Self.name).fixedSize().measuredFrame { name = $0.size }
         HostBadgeCapsule(badge: badge).fixedSize().measuredFrame { capsule = $0.size }
+        Image(systemName: "circle.fill").font(.caption2).measuredFrame { dot = $0.size }
       }
       .environment(\.dynamicTypeSize, Self.size)
     )
     withExtendedLifetime(window) {}
-    return (name, capsule)
+    return (name, capsule, dot)
   }
 
   private func check(blocked: Int, lonePane: HostRowLonePane?) throws {
@@ -75,7 +77,7 @@ struct HostRowLabelLayoutTests {
     let capsule = try #require(frames[.badge], "The badge never reported a frame.")
     let measured = """
       name \(name), one line \(natural.name); \
-      capsule \(capsule), natural \(natural.capsule); window \(window.bounds.width) pt
+      capsule \(capsule), natural \(natural.capsule); dot \(natural.dot); window \(window.bounds.width) pt
       """
     #expect(
       abs(name.height - natural.name.height) < 1,

@@ -114,7 +114,7 @@ struct HostRowLabel<Accessory: View>: View {
       } label: {
         capsule(badge)
       }
-      .badgeHitArea(growsWithCapsule: growsWithCapsule)
+      .badgeHitArea(growsWithCapsule: true)
       .buttonStyle(.borderless)
       // The count, then what a tap does. `spoken` is already a sentence.
       .accessibilityLabel("\(spoken). Opens \(lonePane.title).")
@@ -122,7 +122,7 @@ struct HostRowLabel<Accessory: View>: View {
     } else {
       capsule(badge)
         // Fixed on a chevron row, where the name's layout priority would squeeze it.
-        .fixedSize(horizontal: growsWithCapsule, vertical: false)
+        .fixedSize(horizontal: true, vertical: false)
         .accessibilityLabel(spoken)
         .accessibilityIdentifier("hosts.blocked")
     }
