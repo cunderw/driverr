@@ -957,28 +957,57 @@ struct ContentView: View {
         .controlSize(.large)
         .accessibilityIdentifier("hosts.emptyAdd")
       }
-    } else {
+    } else if sizeClass == .regular {
       // `List(selection:)` makes the chosen host a value, and on iPad highlights the row the
       // detail column belongs to.
       List(selection: sidebarSelection) {
-        // Without this row, a failed save, load or delete would look like a gesture that did
-        // nothing.
-        if let message = model.errorMessage {
-          Section {
-            RowProblemLabel(message, systemImage: "exclamationmark.triangle", font: .body)
-              .accessibilityIdentifier("hosts.error")
-          }
-        }
-        Section {
-          hostRows(model)
-        } footer: {
-          // On the footer's `Text`, never the `Section`, whose identifier would rename every
-          // row.
-          Text(connections.summary(of: model.hosts).text)
-            .accessibilityIdentifier("hosts.summary")
-        }
+        hostListContent(model)
+      }
+    } else {
+      // The phone keeps a `Host.ID?` selection, not `SidebarSelection?`. With a
+      // `SidebarSelection?` selection type, a host row tap built the pushed `HostDetailView`
+      // twice (measured; even `.constant(nil)` of that type does it). The second instance
+      // found the first one's connect in flight, read it as the user's, and expanded the
+      // connection form (`HostConnectUITests.testAnImmediateConnectDoesNotShowTheConnectionForm`).
+      List(selection: phoneHostSelection) {
+        hostListContent(model)
       }
     }
+  }
+
+  /// The host list's rows, the same on both routes; only the selection type differs.
+  @ViewBuilder
+  private func hostListContent(_ model: HostListModel) -> some View {
+    // Without this row, a failed save, load or delete would look like a gesture that did
+    // nothing.
+    if let message = model.errorMessage {
+      Section {
+        RowProblemLabel(message, systemImage: "exclamationmark.triangle", font: .body)
+          .accessibilityIdentifier("hosts.error")
+      }
+    }
+    Section {
+      hostRows(model)
+    } footer: {
+      // On the footer's `Text`, never the `Section`, whose identifier would rename every
+      // row.
+      Text(connections.summary(of: model.hosts).text)
+        .accessibilityIdentifier("hosts.summary")
+    }
+  }
+
+  /// The phone's host list selection: the selected host, with no pane in it. See
+  /// `sidebarSelection` for why it is a custom binding. It has no `sidebarDidSelect` call,
+  /// because `terminalRoute` is `.detailColumn` only at regular width.
+  private var phoneHostSelection: Binding<DriverrCore.Host.ID?> {
+    Binding(
+      get: { selectedHostID },
+      set: { id in
+        // A tap, by this binding's design.
+        hostPick.userPicked(id)
+        selectedHostID = id
+      }
+    )
   }
 
   /// What the sidebar highlights: the open pane, a plain shell's host, or the selected
