@@ -1235,7 +1235,6 @@ struct PaneComposerBar: View {
           Text(words)
             .font(.footnote.weight(.semibold))
             .lineLimit(1)
-            .fixedSize()
         }
       }
       .foregroundStyle(colour)
@@ -1246,6 +1245,9 @@ struct PaneComposerBar: View {
       .contentShape(Rectangle())
     }
     .buttonStyle(.plain)
+    // The words take their full width and the field gives way. Without it the row offered
+    // the button a glyph's width, and the words ran out of the capsule over Stop.
+    .fixedSize()
     .disabled(!isEnabled)
     .accessibilityLabel(PaneModeControl.label)
     // Unknown says nothing rather than a guess.
