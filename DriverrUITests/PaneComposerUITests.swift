@@ -211,7 +211,11 @@ final class PaneComposerUITests: PaneComposerUITestCase {
 
     require(app, "composer.text", "Expected the composer").tap()
     app.typeText("yes")
-    require(app, "composer.send", "Expected a send button").tap()
+    // Send moves when the iPad keyboard comes back up after the typing; see
+    // `testRenamingASavedPromptRetitlesItsRow`.
+    let send = require(app, "composer.send", "Expected a send button")
+    waitUntilStill(app, send)
+    send.tap()
 
     requireStatus(
       app,
@@ -442,6 +446,9 @@ extension PaneComposerUITests {
   func testSavingTheFieldThenInsertingItAppendsWithoutSending() {
     let app = composerWithSavedPrompts()
     app.typeText("check the build")
+    // The list's button moves when the iPad keyboard comes back up after the typing; see
+    // `testRenamingASavedPromptRetitlesItsRow`.
+    waitUntilStill(app, require(app, "composer.prompts", "Expected a saved prompts button"))
     openSavedPrompts(app)
     require(app, "composer.prompts.empty", "Expected the list to say nothing is saved yet")
 
@@ -483,7 +490,12 @@ extension PaneComposerUITests {
     // left if the selection had not landed when the keys arrived.
     waitUntilStill(app, field)
     field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 20) + "Diff check")
-    require(app, "composer.prompts.rename.done", "Expected Done").tap()
+    // On Driverr iPad the typing drops the software keyboard to its short bar, and the full
+    // keyboard comes back up about 1.3 s later and moves Done up. A tap inside that window
+    // used Done's old frame and typed `\` on the keyboard instead.
+    let done = require(app, "composer.prompts.rename.done", "Expected Done")
+    waitUntilStill(app, done)
+    done.tap()
 
     requireGone(app, "composer.prompts.rename.field", "Done must close the rename field")
     let renamed = require(app, "composer.prompts.row.1", "Expected the renamed row in its place")
