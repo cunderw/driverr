@@ -177,6 +177,9 @@ struct PaneComposerBar: View {
   /// The Shift-Tab button, which cycles Claude Code's mode. `.hidden` draws nothing. The rule
   /// is `PaneModeControl`, in `DriverrCore`.
   var modeControl: PaneModeControl = .hidden
+  /// Claude Code's mode, read off the pane's screen and shown on the mode button. `nil` is
+  /// unknown: the plain glyph and no value. See `PaneModeReading`.
+  var mode: ClaudeMode?
 
   /// The saved prompts, offered from a button in the card. `nil` hides the button, so a bar
   /// built without it, as in most hosted tests, is the bar it was.
@@ -1206,31 +1209,51 @@ struct PaneComposerBar: View {
   }
 
 
-  /// Shift-Tab, beside Stop and Send: Claude Code moves to its next mode. It says no mode,
-  /// because nothing Driverr reads says the mode the moment it changes.
+  /// Shift-Tab, beside Stop and Send: Claude Code moves to its next mode. The mode the pane's
+  /// screen last showed is on the button, as words after the glyph and as its value.
   ///
-  /// Drawn like Attach, an accent glyph on a neutral circle, so it does not read as a second
-  /// Send. Off while the pane is blocked, where Shift-Tab approves the request, and while a
-  /// reply is on its way.
+  /// A neutral capsule: the accent glyph, then the mode's short words in `Color.primary`,
+  /// because accent words on the fill read 2.7:1 in light and 3.65:1 in dark. Every known
+  /// mode, manual included, draws the same way, as Claude Code's own footer names every mode.
+  /// An unknown mode draws the glyph alone on a circle, like Attach, and has no value. At
+  /// accessibility sizes the words go and the value stays, so the row keeps its room.
+  ///
+  /// Off while the pane is blocked, where Shift-Tab approves the request, and while a reply
+  /// is on its way. Off, the glyph and the words are both secondary.
   private func modeButton(in shape: CardShape) -> some View {
     let isEnabled = modeControl == .ready && !model.isSending
+    let words = dynamicTypeSize < .accessibility1 ? mode?.label : nil
     return Button {
       Task { await model.send(.backTab) }
     } label: {
-      // `chevron.forward.2`, after Claude Code's own "⏵⏵" mode marker. Not a circular arrow,
-      // which is the system's refresh glyph and would read as reloading the conversation.
-      Image(systemName: "chevron.forward.2")
-        .font(.system(size: shape == .card ? 17 : 15, weight: .semibold))
-        .foregroundStyle(isEnabled ? themeAccent : Color.secondary)
-        .frame(width: Self.circle(in: shape), height: Self.circle(in: shape))
-        .background(Color(.tertiarySystemFill), in: Circle())
-        .frame(width: 44, height: 44)
-        .contentShape(Rectangle())
+      HStack(spacing: 4) {
+        // `chevron.forward.2`, after Claude Code's own "⏵⏵" mode marker. Not a circular arrow,
+        // which is the system's refresh glyph and would read as reloading the conversation.
+        Image(systemName: "chevron.forward.2")
+          .font(.system(size: shape == .card ? 17 : 15, weight: .semibold))
+          .foregroundStyle(isEnabled ? themeAccent : Color.secondary)
+        if let words {
+          // The flat colour, not `.foregroundStyle(.primary)`, which blends toward the tint.
+          Text(words)
+            .font(.footnote.weight(.semibold))
+            .lineLimit(1)
+            .foregroundStyle(isEnabled ? Color.primary : Color.secondary)
+        }
+      }
+      .padding(.horizontal, words == nil ? 0 : 12)
+      .frame(minWidth: Self.circle(in: shape), minHeight: Self.circle(in: shape))
+      .background(Color(.tertiarySystemFill), in: Capsule())
+      .frame(minWidth: 44, minHeight: 44)
+      .contentShape(Rectangle())
     }
     .buttonStyle(.plain)
+    // The words take their full width and the field gives way. Without it the row offered
+    // the button a glyph's width, and the words ran out of the capsule over Stop.
+    .fixedSize()
     .disabled(!isEnabled)
-    // The glyph has no words, so the label is all VoiceOver has.
     .accessibilityLabel(PaneModeControl.label)
+    // Unknown says nothing rather than a guess.
+    .accessibilityValue(mode?.spokenName ?? "")
     .accessibilityHint(
       modeControl == .blocked ? PaneModeControl.blockedHint : PaneModeControl.hint)
     .accessibilityIdentifier("composer.mode")

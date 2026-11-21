@@ -1,8 +1,8 @@
 /// The chat's control that sends Shift-Tab, which cycles Claude Code's mode (manual, accept
 /// edits, plan and any others the user has turned on).
 ///
-/// It shows no mode. Claude Code writes the mode to its session file only with the next
-/// prompt, not when Shift-Tab changes it, so the file cannot say what the mode is now.
+/// The mode it shows comes from the pane's screen, not the session file, which Claude Code
+/// writes the mode to only with the next prompt. See `ClaudeMode` and `PaneModeReading`.
 public enum PaneModeControl: Equatable, Sendable {
   /// Not drawn: the pane is not Claude Code, or Shift would not survive the trip.
   case hidden

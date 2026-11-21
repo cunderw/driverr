@@ -37,6 +37,10 @@ public actor FakeControl: HerdrControl {
   /// What a single-pane read answers with until anything is sent, then the fixture: a picker
   /// a chip answers and closes. `screenOverride` wins over it.
   private let screenUntilSent: PaneScreen?
+  /// Screens a single-pane read answers with in turn, one step per Shift-Tab sent to that
+  /// pane: a Claude Code footer cycling its modes. `screenOverride` and `screenUntilSent` win
+  /// over it.
+  private let modeCycle: [PaneScreen]?
   /// What opens a core pane, for a test of that path. A pane on the TUI gets the bridge.
   private let attacher: (any PaneAttacher)?
   /// What this fake has no equivalent for, as a core has no rename. See `canPerform(_:on:)`.
@@ -71,7 +75,8 @@ public actor FakeControl: HerdrControl {
     canStartTerminal: Bool = false,
     canStartAgent: Bool = false,
     startFailure: AppError? = nil,
-    imageUploads: ImageUploads? = nil
+    imageUploads: ImageUploads? = nil,
+    modeCycle: [PaneScreen]? = nil
   ) {
     script = []
     self.tree = tree
@@ -85,6 +90,7 @@ public actor FakeControl: HerdrControl {
     self.canStartAgent = canStartAgent
     self.startFailure = startFailure
     self.imageUploads = imageUploads
+    self.modeCycle = modeCycle
   }
 
   /// A session that changes as it is polled, for exercising live updates.
@@ -95,7 +101,8 @@ public actor FakeControl: HerdrControl {
   ///   - agentStart: how a start answers. See `AgentStartBehaviour`.
   public init(
     script: [SessionTree], canStartAgent: Bool = false,
-    agentStart: AgentStartBehaviour = .starts(after: .zero)
+    agentStart: AgentStartBehaviour = .starts(after: .zero),
+    modeCycle: [PaneScreen]? = nil
   ) {
     self.script = script
     tree = script.first ?? .empty
@@ -110,6 +117,7 @@ public actor FakeControl: HerdrControl {
     self.agentStart = agentStart
     startFailure = nil
     imageUploads = nil
+    self.modeCycle = modeCycle
   }
 
   /// A fake that fails, for exercising the error surfaces without a broken host.
@@ -337,6 +345,13 @@ public actor FakeControl: HerdrControl {
     if let failure { throw failure }
     if let screenOverride { return screenOverride }
     if let screenUntilSent, sent.isEmpty { return screenUntilSent }
+    if let modeCycle, !modeCycle.isEmpty {
+      let toggles = sent.reduce(0) { count, steering in
+        guard case .keys(pane.id, let keys) = steering else { return count }
+        return count + keys.filter { $0 == .backTab }.count
+      }
+      return modeCycle[toggles % modeCycle.count]
+    }
     return PaneScreen.sanitised(Self.fixtureScreen(for: pane), lines: lines)
   }
 
@@ -1054,6 +1069,30 @@ public actor FakeControl: HerdrControl {
     ].joined(separator: "\n"),
     lines: PaneScreen.maximumLines
   )
+
+  /// Claude Code's footer in each mode of its cycle, manual, accept edits, plan and auto, for
+  /// `modeCycle`. The rows under the composer follow a Claude Code 2.1.329 capture on the herdr
+  /// TUI; the conversation above them is the fake's own.
+  public static let modeCycleScreens: [PaneScreen] = [
+    "\u{1B}[0m\u{1B}[38;5;7m⏸ manual mode on\u{1B}[0m\u{1B}[2m\u{1B}[38;5;7m · ← 1 agent\u{1B}[0m",
+    "\u{1B}[0m\u{1B}[38;5;13m⏵⏵ accept edits on\u{1B}[0m\u{1B}[2m\u{1B}[38;5;7m · ← 1 agent\u{1B}[0m",
+    "\u{1B}[0m\u{1B}[38;5;14m⏸ plan mode on\u{1B}[0m\u{1B}[2m\u{1B}[38;5;7m (shift+tab to cycle)\u{1B}[0m",
+    "\u{1B}[0m\u{1B}[38;5;11m⏵⏵ auto mode on\u{1B}[0m\u{1B}[2m\u{1B}[38;5;7m (shift+tab to cycle)\u{1B}[0m",
+  ].map { footer in
+    let rule = "\u{1B}[0m\u{1B}[38;5;7m" + String(repeating: "─", count: 38) + "\u{1B}[0m"
+    return PaneScreen.sanitised(
+      [
+        "\u{1B}[0m\u{1B}[38;5;15m⏺ \u{1B}[0mRunning the tests now.",
+        "",
+        rule,
+        "❯\u{A0}",
+        rule,
+        "  \u{1B}[0m\u{1B}[1m\u{1B}[38;5;2mINSERT\u{1B}[0m\u{1B}[38;5;8m | \u{1B}[0m\u{1B}[38;5;3mdriverr\u{1B}[0m",
+        "  " + footer,
+      ].joined(separator: "\n"),
+      lines: PaneScreen.maximumLines
+    )
+  }
 
   /// A pane showing Claude Code's `AskUserQuestion` picker, with nothing about it in the
   /// session file.

@@ -116,6 +116,8 @@ struct TerminalScreen: View {
   /// Whether the composer has the keyboard, so the chat can return to the newest turn when
   /// the viewport shrinks. Held here because the composer and the chat are siblings.
   @State private var isComposerFocused = false
+  /// Whether the app is in front, so the mode button's screen read waits for it.
+  @Environment(\.scenePhase) private var scenePhase
 
   /// The chat image being viewed full size, or `nil`.
   ///
@@ -496,6 +498,14 @@ struct TerminalScreen: View {
       if let previous { model.transcripts?.existingModel(for: previous)?.closeAllSubagents() }
     }
     .onChange(of: isShowingChat) { viewingImage = nil }
+    // A Shift-Tab typed on the terminal side changes Claude Code's mode without the chat
+    // seeing it, so the chat's next appearance reads the screen again.
+    .onChange(of: TerminalShownKey(pane: scene.currentPane?.id, isTerminal: !isShowingChat),
+      initial: true
+    ) { _, key in
+      guard key.isTerminal, let pane = key.pane else { return }
+      model.paneScreens?.existingModel(for: pane)?.terminalShown()
+    }
     // Leaving the scene closes a sub-agent too, in `TerminalPresenter.endPresentation`, not in
     // an `onDisappear` here: the phone's push of the sub-agent fires it.
   }
@@ -576,6 +586,7 @@ struct TerminalScreen: View {
     if isShowingChat, !isShowingSubagentInPlace, let composerModel,
       let pane = scene.currentPane
     {
+      let modeControl = shiftTabControl(for: pane)
       PaneComposerBar(
         model: composerModel,
         // Mined for the `/` list. `nil` when there is nothing to offer.
@@ -608,14 +619,48 @@ struct TerminalScreen: View {
           case .files: scene.requestFileAttachment()
           }
         },
-        // From the live pane, so the button turns off the moment the pane is blocked.
-        modeControl: PaneModeControl(
-          pane: pane,
-          deliversShiftTab: model.herdrAvailability?.deliversShiftTab(toPane: pane.id) == true),
+        modeControl: modeControl,
+        mode: screenModel?.mode,
         savedPrompts: savedPrompts,
         hold: composerHold
       )
+      // The mode on the button comes from the screen, so read it where the button is drawn:
+      // on appearance and on coming back to the app if the capture is old or the terminal was
+      // up since the last read (`PaneScreenModel.terminalShown()`), and whenever the
+      // agent's status changes, which a mode change can follow (plan mode ends on approval).
+      // No poller. A Shift-Tab reads through `onSent`.
+      .task(
+        id: ModeReadKey(
+          pane: pane.id, isReading: modeControl != .hidden && scenePhase == .active)
+      ) {
+        guard modeControl != .hidden, scenePhase == .active else { return }
+        screenModel?.refreshForModeOnAppearance()
+      }
+      .onChange(of: pane.agent?.status) {
+        guard modeControl != .hidden, scenePhase == .active else { return }
+        screenModel?.refresh()
+      }
     }
+  }
+
+  /// Which pane's terminal is on screen, for `PaneScreenModel.terminalShown()`.
+  private struct TerminalShownKey: Equatable {
+    let pane: String?
+    let isTerminal: Bool
+  }
+
+  /// When the mode button's screen read runs again. See `paneComposer`.
+  private struct ModeReadKey: Hashable {
+    let pane: String
+    let isReading: Bool
+  }
+
+  /// The Shift-Tab button's state for `pane`, from the live pane, so it turns off the moment
+  /// the pane is blocked.
+  private func shiftTabControl(for pane: Pane) -> PaneModeControl {
+    PaneModeControl(
+      pane: pane,
+      deliversShiftTab: model.herdrAvailability?.deliversShiftTab(toPane: pane.id) == true)
   }
 
   /// Whether this launch asked for `keyboardMetricsReadout`. A name, because both the

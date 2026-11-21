@@ -344,6 +344,30 @@ struct FakeControlTests {
     #expect(screen.lines.allSatisfy { $0.marker == nil })
   }
 
+  /// `-uiTestingModeCycle`'s footer, so a UI test can watch the mode button's value follow a
+  /// tap. A step per Shift-Tab to that pane, and nothing else moves it.
+  @Test("a mode cycle steps on each Shift-Tab to its own pane")
+  func modeCycleSteps() async throws {
+    let control = FakeControl(modeCycle: FakeControl.modeCycleScreens)
+    let pane = try #require(FakeControl.seededTree.pane(id: "w1:p2"))
+    func mode() async throws -> ClaudeMode? {
+      ClaudeMode(screen: try await control.readScreen(of: pane, lines: 40))
+    }
+
+    #expect(try await mode() == .manual)
+    try await control.sendKeys(paneID: pane.id, keys: [.backTab])
+    #expect(try await mode() == .acceptEdits)
+    try await control.sendKeys(paneID: pane.id, keys: [.esc])
+    try await control.sendKeys(paneID: "w1:p3", keys: [.backTab])
+    #expect(try await mode() == .acceptEdits, "an Esc, or a Shift-Tab elsewhere, is no step")
+    try await control.sendKeys(paneID: pane.id, keys: [.backTab])
+    #expect(try await mode() == .plan)
+    try await control.sendKeys(paneID: pane.id, keys: [.backTab])
+    #expect(try await mode() == .auto)
+    try await control.sendKeys(paneID: pane.id, keys: [.backTab])
+    #expect(try await mode() == .manual)
+  }
+
   @Test("a single-pane read honours the line count it was given")
   func screenReadHonoursTheLineCount() async throws {
     let control = FakeControl()

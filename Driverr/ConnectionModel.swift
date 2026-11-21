@@ -634,7 +634,14 @@ final class ConnectionModel {
               // warrant a re-read.
               let typed: String? = if case .text(let text) = attempt { text } else { nil }
               transcripts?.existingModel(for: paneID)?.recordSend(typed)
-              paneScreens?.existingModel(for: paneID)?.refresh()
+              let screen = paneScreens?.existingModel(for: paneID)
+              // Shift-Tab changes Claude Code's mode, so the mode on show is stale until a
+              // read answers it. `modeToggled()` reads as well.
+              if attempt == .key(.backTab) {
+                screen?.modeToggled()
+              } else {
+                screen?.refresh()
+              }
             }
           )
         }

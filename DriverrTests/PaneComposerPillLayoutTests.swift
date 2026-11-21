@@ -21,7 +21,8 @@ struct PaneComposerPillLayoutTests {
     text: String,
     size: DynamicTypeSize = .large,
     pane: Pane = PreviewSupport.agentPane,
-    modeControl: PaneModeControl = .hidden
+    modeControl: PaneModeControl = .hidden,
+    mode: ClaudeMode? = nil
   ) -> Double {
     var height: Double = 0
     var state = PaneComposerState()
@@ -32,7 +33,8 @@ struct PaneComposerPillLayoutTests {
       header: PaneComposerHeader(pane: pane),
       onLayoutProbe: { height = Double($0.height) },
       onAttach: { _ in },
-      modeControl: modeControl
+      modeControl: modeControl,
+      mode: mode
     )
     .environment(\.dynamicTypeSize, size)
     let window = HostedProbe.window(bar)
@@ -89,5 +91,34 @@ struct PaneComposerPillLayoutTests {
     let largeWithout = barHeight(text: "", size: .accessibility5, pane: Self.workingPane)
     #expect(large > 0)
     #expect(large <= largeWithout, "with \(large), without \(largeWithout)")
+  }
+
+  /// The longest words a known mode draws.
+  private static let longestMode = ClaudeMode.manual
+
+  @Test("the mode's words keep the pill one 48 pt row")
+  func modeWordsKeepThePill() {
+    let rest = barHeight(
+      text: "", pane: Self.workingPane, modeControl: .ready, mode: Self.longestMode)
+    #expect(abs(rest - (Self.pillHeight + 6 + PaneComposerBar.cardBottomInset)) < 1)
+    let largest = barHeight(
+      text: "", size: .xxxLarge, pane: Self.workingPane, modeControl: .ready,
+      mode: Self.longestMode)
+    let largestPlain = barHeight(
+      text: "", size: .xxxLarge, pane: Self.workingPane, modeControl: .ready)
+    #expect(largest == largestPlain, "the words must not make the pill taller")
+  }
+
+  /// At accessibility sizes the words go and the value stays, so the card is the height it is
+  /// with the plain glyph.
+  @Test("at the largest size the mode's words do not make the card taller")
+  func modeWordsAtTheLargestSize() {
+    let words = barHeight(
+      text: "", size: .accessibility5, pane: Self.workingPane, modeControl: .ready,
+      mode: Self.longestMode)
+    let plain = barHeight(
+      text: "", size: .accessibility5, pane: Self.workingPane, modeControl: .ready)
+    #expect(words > 0)
+    #expect(words == plain, "with words \(words), plain \(plain)")
   }
 }

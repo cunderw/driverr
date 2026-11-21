@@ -232,6 +232,138 @@ struct PaneScreenModelTests {
     await settled(model)
   }
 
+  // MARK: - Claude Code's mode
+
+  /// Waits for the fake to have answered `count` reads, for the model to have settled, and
+  /// for the mode to stop being stale. No deadline of its own: the suite's time limit fails
+  /// it, and the sleep throws on cancellation, so a wait that never ends is a failure.
+  private func settledMode(
+    after count: Int, on control: FakeControl, model: PaneScreenModel
+  ) async throws {
+    while await control.screenReads.count < count || model.currentLoad != nil
+      || model.modeReading.isStale
+    {
+      try await Task.sleep(for: .milliseconds(5))
+    }
+  }
+
+  /// The link, swappable from a test, for a read that fails after one that answered.
+  private final class Link {
+    var control: FakeControl?
+    init(_ control: FakeControl?) { self.control = control }
+  }
+
+  private func modeModel(_ control: FakeControl) -> PaneScreenModel {
+    PaneScreenModel(pane: pane(), control: { control }, modeRereadDelay: .zero)
+  }
+
+  @Test("every read feeds the mode")
+  func readsFeedTheMode() async {
+    let control = FakeControl(modeCycle: FakeControl.modeCycleScreens)
+    let model = modeModel(control)
+    #expect(model.mode == nil)
+
+    model.loadIfNeeded()
+    await settled(model)
+    #expect(model.mode == .manual)
+  }
+
+  /// A fake answers at once, so the key has landed before the read and one read is enough.
+  @Test("a Shift-Tab whose change is already on screen costs one read")
+  func toggleSeenAtOnce() async throws {
+    let control = FakeControl(modeCycle: FakeControl.modeCycleScreens)
+    let model = modeModel(control)
+    model.loadIfNeeded()
+    await settled(model)
+
+    try await control.sendKeys(paneID: "w1:p2", keys: [.backTab])
+    model.modeToggled()
+    #expect(model.modeReading.isStale)
+    #expect(model.mode == .manual, "the old mode stays on show until a read answers")
+    try await settledMode(after: 2, on: control, model: model)
+    #expect(model.mode == .acceptEdits)
+    #expect(await control.screenReads.count == 2)
+  }
+
+  /// The key went but Claude has not redrawn: every read still shows the old mode. Two more
+  /// reads, and then the screen is believed.
+  @Test("a Shift-Tab whose change never shows re-reads twice and then believes the screen")
+  func toggleNeverSeen() async throws {
+    let control = FakeControl(modeCycle: FakeControl.modeCycleScreens)
+    let model = modeModel(control)
+    model.loadIfNeeded()
+    await settled(model)
+
+    model.modeToggled()
+    try await settledMode(after: 4, on: control, model: model)
+    #expect(model.mode == .manual)
+    // Nothing more is asked once the screen is believed.
+    try await Task.sleep(for: .milliseconds(50))
+    #expect(await control.screenReads.count == 4)
+  }
+
+  /// `refresh()` is a no-op while a read is in flight, so the Shift-Tab's own read never
+  /// starts. The read that lands began before the key, and is not taken as its answer.
+  @Test("a Shift-Tab during a read gets a read of its own")
+  func toggleDuringARead() async throws {
+    let control = FakeControl(modeCycle: FakeControl.modeCycleScreens)
+    let model = modeModel(control)
+    model.loadIfNeeded()
+    await settled(model)
+
+    model.refresh()
+    try await control.sendKeys(paneID: "w1:p2", keys: [.backTab])
+    model.modeToggled()
+    try await settledMode(after: 3, on: control, model: model)
+    #expect(model.mode == .acceptEdits)
+  }
+
+  /// The key row's held Tab and a hardware keyboard send Shift-Tab on the terminal side, where
+  /// `onSent` never hears it. The chat's next appearance reads at once, however new its
+  /// capture is, and only that once.
+  @Test("a chat appearing after the terminal was up reads the mode again")
+  func appearanceAfterTheTerminal() async throws {
+    let clock = TestClock(now: Date(timeIntervalSince1970: 1_800_000_000))
+    let control = FakeControl(modeCycle: FakeControl.modeCycleScreens)
+    let model = PaneScreenModel(
+      pane: pane(), control: { control }, now: { clock.now }, modeRereadDelay: .zero)
+    model.refreshForModeOnAppearance()
+    await settled(model)
+    #expect(model.mode == .manual)
+
+    // A fresh capture and no terminal: appearing again asks nothing.
+    model.refreshForModeOnAppearance()
+    await settled(model)
+    #expect(await control.screenReads.count == 1)
+
+    // Shift-Tab typed in the terminal, which the chat never sees.
+    model.terminalShown()
+    try await control.sendKeys(paneID: "w1:p2", keys: [.backTab])
+    model.refreshForModeOnAppearance()
+    await settled(model)
+    #expect(await control.screenReads.count == 2)
+    #expect(model.mode == .acceptEdits)
+
+    model.refreshForModeOnAppearance()
+    await settled(model)
+    #expect(await control.screenReads.count == 2, "the terminal's mark is spent by one read")
+  }
+
+  @Test("a refused read keeps the mode on show")
+  func refusalKeepsTheMode() async {
+    let link = Link(FakeControl(modeCycle: FakeControl.modeCycleScreens))
+    let model = PaneScreenModel(pane: pane(), control: { link.control }, modeRereadDelay: .zero)
+    model.loadIfNeeded()
+    await settled(model)
+    #expect(model.mode == .manual)
+
+    link.control = nil
+    model.refresh()
+    await settled(model)
+    #expect(model.state == .failed(.notConnected(host: "this host")))
+    #expect(model.mode == .manual)
+  }
+
   // MARK: - The link that came back
 
   @Test("a read cancelled by a relink does not clear the re-read that replaced it")

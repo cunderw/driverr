@@ -54,14 +54,57 @@ final class PaneScreenModel {
   /// Injected so tests can assert `capturedAt` and the staleness bound without waiting.
   @ObservationIgnored private let now: @MainActor () -> Date
 
+  /// What Claude Code's mode is, from every read this model makes. See `PaneModeReading`.
+  private(set) var modeReading = PaneModeReading()
+  /// How long to wait before a re-read that a Shift-Tab asked for. Claude redrew its footer
+  /// about 70 ms after the key on tmux and the herdr TUI, so an immediate re-read on a fast
+  /// link lands before it. Injected so tests need not wait.
+  @ObservationIgnored private let modeRereadDelay: Duration
+  /// The waiting re-read, so a second request does not stack a second one.
+  @ObservationIgnored private var modeReread: Task<Void, Never>?
+
   init(
     pane: Pane,
     control: @escaping @MainActor () -> (any HerdrControl)?,
-    now: @escaping @MainActor () -> Date = Date.init
+    now: @escaping @MainActor () -> Date = Date.init,
+    modeRereadDelay: Duration = .milliseconds(300)
   ) {
     self.pane = pane
     self.control = control
     self.now = now
+    self.modeRereadDelay = modeRereadDelay
+  }
+
+  /// Claude Code's mode as the latest believed read shows it. `nil` is unknown.
+  var mode: ClaudeMode? { modeReading.mode }
+
+  /// Whether the pane's terminal has been on screen since the chat last read for the mode.
+  /// A Shift-Tab typed there, from the key row's held Tab or a hardware keyboard, reaches the
+  /// pane without passing `onSent`, so the chat cannot know whether the mode moved.
+  @ObservationIgnored private(set) var terminalShownSinceModeRead = false
+
+  /// The pane's terminal is on screen. See `terminalShownSinceModeRead`.
+  func terminalShown() {
+    terminalShownSinceModeRead = true
+  }
+
+  /// The chat with the mode button appeared. Reads at once after the terminal was up, and
+  /// otherwise only if the capture is old.
+  func refreshForModeOnAppearance() {
+    guard terminalShownSinceModeRead else {
+      refreshIfStale()
+      return
+    }
+    terminalShownSinceModeRead = false
+    refresh()
+  }
+
+  /// A Shift-Tab went to the pane: the mode on show is stale until a read answers it. Then
+  /// reads, as any send does. A read already in flight started before the key, and
+  /// `PaneModeReading` asks for another when it lands.
+  func modeToggled() {
+    modeReading.toggled()
+    refresh()
   }
 
   /// How old a capture has to be before appearing triggers another read. A read is cheap.
@@ -160,6 +203,8 @@ final class PaneScreenModel {
   func invalidate() {
     currentLoad?.cancel()
     currentLoad = nil
+    modeReread?.cancel()
+    modeReread = nil
     isRereading = false
     capturedAt = nil
     state = .idle
@@ -173,22 +218,26 @@ final class PaneScreenModel {
       // Cleared here as well as in `settle`, because a cancelled read does not clear it.
       isRereading = false
     }
-    currentLoad = Task { [weak self] in await self?.fetch() }
+    // Taken as the read starts, so a read that began before a Shift-Tab is told apart.
+    let ticket = modeReading.ticket
+    currentLoad = Task { [weak self] in await self?.fetch(ticket: ticket) }
   }
 
-  private func fetch() async {
+  private func fetch(ticket: Int) async {
     guard let control = control() else {
-      settle(.failed(.notConnected(host: "this host")))
+      settle(.failed(.notConnected(host: "this host")), ticket: ticket)
       return
     }
     do {
       let screen = try await control.readScreen(of: pane, lines: Self.lineCount)
-      settle(.ready(screen))
+      settle(.ready(screen), ticket: ticket)
     } catch let error as AppError {
       // herdr's own words, which `CLIControl` has already pulled out of the error envelope.
-      settle(.failed(error))
+      settle(.failed(error), ticket: ticket)
     } catch {
-      settle(.failed(.herdrCommandFailed(reason: "The pane's screen could not be read.")))
+      settle(
+        .failed(.herdrCommandFailed(reason: "The pane's screen could not be read.")),
+        ticket: ticket)
     }
   }
 
@@ -196,7 +245,7 @@ final class PaneScreenModel {
   ///
   /// Nothing below checks cancellation, so a cancelled read still arrives here. Without the
   /// guard, `invalidate()` does not stick and `reload()` races itself.
-  private func settle(_ verdict: State) {
+  private func settle(_ verdict: State, ticket: Int) {
     // `isRereading` is cleared below the guard, not above it. A read cancelled by
     // `relink()` still lands here, and clearing the flag would take the indicator off the
     // read that replaced it. Only the current read may clear it.
@@ -207,5 +256,25 @@ final class PaneScreenModel {
     // Stamped for a refusal too, so `refreshIfStale` does not re-ask a refusing pane on
     // every redraw.
     capturedAt = now()
+    let readsAgain =
+      switch verdict {
+      case .ready(let screen): modeReading.read(screen, ticket: ticket)
+      case .failed: modeReading.failed(ticket: ticket)
+      case .idle, .loading: false
+      }
+    if readsAgain { scheduleModeReread() }
+  }
+
+  /// One re-read after `modeRereadDelay`, for a Shift-Tab whose answer is not on screen yet.
+  /// Bounded by `PaneModeReading`, so this is never a poller.
+  private func scheduleModeReread() {
+    guard modeReread == nil else { return }
+    let delay = modeRereadDelay
+    modeReread = Task { [weak self] in
+      try? await Task.sleep(for: delay)
+      guard let self, !Task.isCancelled else { return }
+      self.modeReread = nil
+      self.refresh()
+    }
   }
 }
