@@ -957,28 +957,57 @@ struct ContentView: View {
         .controlSize(.large)
         .accessibilityIdentifier("hosts.emptyAdd")
       }
-    } else {
+    } else if sizeClass == .regular {
       // `List(selection:)` makes the chosen host a value, and on iPad highlights the row the
       // detail column belongs to.
       List(selection: sidebarSelection) {
-        // Without this row, a failed save, load or delete would look like a gesture that did
-        // nothing.
-        if let message = model.errorMessage {
-          Section {
-            RowProblemLabel(message, systemImage: "exclamationmark.triangle", font: .body)
-              .accessibilityIdentifier("hosts.error")
-          }
-        }
-        Section {
-          hostRows(model)
-        } footer: {
-          // On the footer's `Text`, never the `Section`, whose identifier would rename every
-          // row.
-          Text(connections.summary(of: model.hosts).text)
-            .accessibilityIdentifier("hosts.summary")
-        }
+        hostListContent(model)
+      }
+    } else {
+      // The phone keeps a `Host.ID?` selection, not `SidebarSelection?`. With a
+      // `SidebarSelection?` selection type, a host row tap built the pushed `HostDetailView`
+      // twice (measured; even `.constant(nil)` of that type does it). The second instance
+      // found the first one's connect in flight, read it as the user's, and expanded the
+      // connection form (`HostConnectUITests.testAnImmediateConnectDoesNotShowTheConnectionForm`).
+      List(selection: phoneHostSelection) {
+        hostListContent(model)
       }
     }
+  }
+
+  /// The host list's rows, the same on both routes; only the selection type differs.
+  @ViewBuilder
+  private func hostListContent(_ model: HostListModel) -> some View {
+    // Without this row, a failed save, load or delete would look like a gesture that did
+    // nothing.
+    if let message = model.errorMessage {
+      Section {
+        RowProblemLabel(message, systemImage: "exclamationmark.triangle", font: .body)
+          .accessibilityIdentifier("hosts.error")
+      }
+    }
+    Section {
+      hostRows(model)
+    } footer: {
+      // On the footer's `Text`, never the `Section`, whose identifier would rename every
+      // row.
+      Text(connections.summary(of: model.hosts).text)
+        .accessibilityIdentifier("hosts.summary")
+    }
+  }
+
+  /// The phone's host list selection: the selected host, with no pane in it. A custom
+  /// binding, so `hostPick.userPicked` runs only on the user's write. It has no
+  /// `sidebarDidSelect` call, because `terminalRoute` is `.detailColumn` only at regular width.
+  private var phoneHostSelection: Binding<DriverrCore.Host.ID?> {
+    Binding(
+      get: { selectedHostID },
+      set: { id in
+        // A tap, by this binding's design.
+        hostPick.userPicked(id)
+        selectedHostID = id
+      }
+    )
   }
 
   /// What the sidebar highlights: the open pane, a plain shell's host, or the selected
@@ -1012,8 +1041,8 @@ struct ContentView: View {
         case .openPane(let hostID, let paneID):
           terminalPresenter.present(hostID: hostID, paneID: paneID)
         case .selectHost(let id):
-          // Regular width only, the one place a sidebar row and a pane scene are on screen
-          // together. On compact no tap can reach a row while the scene is up.
+          // Only while a pane scene is up. With no request `terminalRoute` is `.none`, and
+          // there is no scene for `sidebarDidSelect` to end.
           if terminalRoute == .detailColumn {
             terminalPresenter.sidebarDidSelect(hostID: id)
           }
@@ -1050,8 +1079,8 @@ struct ContentView: View {
       // width the value is a `SidebarSelection`, which the link writes into the list's
       // selection, and the host's pane tree follows it (`sidebarHost`). On
       // the phone it is the stack's `Route`, and the path setter writes `selectedHostID` from
-      // it, so one selection drives both devices. A `Button` would lose the disclosure chevron
-      // and row treatment on the phone.
+      // it, so one state drives both devices, through two binding types. A `Button` would
+      // lose the disclosure chevron and row treatment on the phone.
       if sizeClass == .regular {
         sidebarHost(host)
       } else {
