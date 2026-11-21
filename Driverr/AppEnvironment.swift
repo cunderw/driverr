@@ -277,8 +277,11 @@ struct AppEnvironment {
         // seed's panes and its blocked pair are unchanged inside it.
         if isDemoTranscript { return FakeControl(script: FakeControl.storeTourScript) }
         // Starts agents, so the host screen offers New Agent. See `FakeControl.startAgent`.
+        // `-uiTestingModeCycle` adds a footer that steps through Claude Code's modes on each
+        // Shift-Tab. See `isModeCycle`.
         return FakeControl(
-          script: FakeControl.blockingScript, canStartAgent: true, agentStart: agentStartBehaviour)
+          script: FakeControl.blockingScript, canStartAgent: true, agentStart: agentStartBehaviour,
+          modeCycle: isModeCycle ? FakeControl.modeCycleScreens : nil)
       },
       makeTranscriptReader: { _ in
         TranscriptReader(run: AppEnvironment.launchRunner)
@@ -873,6 +876,14 @@ struct AppEnvironment {
   /// screen shows the dialog (`FakeControl.claudeTrustScreen`) until anything is sent.
   static var isTrustPrompt: Bool {
     ProcessInfo.processInfo.arguments.contains("-uiTestingTrustPrompt")
+  }
+
+  /// Whether every pane's screen shows Claude Code's footer in a mode that steps on each
+  /// Shift-Tab sent to that pane: manual, accept edits, plan, auto, and round again
+  /// (`FakeControl.modeCycleScreens`). The mode button reads it, so a test can watch its value
+  /// follow a tap.
+  static var isModeCycle: Bool {
+    ProcessInfo.processInfo.arguments.contains("-uiTestingModeCycle")
   }
 
   /// Whether this launch serves `index rebuild`'s Codex (`w3:p1`) with its `/permissions`

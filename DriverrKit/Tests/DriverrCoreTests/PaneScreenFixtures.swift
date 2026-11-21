@@ -304,3 +304,133 @@ extension PaneScreenFixture {
     claudeCodeComposerText,
   ]
 }
+
+/// The bottom rows of screens from Claude Code 2.1.329, one per mode, cycled with Shift-Tab
+/// (#166). Read as Driverr reads each transport: herdr 0.9.5 `pane read --source visible
+/// --format ansi`, whose rows end in CR LF; hc 0.1.21 `terminal.read`, which carries no SGR at
+/// all; and tmux 3.7c `capture-pane -p -e`, which writes the sixteen colours as 30-37 and
+/// 90-97. The session's directory and the usage figures in the status line are edited to the
+/// same length. Everything else is as captured.
+///
+/// The cycle was manual, accept edits, plan, auto, and back to manual.
+extension PaneScreenFixture {
+  /// Manual mode on the herdr TUI, 38 columns: `⏸ manual mode on` under two status-line rows.
+  static let claudeCodeManualOnTUI = [
+    "\r",
+    "                  \u{1B}[0m\u{1B}[2m\u{1B}[38;5;7m◐ medium · /effort\u{1B}[0m\r",
+    "\u{1B}[0m\u{1B}[38;5;7m──────────────────────────────────────\u{1B}[0m\r",
+    "❯\u{A0}\u{1B}[0m\u{1B}[2mTry \"write a test for <filepath>\"\u{1B}[0m\r",
+    "\u{1B}[0m\u{1B}[38;5;7m──────────────────────────────────────\u{1B}[0m\r",
+    "  \u{1B}[0m\u{1B}[1m\u{1B}[38;5;2mINSERT\u{1B}[0m\u{1B}[38;5;8m | \u{1B}[0m\u{1B}[38;5;3mharbour-sheets\u{1B}[0m\r",
+    "  \u{1B}[0m\u{1B}[38;5;8mctx:-- · \u{1B}[0m\u{1B}[38;5;2mfb:0%\u{1B}[0m\u{1B}[38;5;8m · \u{1B}[0m\u{1B}[38;5;6mHaiku 5.5\u{1B}[0m\r",
+    "  \u{1B}[0m\u{1B}[38;5;7m⏸ manual mode on\u{1B}[0m\u{1B}[2m\u{1B}[38;5;7m · ← 1 agent\u{1B}[0m",
+  ].joined(separator: "\n")
+
+  /// Accept edits on the herdr TUI, 38 columns.
+  static let claudeCodeAcceptEditsOnTUI = [
+    "\r",
+    "                  \u{1B}[0m\u{1B}[2m\u{1B}[38;5;7m◐ medium · /effort\u{1B}[0m\r",
+    "\u{1B}[0m\u{1B}[38;5;7m──────────────────────────────────────\u{1B}[0m\r",
+    "❯\u{A0}\u{1B}[0m\u{1B}[2mTry \"write a test for <filepath>\"\u{1B}[0m\r",
+    "\u{1B}[0m\u{1B}[38;5;7m──────────────────────────────────────\u{1B}[0m\r",
+    "  \u{1B}[0m\u{1B}[1m\u{1B}[38;5;2mINSERT\u{1B}[0m\u{1B}[38;5;8m | \u{1B}[0m\u{1B}[38;5;3mharbour-sheets\u{1B}[0m\r",
+    "  \u{1B}[0m\u{1B}[38;5;8mctx:-- · \u{1B}[0m\u{1B}[38;5;2m5h:4%\u{1B}[0m\u{1B}[38;5;8m · \u{1B}[0m\u{1B}[38;5;2mwk:22%\u{1B}[0m\u{1B}[38;5;8m · \u{1B}[0m\u{1B}[38;5;2mfb:0%\u{1B}[0m\u{1B}[38;5;8m ·…\u{1B}[0m\r",
+    "  \u{1B}[0m\u{1B}[38;5;13m⏵⏵ accept edits on\u{1B}[0m\u{1B}[2m\u{1B}[38;5;7m · ← 1 agent\u{1B}[0m",
+  ].joined(separator: "\n")
+
+  /// Plan mode on the herdr TUI, 38 columns, with the same `⏸` glyph as manual.
+  static let claudeCodePlanOnTUI = [
+    "\r",
+    "  \u{1B}[0m\u{1B}[2m\u{1B}[38;5;7mAdvisor Tool (experimental) is on…\u{1B}[0m\r",
+    "\u{1B}[0m\u{1B}[38;5;7m──────────────────────────────────────\u{1B}[0m\r",
+    "❯\u{A0}\u{1B}[0m\u{1B}[2mTry \"write a test for <filepath>\"\u{1B}[0m\r",
+    "\u{1B}[0m\u{1B}[38;5;7m──────────────────────────────────────\u{1B}[0m\r",
+    "  \u{1B}[0m\u{1B}[1m\u{1B}[38;5;2mINSERT\u{1B}[0m\u{1B}[38;5;8m | \u{1B}[0m\u{1B}[38;5;3mharbour-sheets\u{1B}[0m\r",
+    "  \u{1B}[0m\u{1B}[38;5;8mctx:-- · \u{1B}[0m\u{1B}[38;5;2m5h:4%\u{1B}[0m\u{1B}[38;5;8m · \u{1B}[0m\u{1B}[38;5;2mwk:22%\u{1B}[0m\u{1B}[38;5;8m · \u{1B}[0m\u{1B}[38;5;2mfb:0%\u{1B}[0m\u{1B}[38;5;8m ·…\u{1B}[0m\r",
+    "  \u{1B}[0m\u{1B}[38;5;14m⏸ plan mode on\u{1B}[0m\u{1B}[2m\u{1B}[38;5;7m · ← 1 agent\u{1B}[0m",
+  ].joined(separator: "\n")
+
+  /// Auto mode on the herdr TUI, 38 columns.
+  static let claudeCodeAutoOnTUI = [
+    "\r",
+    "  \u{1B}[0m\u{1B}[2m\u{1B}[38;5;7mAdvisor Tool (experimental) is on…\u{1B}[0m\r",
+    "\u{1B}[0m\u{1B}[38;5;7m──────────────────────────────────────\u{1B}[0m\r",
+    "❯\u{A0}\u{1B}[0m\u{1B}[2mTry \"write a test for <filepath>\"\u{1B}[0m\r",
+    "\u{1B}[0m\u{1B}[38;5;7m──────────────────────────────────────\u{1B}[0m\r",
+    "  \u{1B}[0m\u{1B}[1m\u{1B}[38;5;2mINSERT\u{1B}[0m\u{1B}[38;5;8m | \u{1B}[0m\u{1B}[38;5;3mharbour-sheets\u{1B}[0m\r",
+    "  \u{1B}[0m\u{1B}[38;5;8mctx:-- · \u{1B}[0m\u{1B}[38;5;2m5h:4%\u{1B}[0m\u{1B}[38;5;8m · \u{1B}[0m\u{1B}[38;5;2mwk:22%\u{1B}[0m\u{1B}[38;5;8m · \u{1B}[0m\u{1B}[38;5;2mfb:0%\u{1B}[0m\u{1B}[38;5;8m ·…\u{1B}[0m\r",
+    "  \u{1B}[0m\u{1B}[38;5;11m⏵⏵ auto mode on\u{1B}[0m\u{1B}[2m\u{1B}[38;5;7m · ← 1 agent\u{1B}[0m",
+  ].joined(separator: "\n")
+
+  /// Manual mode on a herdr-core terminal, 40 columns. `terminal.read` carries no SGR at all.
+  static let claudeCodeManualOnCore = [
+    "",
+    "                    ◐ medium · /effort",
+    "────────────────────────────────────────",
+    "❯\u{A0}Try \"write a test for <filepath>\"",
+    "────────────────────────────────────────",
+    "  INSERT | harbour-sheets",
+    "  ctx:-- · Haiku 5.5",
+    "  ⏸ manual mode on · ← 1 agent",
+  ].joined(separator: "\n")
+
+  /// Plan mode on a herdr-core terminal, 40 columns, with the hint after it.
+  static let claudeCodePlanOnCore = [
+    "",
+    "                    ◐ medium · /effort",
+    "────────────────────────────────────────",
+    "❯\u{A0}Try \"write a test for <filepath>\"",
+    "────────────────────────────────────────",
+    "  INSERT | harbour-sheets",
+    "  ctx:-- · Sonnet 5.5",
+    "  ⏸ plan mode on (shift+tab to cycle)",
+  ].joined(separator: "\n")
+
+  /// Accept edits on tmux, 40 columns. tmux writes the sixteen colours as 30-37 and 90-97.
+  static let claudeCodeAcceptEditsOnTmux = [
+    "",
+    "  \u{1B}[2m\u{1B}[37mAdvisor Tool (experimental) is on a…\u{1B}[0m",
+    "\u{1B}[37m────────────────────────────────────────",
+    "\u{1B}[39m❯\u{A0}\u{1B}[2mTry \"edit <filepath> to…\"\u{1B}[0m",
+    "\u{1B}[37m────────────────────────────────────────",
+    "\u{1B}[39m  \u{1B}[1m\u{1B}[32mINSERT\u{1B}[0m\u{1B}[90m | \u{1B}[33mharbour-sheets\u{1B}[39m",
+    "  \u{1B}[90mctx:-- · \u{1B}[32m5h:7%\u{1B}[90m · \u{1B}[32mwk:22%\u{1B}[90m · \u{1B}[32mfb:0%\u{1B}[90m · \u{1B}[36mH…\u{1B}[39m",
+    "  \u{1B}[95m⏵⏵ accept edits on\u{1B}[2m\u{1B}[37m · ← 1 agent\u{1B}[0m",
+  ].joined(separator: "\n")
+
+  /// Auto mode on tmux, 40 columns, with the hint after it.
+  static let claudeCodeAutoOnTmux = [
+    "",
+    "  \u{1B}[2m\u{1B}[37mAdvisor Tool (experimental) is on a…\u{1B}[0m",
+    "\u{1B}[37m────────────────────────────────────────",
+    "\u{1B}[39m❯\u{A0}\u{1B}[2mTry \"edit <filepath> to…\"\u{1B}[0m",
+    "\u{1B}[37m────────────────────────────────────────",
+    "\u{1B}[39m  \u{1B}[1m\u{1B}[32mINSERT\u{1B}[0m\u{1B}[90m | \u{1B}[33mharbour-sheets\u{1B}[39m",
+    "  \u{1B}[90mctx:-- · \u{1B}[32m5h:7%\u{1B}[90m · \u{1B}[32mwk:22%\u{1B}[90m · \u{1B}[32mfb:0%\u{1B}[90m · \u{1B}[36mH…\u{1B}[39m",
+    "  \u{1B}[93m⏵⏵ auto mode on\u{1B}[2m\u{1B}[37m (shift+tab to cycle)\u{1B}[0m",
+  ].joined(separator: "\n")
+
+  /// Manual mode on tmux at 18 columns: the row is cut to `⏸ manual mode`, with no `on`.
+  static let claudeCodeManualAt18 = [
+    "",
+    "   \u{1B}[92m✔ Update ins…\u{1B}[39m",
+    "\u{1B}[37m──────────────────",
+    "\u{1B}[39m❯\u{A0}\u{1B}[2mTry \"edit <file…",
+    "\u{1B}[0m\u{1B}[37m──────────────────",
+    "\u{1B}[39m  \u{1B}[1m\u{1B}[32mINSERT\u{1B}[0m\u{1B}[90m | \u{1B}[33mharb…\u{1B}[39m",
+    "  \u{1B}[90mctx:-- · \u{1B}[32m5h:7…\u{1B}[39m",
+    "  \u{1B}[37m⏸ manual mode \u{1B}[39m",
+  ].joined(separator: "\n")
+
+  /// Accept edits on tmux at 18 columns: the row is cut to `⏵⏵ accept  · …`, which names no mode.
+  static let claudeCodeAcceptEditsAt18 = [
+    "",
+    "   \u{1B}[92m✔ Update ins…\u{1B}[39m",
+    "\u{1B}[37m──────────────────",
+    "\u{1B}[39m❯\u{A0}\u{1B}[2mTry \"edit <file…",
+    "\u{1B}[0m\u{1B}[37m──────────────────",
+    "\u{1B}[39m  \u{1B}[1m\u{1B}[32mINSERT\u{1B}[0m\u{1B}[90m | \u{1B}[33mharb…\u{1B}[39m",
+    "  \u{1B}[90mctx:-- · \u{1B}[32m5h:7…\u{1B}[39m",
+    "  \u{1B}[95m⏵⏵ accept \u{1B}[2m\u{1B}[37m · …\u{1B}[0m",
+  ].joined(separator: "\n")
+}

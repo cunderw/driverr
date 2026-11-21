@@ -354,20 +354,41 @@ final class PaneComposerUITests: PaneComposerUITestCase {
 
   /// The button is wiring: one tap sends Shift-Tab and says so. When it shows is
   /// `PaneModeControlTests` and `ShiftTabReachTests`, in `swift test`.
+  ///
+  /// The fake's footer steps through Claude Code's modes on each Shift-Tab
+  /// (`-uiTestingModeCycle`), so the button's value must follow the tap (#166).
   func testTheModeButtonSendsShiftTab() {
-    let app = connectedHost()
+    let app = connectedHost(["-uiTestingModeCycle"])
     treePaneRow(app, titled: "terminal wiring").tap()
 
     let mode = require(app, "composer.mode", "Expected the mode button on a Claude pane")
     XCTAssertEqual(mode.label, "Change mode", "VoiceOver has only the label for a glyph")
     XCTAssertGreaterThanOrEqual(mode.frame.height, 44, "Under the 44 pt target: \(mode.frame)")
     XCTAssertGreaterThanOrEqual(mode.frame.width, 44, "Under the 44 pt target: \(mode.frame)")
+    requireModeValue(mode, "Manual mode", "Expected the mode read off the screen on opening")
     mode.tap()
 
     // The pane is still working, so the notice joins that line rather than replacing it.
     requireStatus(
       app, saying: "Claude is working. · Sent Shift-Tab",
       "Expected the key's notice beside the working line, not in its place")
+    requireModeValue(mode, "Accept edits", "Expected the button to say the mode the tap chose")
+  }
+
+  /// Waits for the mode button's VoiceOver value.
+  private func requireModeValue(
+    _ mode: XCUIElement,
+    _ expected: String,
+    _ message: String,
+    file: StaticString = #filePath,
+    line: UInt = #line
+  ) {
+    let matches = XCTNSPredicateExpectation(
+      predicate: NSPredicate(format: "value == %@", expected), object: mode)
+    XCTAssertEqual(
+      XCTWaiter.wait(for: [matches], timeout: 10), .completed,
+      "\(message). The value was '\(mode.value as? String ?? "nil")'.",
+      file: file, line: line)
   }
 
   /// At a permission prompt Claude Code binds Shift-Tab to approving, so the button is off.
