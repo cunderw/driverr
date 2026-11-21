@@ -1212,17 +1212,17 @@ struct PaneComposerBar: View {
   /// Shift-Tab, beside Stop and Send: Claude Code moves to its next mode. The mode the pane's
   /// screen last showed is on the button, as words after the glyph and as its value.
   ///
-  /// Drawn like Attach, an accent glyph on a neutral circle, so it does not read as a second
-  /// Send. With a mode to name it is a capsule with the mode's words in it, manual included,
-  /// as Claude Code's own footer names it. An unknown mode draws the plain glyph and has no
-  /// value. At accessibility sizes the words go and the value stays, so the row keeps its room.
+  /// A neutral capsule: the accent glyph, then the mode's short words in `Color.primary`,
+  /// because accent words on the fill read 2.7:1 in light and 3.65:1 in dark. Every known
+  /// mode, manual included, draws the same way, as Claude Code's own footer names every mode.
+  /// An unknown mode draws the glyph alone on a circle, like Attach, and has no value. At
+  /// accessibility sizes the words go and the value stays, so the row keeps its room.
   ///
   /// Off while the pane is blocked, where Shift-Tab approves the request, and while a reply
-  /// is on its way.
+  /// is on its way. Off, the glyph and the words are both secondary.
   private func modeButton(in shape: CardShape) -> some View {
     let isEnabled = modeControl == .ready && !model.isSending
     let words = dynamicTypeSize < .accessibility1 ? mode?.label : nil
-    let colour = isEnabled ? themeAccent : Color.secondary
     return Button {
       Task { await model.send(.backTab) }
     } label: {
@@ -1231,13 +1231,15 @@ struct PaneComposerBar: View {
         // which is the system's refresh glyph and would read as reloading the conversation.
         Image(systemName: "chevron.forward.2")
           .font(.system(size: shape == .card ? 17 : 15, weight: .semibold))
+          .foregroundStyle(isEnabled ? themeAccent : Color.secondary)
         if let words {
+          // The flat colour, not `.foregroundStyle(.primary)`, which blends toward the tint.
           Text(words)
             .font(.footnote.weight(.semibold))
             .lineLimit(1)
+            .foregroundStyle(isEnabled ? Color.primary : Color.secondary)
         }
       }
-      .foregroundStyle(colour)
       .padding(.horizontal, words == nil ? 0 : 12)
       .frame(minWidth: Self.circle(in: shape), minHeight: Self.circle(in: shape))
       .background(Color(.tertiarySystemFill), in: Capsule())

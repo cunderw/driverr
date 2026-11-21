@@ -78,6 +78,27 @@ final class PaneScreenModel {
   /// Claude Code's mode as the latest believed read shows it. `nil` is unknown.
   var mode: ClaudeMode? { modeReading.mode }
 
+  /// Whether the pane's terminal has been on screen since the chat last read for the mode.
+  /// A Shift-Tab typed there, from the key row's held Tab or a hardware keyboard, reaches the
+  /// pane without passing `onSent`, so the chat cannot know whether the mode moved.
+  @ObservationIgnored private(set) var terminalShownSinceModeRead = false
+
+  /// The pane's terminal is on screen. See `terminalShownSinceModeRead`.
+  func terminalShown() {
+    terminalShownSinceModeRead = true
+  }
+
+  /// The chat with the mode button appeared. Reads at once after the terminal was up, and
+  /// otherwise only if the capture is old.
+  func refreshForModeOnAppearance() {
+    guard terminalShownSinceModeRead else {
+      refreshIfStale()
+      return
+    }
+    terminalShownSinceModeRead = false
+    refresh()
+  }
+
   /// A Shift-Tab went to the pane: the mode on show is stale until a read answers it. Then
   /// reads, as any send does. A read already in flight started before the key, and
   /// `PaneModeReading` asks for another when it lands.

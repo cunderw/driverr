@@ -50,12 +50,13 @@ public enum ClaudeMode: Hashable, Sendable {
     self = mode
   }
 
-  /// The visible words, after Claude Code's own footer, which names every mode, manual
-  /// included.
+  /// The button's words, short so the composer's field keeps its room. Claude Code's footer
+  /// names every mode, manual included, and so does this. `spokenName` carries the long
+  /// names.
   public var label: String {
     switch self {
     case .manual: "Manual"
-    case .acceptEdits: "Accept edits"
+    case .acceptEdits: "Edits"
     case .plan: "Plan"
     case .auto: "Auto"
     case .bypassPermissions: "Bypass"

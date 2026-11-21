@@ -139,7 +139,8 @@ struct ClaudeModeTests {
   func words() {
     #expect(ClaudeMode.manual.label == "Manual")
     #expect(ClaudeMode.manual.spokenName == "Manual mode")
-    #expect(ClaudeMode.acceptEdits.label == "Accept edits")
+    #expect(ClaudeMode.acceptEdits.label == "Edits")
+    #expect(ClaudeMode.acceptEdits.spokenName == "Accept edits")
     #expect(ClaudeMode.plan.spokenName == "Plan mode")
   }
 }

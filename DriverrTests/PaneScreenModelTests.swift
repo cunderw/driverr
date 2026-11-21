@@ -318,6 +318,37 @@ struct PaneScreenModelTests {
     #expect(model.mode == .acceptEdits)
   }
 
+  /// The key row's held Tab and a hardware keyboard send Shift-Tab on the terminal side, where
+  /// `onSent` never hears it. The chat's next appearance reads at once, however new its
+  /// capture is, and only that once.
+  @Test("a chat appearing after the terminal was up reads the mode again")
+  func appearanceAfterTheTerminal() async throws {
+    let clock = TestClock(now: Date(timeIntervalSince1970: 1_800_000_000))
+    let control = FakeControl(modeCycle: FakeControl.modeCycleScreens)
+    let model = PaneScreenModel(
+      pane: pane(), control: { control }, now: { clock.now }, modeRereadDelay: .zero)
+    model.refreshForModeOnAppearance()
+    await settled(model)
+    #expect(model.mode == .manual)
+
+    // A fresh capture and no terminal: appearing again asks nothing.
+    model.refreshForModeOnAppearance()
+    await settled(model)
+    #expect(await control.screenReads.count == 1)
+
+    // Shift-Tab typed in the terminal, which the chat never sees.
+    model.terminalShown()
+    try await control.sendKeys(paneID: "w1:p2", keys: [.backTab])
+    model.refreshForModeOnAppearance()
+    await settled(model)
+    #expect(await control.screenReads.count == 2)
+    #expect(model.mode == .acceptEdits)
+
+    model.refreshForModeOnAppearance()
+    await settled(model)
+    #expect(await control.screenReads.count == 2, "the terminal's mark is spent by one read")
+  }
+
   @Test("a refused read keeps the mode on show")
   func refusalKeepsTheMode() async {
     let link = Link(FakeControl(modeCycle: FakeControl.modeCycleScreens))

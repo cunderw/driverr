@@ -94,7 +94,7 @@ struct PaneComposerPillLayoutTests {
   }
 
   /// The longest words a known mode draws.
-  private static let longestMode = ClaudeMode.acceptEdits
+  private static let longestMode = ClaudeMode.manual
 
   @Test("the mode's words keep the pill one 48 pt row")
   func modeWordsKeepThePill() {
