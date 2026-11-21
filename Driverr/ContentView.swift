@@ -996,9 +996,9 @@ struct ContentView: View {
     }
   }
 
-  /// The phone's host list selection: the selected host, with no pane in it. See
-  /// `sidebarSelection` for why it is a custom binding. It has no `sidebarDidSelect` call,
-  /// because `terminalRoute` is `.detailColumn` only at regular width.
+  /// The phone's host list selection: the selected host, with no pane in it. A custom
+  /// binding, so `hostPick.userPicked` runs only on the user's write. It has no
+  /// `sidebarDidSelect` call, because `terminalRoute` is `.detailColumn` only at regular width.
   private var phoneHostSelection: Binding<DriverrCore.Host.ID?> {
     Binding(
       get: { selectedHostID },
@@ -1041,8 +1041,8 @@ struct ContentView: View {
         case .openPane(let hostID, let paneID):
           terminalPresenter.present(hostID: hostID, paneID: paneID)
         case .selectHost(let id):
-          // Regular width only, the one place a sidebar row and a pane scene are on screen
-          // together. On compact no tap can reach a row while the scene is up.
+          // Only while a pane scene is up. With no request `terminalRoute` is `.none`, and
+          // there is no scene for `sidebarDidSelect` to end.
           if terminalRoute == .detailColumn {
             terminalPresenter.sidebarDidSelect(hostID: id)
           }
@@ -1079,8 +1079,8 @@ struct ContentView: View {
       // width the value is a `SidebarSelection`, which the link writes into the list's
       // selection, and the host's pane tree follows it (`sidebarHost`). On
       // the phone it is the stack's `Route`, and the path setter writes `selectedHostID` from
-      // it, so one selection drives both devices. A `Button` would lose the disclosure chevron
-      // and row treatment on the phone.
+      // it, so one state drives both devices, through two binding types. A `Button` would
+      // lose the disclosure chevron and row treatment on the phone.
       if sizeClass == .regular {
         sidebarHost(host)
       } else {
