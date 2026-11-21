@@ -625,8 +625,18 @@ struct ContentView: View {
         }
       }
       // The column's own leading inset: the sidebar's width while the sidebar is beside it.
-      .onGeometryChange(for: Double.self) { Double($0.safeAreaInsets.leading) } action: {
-        detailLeadingInset = $0
+      //
+      // **Read from a clear background, not from a modifier on the content.** With
+      // `onGeometryChange` on this `Group`, XCUITest's tap on the saved-prompt rename's Done,
+      // just after typing on Driverr iPad, never reached the app, so the rename stayed open
+      // (`testRenamingASavedPromptRetitlesItsRow`). The inset never changed during that
+      // test. A clear background gets the same safe area and leaves the content alone.
+      .background {
+        Color.clear
+          .onGeometryChange(for: Double.self) { Double($0.safeAreaInsets.leading) } action: {
+            detailLeadingInset = $0
+          }
+          .allowsHitTesting(false)
       }
     }
     // The window's own leading inset, the baseline the detail column's is compared with.
