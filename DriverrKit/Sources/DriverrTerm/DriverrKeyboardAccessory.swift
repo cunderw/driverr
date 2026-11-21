@@ -305,10 +305,11 @@
 
     /// Armed Control inverts, as the system shift key does, so it is visible in dark mode.
     ///
-    /// VoiceOver gets the `.selected` trait. The "on"/"off" value stays because
-    /// `TerminalKeyboardUITests` reads it.
+    /// It does not set `isSelected`. On a `.system` button UIKit then draws its own
+    /// tint-coloured selection box over this fill, and the label disappeared in dark mode.
+    /// VoiceOver gets the `.selected` trait and the "on"/"off" value by hand instead.
+    /// `KeyboardAccessoryKeysTests` pins all three.
     private func reflectControl(_ armed: Bool) {
-      controlButton.isSelected = armed
       controlButton.backgroundColor = armed ? .label : .tertiarySystemFill
       controlButton.tintColor = armed ? .systemBackground : .label
       controlButton.accessibilityValue = armed ? "on" : "off"
