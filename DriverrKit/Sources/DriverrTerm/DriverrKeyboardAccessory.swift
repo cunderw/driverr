@@ -28,7 +28,8 @@
     private let controlButton = UIButton(type: .system)
 
     /// Hold-to-repeat for the cursor keys. Its cadence and every way it stops are tested in
-    /// `DriverrTermTests`, because a simulator cannot hold a finger on a button.
+    /// `DriverrTermTests` with an injected scheduler. A UI test can hold a key, but it cannot
+    /// tell a 0.6 s delay and 0.1 s ticks from any other timing.
     private let keyRepeat = KeyRepeatPolicy()
 
     /// **Sized so each key is 44 pt, not so the row is.** 48 − 2 × 2 = 44 pt tall. On a
