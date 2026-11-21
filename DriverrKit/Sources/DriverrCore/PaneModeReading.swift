@@ -2,6 +2,9 @@
 /// it sends.
 ///
 /// - **A read replaces the mode**, unless a Shift-Tab is waiting for its answer.
+/// - **A read that names no mode keeps the last known one**, while no Shift-Tab is waiting. A
+///   permission prompt replaces the composer and changes no mode, and dropping the mode
+///   shrank the button to its glyph for the length of the block.
 /// - **A Shift-Tab marks the mode stale.** The mode on show stays until a read answers it.
 /// - **A read can arrive before Claude has redrawn.** On tmux and the herdr TUI the first read
 ///   after the key showed the old mode on most tries; the new one was there about 70 ms
@@ -48,7 +51,8 @@ public struct PaneModeReading: Equatable, Sendable {
   public mutating func read(_ screen: PaneScreen, ticket readTicket: Int) -> Bool {
     let seen = ClaudeMode(screen: screen)
     guard isStale else {
-      mode = seen
+      // Like a failed read: no answer is not "unknown".
+      if let seen { mode = seen }
       return false
     }
     guard readTicket == ticket else { return true }
@@ -75,7 +79,7 @@ public struct PaneModeReading: Equatable, Sendable {
 
   /// A read failed. The mode on show stays. Returns whether to read again: only when the read
   /// started before the latest Shift-Tab, which has then had no read of its own.
-  public mutating func failed(ticket readTicket: Int) -> Bool {
+  public func failed(ticket readTicket: Int) -> Bool {
     isStale && readTicket != ticket
   }
 

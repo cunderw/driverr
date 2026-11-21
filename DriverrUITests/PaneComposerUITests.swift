@@ -362,7 +362,7 @@ final class PaneComposerUITests: PaneComposerUITestCase {
     treePaneRow(app, titled: "terminal wiring").tap()
 
     let mode = require(app, "composer.mode", "Expected the mode button on a Claude pane")
-    XCTAssertEqual(mode.label, "Change mode", "VoiceOver has only the label for a glyph")
+    XCTAssertEqual(mode.label, "Change mode", "VoiceOver names the action; the mode is the value")
     XCTAssertGreaterThanOrEqual(mode.frame.height, 44, "Under the 44 pt target: \(mode.frame)")
     XCTAssertGreaterThanOrEqual(mode.frame.width, 44, "Under the 44 pt target: \(mode.frame)")
     requireModeValue(mode, "Manual mode", "Expected the mode read off the screen on opening")

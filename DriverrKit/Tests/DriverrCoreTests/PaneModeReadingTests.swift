@@ -14,16 +14,15 @@ struct PaneModeReadingTests {
     return PaneScreen.sanitised(rows.joined(separator: "\n"), lines: PaneScreen.maximumLines)
   }
 
-  /// `#expect` cannot take a mutating call, so these lift it out.
-  /// `#expect` cannot take a mutating call, so these lift it out. With no ticket, the read
-  /// started after the latest Shift-Tab.
+  /// `#expect` cannot take a mutating call, so this lifts it out. With no ticket, the read
+  /// started after the latest Shift-Tab, here and in `failed`.
   private func read(
     _ reading: inout PaneModeReading, _ screen: PaneScreen, ticket: Int? = nil
   ) -> Bool {
     reading.read(screen, ticket: ticket ?? reading.ticket)
   }
 
-  private func failed(_ reading: inout PaneModeReading, ticket: Int? = nil) -> Bool {
+  private func failed(_ reading: PaneModeReading, ticket: Int? = nil) -> Bool {
     reading.failed(ticket: ticket ?? reading.ticket)
   }
 
@@ -31,14 +30,32 @@ struct PaneModeReadingTests {
   private var edits: PaneScreen { screen("  ⏵⏵ accept edits on · ← 1 agent") }
   private var plan: PaneScreen { screen("  ⏸ plan mode on (shift+tab to cycle)") }
 
-  @Test("a read replaces the mode, unknown included")
+  @Test("a read replaces the mode")
   func readReplaces() {
     var reading = PaneModeReading()
     #expect(reading.mode == nil)
     #expect(!read(&reading, edits))
     #expect(reading.mode == .acceptEdits)
+    #expect(!read(&reading, plan))
+    #expect(reading.mode == .plan)
+  }
+
+  /// A permission prompt replaces the composer, so its screen names no mode. The mode has not
+  /// changed, and dropping it shrank the button to the glyph for the length of the block.
+  @Test("a screen with no composer keeps the last known mode")
+  func noComposerKeepsTheMode() {
+    var reading = PaneModeReading(mode: .acceptEdits)
+    let prompt = PaneScreen.sanitised(
+      [Self.rule, " Do you want to proceed?", " ❯ 1. Yes", "   2. No", " Esc to cancel"]
+        .joined(separator: "\n"),
+      lines: PaneScreen.maximumLines)
+    #expect(ClaudeMode(screen: prompt) == nil)
+    #expect(!read(&reading, prompt))
+    #expect(reading.mode == .acceptEdits)
     #expect(!read(&reading, .blank))
-    #expect(reading.mode == nil)
+    #expect(reading.mode == .acceptEdits)
+    #expect(!read(&reading, plan))
+    #expect(reading.mode == .plan)
   }
 
   @Test("a Shift-Tab marks the mode stale and keeps it on show")
@@ -142,10 +159,10 @@ struct PaneModeReadingTests {
   @Test("a failed read keeps the last known mode")
   func failureKeeps() {
     var reading = PaneModeReading(mode: .plan)
-    #expect(!failed(&reading))
+    #expect(!failed(reading))
     #expect(reading.mode == .plan)
     reading.toggled()
-    #expect(!failed(&reading), "a refusal is not retried")
+    #expect(!failed(reading), "a refusal is not retried")
     #expect(reading.mode == .plan)
     #expect(reading.isStale)
   }
@@ -155,7 +172,7 @@ struct PaneModeReadingTests {
     var reading = PaneModeReading(mode: .plan)
     let before = reading.ticket
     reading.toggled()
-    #expect(failed(&reading, ticket: before))
+    #expect(failed(reading, ticket: before))
     #expect(reading.mode == .plan)
   }
 
