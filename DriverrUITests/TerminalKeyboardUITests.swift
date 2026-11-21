@@ -283,6 +283,39 @@ final class TerminalKeyboardUITests: XCTestCase {
     )
   }
 
+  /// A hold on Tab sends back-tab once, and the lift sends no Tab after it.
+  ///
+  /// The fake shell echoes Tab unchanged, so a stray Tab shows only as a gap. Escape is
+  /// tapped straight after, so `^[[Z^[` with nothing between proves the lift sent nothing.
+  func testHoldingTabSendsBackTab() {
+    let (app, terminal) = openTerminal()
+    waitForTerminalToSettle(app, terminal)
+
+    require(app, "terminal.key.tab", "Expected a Tab key").press(forDuration: 1.0)
+    require(app, "terminal.key.esc", "Expected an Escape key").tap()
+
+    XCTAssertTrue(
+      waitForTerminalText(terminal, containing: "^[[Z^["),
+      "Expected a hold on Tab to put ESC [ Z on the channel and no Tab after it. "
+        + "Terminal showed: " + String(describing: terminal.value)
+    )
+  }
+
+  /// A hardware Shift-Tab reaches the terminal as back-tab. SwiftTerm maps it in
+  /// `pressesBegan`; this checks that nothing above the terminal takes Tab first.
+  func testHardwareShiftTabSendsBackTab() {
+    let (app, terminal) = openTerminal()
+    waitForTerminalToSettle(app, terminal)
+
+    terminal.typeKey(.tab, modifierFlags: .shift)
+
+    XCTAssertTrue(
+      waitForTerminalText(terminal, containing: "^[[Z"),
+      "Expected a hardware Shift-Tab to put ESC [ Z on the channel. Terminal showed: "
+        + String(describing: terminal.value)
+    )
+  }
+
   func testArrowKeySendsACursorSequence() {
     let (app, terminal) = openTerminal()
 

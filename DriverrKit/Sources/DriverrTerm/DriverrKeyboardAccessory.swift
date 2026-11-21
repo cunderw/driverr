@@ -17,6 +17,9 @@
   /// Escape, Tab, Control and dismiss cannot be displaced, because nothing else reaches
   /// what they do. Only the arrows are displaceable.
   ///
+  /// Tab sends Tab on a tap and back-tab (`ESC [ Z`) on a hold, so Shift-Tab needs no slot
+  /// of its own. See `tabKey()`.
+  ///
   /// Control is sticky, like the system keyboard's shift key: it arms the next key and
   /// clears itself afterwards.
   final class DriverrKeyboardAccessory: UIInputView {
@@ -117,12 +120,7 @@
           spoken: PaneKey.esc.accessibleName,
           action: #selector(sendEscape)
         ),
-        key(
-          PaneKey.tab.label,
-          identifier: "terminal.key.tab",
-          spoken: PaneKey.tab.accessibleName,
-          action: #selector(sendTab)
-        ),
+        tabKey(),
         controlButton,
         arrowKey(PaneKey.left, identifier: "terminal.key.left", cursor: "D"),
         arrowKey(PaneKey.down, identifier: "terminal.key.down", cursor: "B"),
@@ -187,6 +185,31 @@
       return button
     }
 
+    /// Tab on a tap, back-tab on a hold.
+    ///
+    /// The software keyboard's Shift does not reach this key, and Claude Code cycles its mode
+    /// with Shift-Tab. The hold sends once, when it is recognised. The recogniser cancels the
+    /// button's touch (`cancelsTouchesInView`), so the lift sends no Tab after it. VoiceOver
+    /// users get the same bytes from the "Shift Tab" custom action.
+    private func tabKey() -> UIButton {
+      let button = key(
+        PaneKey.tab.label,
+        identifier: "terminal.key.tab",
+        spoken: PaneKey.tab.accessibleName,
+        action: #selector(sendTab)
+      )
+      button.addGestureRecognizer(
+        UILongPressGestureRecognizer(target: self, action: #selector(tabWasHeld(_:)))
+      )
+      button.accessibilityCustomActions = [
+        UIAccessibilityCustomAction(name: "Shift Tab") { [weak self] _ in
+          self?.sendBackTab()
+          return true
+        }
+      ]
+      return button
+    }
+
     /// A cursor key that repeats while held. Escape, Tab and Control do not repeat: a
     /// repeated Tab floods completions, and Control sends nothing.
     ///
@@ -196,6 +219,7 @@
     /// `didMoveToWindow`.
     ///
     /// A hold means "repeat" here, so an arrow key cannot also host a long-press variant.
+    /// Tab does not repeat, which is why its hold is back-tab.
     private func arrowKey(
       _ key: PaneKey,
       identifier: String,
@@ -251,7 +275,15 @@
 
     /// `0x1B`, which a software keyboard cannot type.
     @objc private func sendEscape() { send([0x1B]) }
-    @objc private func sendTab() { send([0x09]) }
+    @objc private func sendTab() { send(TabKeyBytes.bytes(shift: false)) }
+
+    private func sendBackTab() { send(TabKeyBytes.bytes(shift: true)) }
+
+    /// Sends on `.began` only, so one hold is one back-tab however long it lasts.
+    @objc private func tabWasHeld(_ recognizer: UILongPressGestureRecognizer) {
+      guard recognizer.state == .began else { return }
+      sendBackTab()
+    }
 
     // A program that set DECCKM expects `ESC O A`, a shell expects `ESC [ A`. The mode is
     // read on every repeat, because it can change during a hold.
