@@ -135,9 +135,9 @@ struct ClaudeModeTests {
     #expect(mode(screen) == .manual)
   }
 
-  @Test("manual draws no words; every mode has a spoken name")
+  @Test("every mode has words and a spoken name, manual included")
   func words() {
-    #expect(ClaudeMode.manual.label == nil)
+    #expect(ClaudeMode.manual.label == "Manual")
     #expect(ClaudeMode.manual.spokenName == "Manual mode")
     #expect(ClaudeMode.acceptEdits.label == "Accept edits")
     #expect(ClaudeMode.plan.spokenName == "Plan mode")

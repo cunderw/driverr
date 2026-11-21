@@ -1213,9 +1213,9 @@ struct PaneComposerBar: View {
   /// screen last showed is on the button, as words after the glyph and as its value.
   ///
   /// Drawn like Attach, an accent glyph on a neutral circle, so it does not read as a second
-  /// Send. With a mode to name it is a capsule with the mode's words in it. Manual mode, like
-  /// Claude Code's own default, draws no words, and an unknown mode draws the plain glyph.
-  /// At accessibility sizes the words go and the value stays, so the row keeps its room.
+  /// Send. With a mode to name it is a capsule with the mode's words in it, manual included,
+  /// as Claude Code's own footer names it. An unknown mode draws the plain glyph and has no
+  /// value. At accessibility sizes the words go and the value stays, so the row keeps its room.
   ///
   /// Off while the pane is blocked, where Shift-Tab approves the request, and while a reply
   /// is on its way.

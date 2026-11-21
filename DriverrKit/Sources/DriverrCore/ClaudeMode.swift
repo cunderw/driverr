@@ -50,11 +50,11 @@ public enum ClaudeMode: Hashable, Sendable {
     self = mode
   }
 
-  /// The visible words, after Claude Code's own footer. `nil` for manual, which the plain
-  /// glyph stands for.
-  public var label: String? {
+  /// The visible words, after Claude Code's own footer, which names every mode, manual
+  /// included.
+  public var label: String {
     switch self {
-    case .manual: nil
+    case .manual: "Manual"
     case .acceptEdits: "Accept edits"
     case .plan: "Plan"
     case .auto: "Auto"
