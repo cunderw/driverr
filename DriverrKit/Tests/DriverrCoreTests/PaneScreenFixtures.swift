@@ -433,4 +433,17 @@ extension PaneScreenFixture {
     "  \u{1B}[90mctx:-- · \u{1B}[32m5h:7…\u{1B}[39m",
     "  \u{1B}[95m⏵⏵ accept \u{1B}[2m\u{1B}[37m · …\u{1B}[0m",
   ].joined(separator: "\n")
+
+  /// Manual mode on tmux, 40 columns, while Claude works: the spinner is up and the mode row
+  /// stays under the composer.
+  static let claudeCodeManualWhileWorking = [
+    "\u{1B}[91m\u{1B}[49m✽\u{1B}[39m \u{1B}[91mActi\u{1B}[93moni\u{1B}[91mng… \u{1B}[2m\u{1B}[37m(1s · thinking)\u{1B}[0m",
+    "                    \u{1B}[2m\u{1B}[37m◐ medium · /effort\u{1B}[0m",
+    "\u{1B}[37m────────────────────────────────────────",
+    "\u{1B}[2m❯\u{A0}\u{1B}[0m",
+    "\u{1B}[37m────────────────────────────────────────",
+    "\u{1B}[39m  \u{1B}[1m\u{1B}[32mINSERT\u{1B}[0m\u{1B}[90m | \u{1B}[33mharbour-sheets\u{1B}[39m",
+    "  \u{1B}[90mctx:-- · \u{1B}[32m5h:8%\u{1B}[90m · \u{1B}[32mwk:22%\u{1B}[90m · \u{1B}[32mfb:0%\u{1B}[90m · \u{1B}[36mH…\u{1B}[39m",
+    "  \u{1B}[37m⏸ manual mode on\u{1B}[2m · ← 1 agent\u{1B}[0m",
+  ].joined(separator: "\n")
 }

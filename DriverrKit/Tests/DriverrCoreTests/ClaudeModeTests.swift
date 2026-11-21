@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 
 @testable import DriverrCore
@@ -28,6 +29,16 @@ struct ClaudeModeTests {
   func tmux() {
     #expect(mode(PaneScreenFixture.claudeCodeAcceptEditsOnTmux) == .acceptEdits)
     #expect(mode(PaneScreenFixture.claudeCodeAutoOnTmux) == .auto)
+  }
+
+  /// The status-change trigger reads as work starts, so the row must be there while Claude
+  /// works, or every working pane would read as manual.
+  @Test("the mode row stays while Claude works")
+  func whileWorking() {
+    #expect(mode(PaneScreenFixture.claudeCodeManualWhileWorking) == .manual)
+    let edits = PaneScreenFixture.claudeCodeManualWhileWorking.replacingOccurrences(
+      of: "⏸ manual mode on", with: "⏵⏵ accept edits on")
+    #expect(mode(edits) == .acceptEdits)
   }
 
   /// 2.1.241 at the phone's width cut the hint to `(shift+tab to  · `, and a wide pane had a
