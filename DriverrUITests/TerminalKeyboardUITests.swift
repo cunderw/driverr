@@ -283,6 +283,68 @@ final class TerminalKeyboardUITests: XCTestCase {
     )
   }
 
+  /// A hold on Tab sends back-tab once, and the lift sends no Tab after it.
+  ///
+  /// The fake shell echoes Tab unchanged, so a stray Tab shows only as a gap. Escape is
+  /// tapped straight after, so `^[[Z^[` with nothing between proves the lift sent nothing.
+  func testHoldingTabSendsBackTab() {
+    let (app, terminal) = openTerminal()
+    waitForTerminalToSettle(app, terminal)
+
+    require(app, "terminal.key.tab", "Expected a Tab key").press(forDuration: 1.0)
+    require(app, "terminal.key.esc", "Expected an Escape key").tap()
+
+    XCTAssertTrue(
+      waitForTerminalText(terminal, containing: "^[[Z^["),
+      "Expected a hold on Tab to put ESC [ Z on the channel and no Tab after it. "
+        + "Terminal showed: " + String(describing: terminal.value)
+    )
+  }
+
+  /// A tap on Tab sends Tab and not back-tab, through the same button the hold uses.
+  ///
+  /// The fake shell echoes Tab unchanged. The emulator only moves the cursor for it, so the
+  /// cells it skips stay U+0000, and the accessibility value keeps them. A Tab therefore
+  /// shows as a NUL right before the `^[` of the Escape tapped after it.
+  func testTappingTabSendsTab() {
+    let (app, terminal) = openTerminal()
+    waitForTerminalToSettle(app, terminal)
+
+    require(app, "terminal.key.tab", "Expected a Tab key").tap()
+    require(app, "terminal.key.esc", "Expected an Escape key").tap()
+
+    XCTAssertTrue(
+      waitForTerminalText(terminal, containing: "^["),
+      "Expected Escape after Tab to put 0x1b on the channel. Terminal showed: "
+        + String(describing: terminal.value)
+    )
+    let text = terminalText(terminal)
+    XCTAssertFalse(
+      text.contains("^[[Z"),
+      "Expected a tap on Tab to send no back-tab. Terminal showed: " + text
+    )
+    XCTAssertTrue(
+      text.contains("\u{0}^["),
+      "Expected a tap on Tab to put a Tab before the Escape. Terminal showed (NUL as ␀): "
+        + text.replacingOccurrences(of: "\u{0}", with: "␀")
+    )
+  }
+
+  /// A hardware Shift-Tab reaches the terminal as back-tab. SwiftTerm maps it in
+  /// `pressesBegan`; this checks that nothing above the terminal takes Tab first.
+  func testHardwareShiftTabSendsBackTab() {
+    let (app, terminal) = openTerminal()
+    waitForTerminalToSettle(app, terminal)
+
+    terminal.typeKey(.tab, modifierFlags: .shift)
+
+    XCTAssertTrue(
+      waitForTerminalText(terminal, containing: "^[[Z"),
+      "Expected a hardware Shift-Tab to put ESC [ Z on the channel. Terminal showed: "
+        + String(describing: terminal.value)
+    )
+  }
+
   func testArrowKeySendsACursorSequence() {
     let (app, terminal) = openTerminal()
 
