@@ -303,9 +303,9 @@ final class TerminalKeyboardUITests: XCTestCase {
 
   /// A tap on Tab sends Tab and not back-tab, through the same button the hold uses.
   ///
-  /// The fake shell echoes Tab unchanged, so it shows as a gap before the `^[` of the Escape
-  /// tapped after it. The cursor is at column 0 after a resize notice, or after the prompt's
-  /// `$ `, so without a Tab there is at most one space before `^[`.
+  /// The fake shell echoes Tab unchanged. The emulator only moves the cursor for it, so the
+  /// cells it skips stay U+0000, and the accessibility value keeps them. A Tab therefore
+  /// shows as a NUL right before the `^[` of the Escape tapped after it.
   func testTappingTabSendsTab() {
     let (app, terminal) = openTerminal()
     waitForTerminalToSettle(app, terminal)
@@ -324,8 +324,9 @@ final class TerminalKeyboardUITests: XCTestCase {
       "Expected a tap on Tab to send no back-tab. Terminal showed: " + text
     )
     XCTAssertTrue(
-      text.contains("  ^["),
-      "Expected a tap on Tab to put a Tab before the Escape. Terminal showed: " + text
+      text.contains("\u{0}^["),
+      "Expected a tap on Tab to put a Tab before the Escape. Terminal showed (NUL as ␀): "
+        + text.replacingOccurrences(of: "\u{0}", with: "␀")
     )
   }
 
