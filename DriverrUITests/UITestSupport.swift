@@ -270,7 +270,7 @@ func pickSignIn(
   file: StaticString = #filePath,
   line: UInt = #line
 ) {
-  let picker = app.buttons["host.signIn"]
+  let picker = app.buttons["host.authMethod"]
   XCTAssertTrue(
     picker.waitForExistence(timeout: 10),
     "No sign-in picker.\nTree was:\n\(app.debugDescription)",
@@ -281,7 +281,7 @@ func pickSignIn(
   picker.tap()
 
   let item = app.buttons.matching(
-    NSPredicate(format: "label == %@ AND identifier != %@", title, "host.signIn")
+    NSPredicate(format: "label == %@ AND identifier != %@", title, "host.authMethod")
   ).firstMatch
   XCTAssertTrue(
     item.waitForExistence(timeout: 5),

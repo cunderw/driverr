@@ -98,7 +98,7 @@ struct AddHostView: View {
             }
           }
           .pickerStyle(.menu)
-          .accessibilityIdentifier("host.signIn")
+          .accessibilityIdentifier("host.authMethod")
           .onChange(of: signIn) { _, choice in
             // Default to the first key. An unset picker would save the host as password auth.
             if choice == .key, selectedIdentity == nil { selectedIdentity = identities.first?.id }
