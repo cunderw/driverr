@@ -1,0 +1,221 @@
+import Crypto
+import DriverrCore
+import Foundation
+import NIOCore
+import NIOPosix
+import NIOSSH
+import Testing
+@testable import DriverrSSH
+
+/// Driverr against a server that authenticates like Tailscale SSH (#171). See
+/// `TailscaleLikeSSHServer` for the measured behaviour it imitates.
+@Suite("Tailscale SSH")
+struct TailscaleSSHTests {
+  /// What a check-mode banner says. The control plane writes the text, so only "it holds a
+  /// URL" is a fact; the wording is not.
+  static let checkBanner =
+    "# Tailscale SSH requires an additional check.\n"
+    + "# To authenticate, visit: https://login.tailscale.com/a/1a2b3c4d5e6f\n"
+
+  private func withServer(
+    _ policy: TailscaleLikeSSHServer.Policy,
+    _ body: (TailscaleLikeSSHServer, DriverrCore.Host) async throws -> Void
+  ) async throws {
+    let server = try await TailscaleLikeSSHServer(policy: policy)
+    let host = DriverrCore.Host(
+      name: "tailnet",
+      hostname: "127.0.0.1",
+      port: server.port,
+      username: "carson"
+    )
+    do {
+      try await body(server, host)
+    } catch {
+      await server.stop()
+      throw error
+    }
+    await server.stop()
+  }
+
+  // MARK: - Behaviour that holds today
+
+  /// Tailscale's PasswordCallback ignores the value, so a host saved with a password already
+  /// connects in accept mode. Pins "hosts with a password behave as before".
+  @Test("a Tailscale server accepts any password")
+  func anyPasswordIsAccepted() async throws {
+    try await withServer(.accept) { server, host in
+      let transport = NIOSSHTransport()
+      try await transport.connect(to: host, hostKeyValidator: TrustingValidator())
+      try await transport.authenticate(.password("not-the-users-password"))
+      await transport.disconnect()
+      #expect(server.offers.seen == ["password"])
+    }
+  }
+
+  /// Tailscale's PublicKeyCallback ignores the key. Pins "hosts with a key behave as before".
+  @Test("a Tailscale server accepts any key")
+  func anyKeyIsAccepted() async throws {
+    try await withServer(.accept) { server, host in
+      let transport = NIOSSHTransport()
+      try await transport.connect(to: host, hostKeyValidator: TrustingValidator())
+      let key = Curve25519.Signing.PrivateKey()
+      try await transport.authenticate(
+        .privateKey(SSHPrivateKey(rawRepresentation: key.rawRepresentation))
+      )
+      await transport.disconnect()
+      #expect(server.offers.seen == ["publickey"])
+    }
+  }
+
+  /// Measures swift-nio-ssh 0.15.0, not Driverr: its client can offer "none" first, even
+  /// though the server never advertises it, and it fires the check-mode banner as a
+  /// `NIOUserAuthBannerEvent` on the parent pipeline while the request is held, before
+  /// `UserAuthSuccessEvent`. Nothing in the library calls a delegate with the banner.
+  @Test("swift-nio-ssh offers none and delivers the banner before the held success")
+  func libraryOffersNoneAndSurfacesTheBanner() async throws {
+    try await withServer(.check(banner: Self.checkBanner, hold: .milliseconds(300))) {
+      server, host in
+      let events = try await RawNoneClient.run(port: host.port, username: host.username)
+      #expect(server.offers.seen == ["none"])
+      #expect(events == ["banner: \(Self.checkBanner)", "success"])
+    }
+  }
+
+  // MARK: - The regression
+
+  /// Check mode holds the request while the user signs in on the web: up to 30 minutes.
+  /// Driverr's handshake deadline (20 s) covers `authenticate`, so the connect fails while
+  /// the user is still signing in, and the URL that told them to sign in is never shown.
+  /// The hold here outlasts a shortened deadline the same way.
+  ///
+  /// After #171 a login banner must stop the deadline (or count as asking time, as the trust
+  /// prompt does), and the connect must finish once the server accepts. A stalled server
+  /// that sent no banner must still fail on the deadline
+  /// (`ConnectionCoordinatorTests.handshakeDeadlineEndsAStalledConnect`).
+  @Test("a check-mode hold that outlasts the handshake deadline still connects")
+  func checkModeHoldOutlastsTheDeadline() async throws {
+    try await withServer(.check(banner: Self.checkBanner, hold: .milliseconds(1500))) {
+      server, host in
+      let coordinator = ConnectionCoordinator(
+        transport: NIOSSHTransport(),
+        handshakeDeadline: .milliseconds(500)
+      )
+      try? await coordinator.connect(
+        to: host,
+        validator: TrustingValidator(),
+        credential: .password("ignored-by-tailscale")
+      )
+      let phase = await coordinator.phase
+      await coordinator.disconnect()
+      #expect(
+        phase == .connected,
+        "the deadline ended the connect while Tailscale held it for a sign-in: \(phase)"
+      )
+    }
+  }
+}
+
+private struct TrustingValidator: HostKeyValidator {
+  func validate(_ key: SSHHostKey, for host: DriverrCore.Host) async -> HostKeyDecision {
+    .trust
+  }
+}
+
+/// A bare swift-nio-ssh client that offers "none" and records the auth events it sees.
+private enum RawNoneClient {
+  static func run(port: Int, username: String) async throws -> [String] {
+    let loop = MultiThreadedEventLoopGroup.singleton.next()
+    let done = loop.makePromise(of: [String].self)
+    let recorder = EventRecorder(done: done)
+    let bootstrap = ClientBootstrap(group: loop).channelInitializer { channel in
+      channel.eventLoop.makeCompletedFuture {
+        try channel.pipeline.syncOperations.addHandlers([
+          NIOSSHHandler(
+            role: .client(
+              SSHClientConfiguration(
+                userAuthDelegate: NoneDelegate(username: username),
+                serverAuthDelegate: AcceptAnyHostKey()
+              )
+            ),
+            allocator: channel.allocator,
+            inboundChildChannelInitializer: nil
+          ),
+          recorder,
+        ])
+      }
+    }
+    let channel = try await bootstrap.connect(host: "127.0.0.1", port: port).get()
+    let timeout = loop.scheduleTask(in: .seconds(5)) {
+      recorder.settle(.failure(AppError.channelFailed(reason: "no auth outcome within 5 s")))
+    }
+    defer { timeout.cancel() }
+    do {
+      let events = try await done.futureResult.get()
+      try? await channel.close().get()
+      return events
+    } catch {
+      try? await channel.close().get()
+      throw error
+    }
+  }
+
+  final class NoneDelegate: NIOSSHClientUserAuthenticationDelegate, @unchecked Sendable {
+    let username: String
+    var offered = false
+    init(username: String) { self.username = username }
+
+    func nextAuthenticationType(
+      availableMethods: NIOSSHAvailableUserAuthenticationMethods,
+      nextChallengePromise: EventLoopPromise<NIOSSHUserAuthenticationOffer?>
+    ) {
+      guard !offered else {
+        nextChallengePromise.succeed(nil)
+        return
+      }
+      offered = true
+      nextChallengePromise.succeed(
+        NIOSSHUserAuthenticationOffer(username: username, serviceName: "", offer: .none)
+      )
+    }
+  }
+
+  final class AcceptAnyHostKey: NIOSSHClientServerAuthenticationDelegate, @unchecked Sendable {
+    func validateHostKey(
+      hostKey: NIOSSHPublicKey,
+      validationCompletePromise: EventLoopPromise<Void>
+    ) {
+      validationCompletePromise.succeed(())
+    }
+  }
+
+  final class EventRecorder: ChannelInboundHandler, @unchecked Sendable {
+    typealias InboundIn = Any
+    private let done: EventLoopPromise<[String]>
+    private var events: [String] = []
+    private var settled = false
+
+    init(done: EventLoopPromise<[String]>) { self.done = done }
+
+    func userInboundEventTriggered(context: ChannelHandlerContext, event: Any) {
+      if let banner = event as? NIOUserAuthBannerEvent {
+        events.append("banner: \(banner.message)")
+      } else if event is UserAuthSuccessEvent {
+        events.append("success")
+        settle(.success(events))
+      }
+      context.fireUserInboundEventTriggered(event)
+    }
+
+    func channelInactive(context: ChannelHandlerContext) {
+      settle(.failure(AppError.channelFailed(reason: "closed before auth finished: \(events)")))
+      context.fireChannelInactive()
+    }
+
+    /// On the loop only. The first outcome wins.
+    func settle(_ result: Result<[String], any Error>) {
+      guard !settled else { return }
+      settled = true
+      done.completeWith(result)
+    }
+  }
+}
