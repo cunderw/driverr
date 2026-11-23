@@ -93,6 +93,26 @@ public protocol SSHTransport: Sendable {
   var authenticationBanners: AsyncStream<String> { get async }
 }
 
+/// What a server's close during user authentication means, from the banners it sent first.
+///
+/// A refusal that arrives as SSH_MSG_USERAUTH_FAILURE is not this: it is always
+/// `authenticationFailed`, whatever banner came before, because an sshd's notice banner is not
+/// the reason a password was wrong. A close with no failure message is how Tailscale SSH denies
+/// a user, and its last banner without a sign-in URL is the reason. A close after only the
+/// sign-in banner is the sign-in ending, and the URL is not a reason to quote.
+enum AuthenticationClose {
+  static func failure(host: String, banners: [String]) -> AppError {
+    let reasons = banners.filter { AuthBanner.signInURL(in: $0) == nil }
+    if let message = reasons.last.flatMap(AuthBanner.displayText) {
+      return .authenticationRefused(host: host, message: message)
+    }
+    if !banners.isEmpty {
+      return .disconnected(reason: "\(host) closed the connection before the sign-in finished.")
+    }
+    return .authenticationFailed(host: host)
+  }
+}
+
 /// The scripted forms of `execChannel` and `execStream`. Each wraps its script with
 /// `LoginShell.posix`, so the user's login shell hands `sh` the exact script, fish included.
 /// Every command Driverr writes goes through one of these. Use the raw forms only for a

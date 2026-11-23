@@ -422,9 +422,13 @@ final class ConnectionModel {
   /// connect, and the resume finds the phase neither `.idle` nor `.connected`.
   ///
   /// Polled, because `withObservationTracking` fires once and would need re-arming per
-  /// transition. The budget is a backstop that only has to outlast the 20 s handshake deadline
-  /// plus two set-up hops of `setUpDeadline` (12 s each), 44 s in all. A caller that times out
-  /// treats it as a connect that did not arrive.
+  /// transition. The budget is a backstop that outlasts the 20 s handshake deadline plus two
+  /// set-up hops of `setUpDeadline` (12 s each), 44 s in all. A caller that times out treats it
+  /// as a connect that did not arrive.
+  ///
+  /// It does not outlast a sign-in hold. The deadline stops while the host waits for a web
+  /// sign-in (see `signInURL`), so the attempt can run past the budget. `TerminalPresenter`
+  /// then gives up after 45 s, and the host screen still shows the URL and Cancel.
   func settledPhase(within budget: Duration = .seconds(45)) async {
     guard phase == .connecting || phase == .authenticating else { return }
     let step = Duration.milliseconds(50)

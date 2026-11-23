@@ -330,9 +330,10 @@ final class HandshakeCoordinator: NIOSSHClientServerAuthenticationDelegate,
   /// The server's auth banners. Read from any thread; written only on the loop.
   let banners: AsyncStream<String>
   private let bannerSignal: AsyncStream<String>.Continuation
-  /// The newest banner, so a refusal after it can say what the server said. A Tailscale SSH
-  /// host that denies a user sends the reason as a banner and then closes the connection.
-  private var lastBanner: String?
+  /// The banners so far, newest last, so a close after them can say what the server said.
+  /// A Tailscale SSH host that denies a user sends the reason as a banner and then closes the
+  /// connection. See `AuthenticationClose`. Bounded, because the server writes them.
+  private var receivedBanners: [String] = []
 
   /// Driverr offers one credential per `authenticate` call. A refusal then surfaces at
   /// once, instead of the delegate parking on a second credential nobody supplies.
@@ -517,30 +518,29 @@ final class HandshakeCoordinator: NIOSSHClientServerAuthenticationDelegate,
     }
   }
 
-  /// A refusal, with the server's last banner when it sent one.
+  /// A refusal the server sent as SSH_MSG_USERAUTH_FAILURE, or a pipeline error. Never
+  /// quotes a banner. See `AuthenticationClose`.
   var authenticationFailure: AppError {
-    guard let message = lastBanner.flatMap(AuthBanner.displayText) else {
-      return AppError.authenticationFailed(host: host.hostname)
-    }
-    return AppError.authenticationRefused(host: host.hostname, message: message)
+    AppError.authenticationFailed(host: host.hostname)
   }
 
   /// Called when the connection closes. After the host-key decision, a close settles
-  /// authentication as a refusal, with the server's banner when it sent one.
+  /// authentication with what the banners before it say. See `AuthenticationClose`.
   ///
   /// Before the decision it does nothing. A close then already reaches `errorCaught`
   /// (measured: a server that closes on accept fails at once), and a close while the trust
   /// prompt is up is left to the prompt, as before.
   func connectionClosed() {
     guard hostKeySettled else { return }
-    settleAuthentication(with: authenticationFailure)
+    settleAuthentication(
+      with: AuthenticationClose.failure(host: host.hostname, banners: receivedBanners))
   }
 
   /// Called by the pipeline for each SSH_MSG_USERAUTH_BANNER. Ignored once authentication
   /// has settled.
   func receivedBanner(_ text: String) {
     guard !authenticationSettled else { return }
-    lastBanner = text
+    receivedBanners = Array((receivedBanners + [text]).suffix(8))
     bannerSignal.yield(text)
   }
 }

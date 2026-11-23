@@ -489,11 +489,23 @@ struct HostDetailView: View {
   /// The page a host asked the user to sign in on, while it holds the connection. Tailscale
   /// SSH's check mode does this. The connect finishes by itself once the sign-in is done.
   ///
-  /// Identifiers on the URL and the button, never the stack.
+  /// The host gets a line of its own, cut from the front, so the end of the name, which
+  /// holds the registrable domain, always shows. A long name such as
+  /// `login.tailscale.com.aaaa….evil.example` cannot then pass for a trusted one. The server
+  /// writes the URL.
+  ///
+  /// Identifiers on the host, the URL and the button, never the stack.
   private func signInRow(_ url: URL) -> some View {
     HStack(spacing: 12) {
       VStack(alignment: .leading, spacing: 3) {
         Text("Sign in to continue")
+        if let host = url.host() {
+          Text(host)
+            .font(.footnote.weight(.semibold))
+            .lineLimit(1)
+            .truncationMode(.head)
+            .accessibilityIdentifier("connect.signInHost")
+        }
         Text(url.absoluteString)
           .font(.footnote)
           .foregroundStyle(.secondary)

@@ -47,9 +47,12 @@ public actor FakeSSHTransport: SSHTransport {
   /// because a dropped `CheckedContinuation` logs a runtime misuse warning.
   private var parkedHandshakes: [CheckedContinuation<Void, any Error>] = []
   /// Sent as an auth banner when `authenticate` starts, if set, as Tailscale SSH's check
-  /// mode sends its sign-in URL. A refusal after it carries the text, as
-  /// `NIOSSHTransport`'s does.
+  /// mode sends its sign-in URL.
   private let authenticationBanner: String?
+  /// When set, a refusal is a close with no failure message, as Tailscale SSH denies a user,
+  /// and its error follows `AuthenticationClose`. Otherwise a refusal is an ordinary
+  /// SSH_MSG_USERAUTH_FAILURE and is `authenticationFailed` whatever the banner said.
+  private let refusalClosesTheConnection: Bool
   /// How long `authenticate` holds the request after the banner, as check mode holds it
   /// while the user signs in on the web. Cancellation ends the hold.
   private let authenticationHold: Duration?
@@ -107,6 +110,7 @@ public actor FakeSSHTransport: SSHTransport {
     hangsUntilDisconnected: Bool = false,
     authenticationBanner: String? = nil,
     authenticationHold: Duration? = nil,
+    refusalClosesTheConnection: Bool = false,
     streamResponder: (@Sendable (String) -> Data?)? = nil,
     onStreamClose: (@Sendable (String) -> Void)? = nil,
     onActivity: (@Sendable () -> Void)? = nil
@@ -123,6 +127,7 @@ public actor FakeSSHTransport: SSHTransport {
     self.hangsUntilDisconnected = hangsUntilDisconnected
     self.authenticationBanner = authenticationBanner
     self.authenticationHold = authenticationHold
+    self.refusalClosesTheConnection = refusalClosesTheConnection
     self.streamResponder = streamResponder
     self.onStreamClose = onStreamClose
     self.onActivity = onActivity
@@ -190,13 +195,11 @@ public actor FakeSSHTransport: SSHTransport {
     return false
   }
 
-  /// What `NIOSSHTransport` throws for a refusal: the banner's text when one was sent.
+  /// What `NIOSSHTransport` throws for the same refusal.
   private var refusal: AppError {
     let host = connectedHost?.hostname ?? "unknown host"
-    guard let message = authenticationBanner.flatMap(AuthBanner.displayText) else {
-      return .authenticationFailed(host: host)
-    }
-    return .authenticationRefused(host: host, message: message)
+    guard refusalClosesTheConnection else { return .authenticationFailed(host: host) }
+    return AuthenticationClose.failure(host: host, banners: authenticationBanner.map { [$0] } ?? [])
   }
 
   public func ptyChannel(size: TerminalSize) async throws -> any PTYChannel {

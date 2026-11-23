@@ -27,6 +27,9 @@ final class TailscaleLikeSSHServer: @unchecked Sendable {
     case check(banner: String, hold: TimeAmount)
     /// The tailnet policy denies the user: the banner, then the connection closes.
     case deny(banner: String)
+    /// Not Tailscale: an ordinary sshd that sends a notice banner and then refuses the
+    /// credential with SSH_MSG_USERAUTH_FAILURE.
+    case refuse(banner: String)
   }
 
   private let group: MultiThreadedEventLoopGroup
@@ -139,6 +142,13 @@ private final class TailscaleAuthDelegate: NIOSSHServerUserAuthenticationDelegat
       loop.execute { [self] in sendBanner(banner) }
       loop.scheduleTask(in: hold) {
         responsePromise.succeed(.success)
+      }
+    case .refuse(let banner):
+      let loop = responsePromise.futureResult.eventLoop
+      // Not inline, for the reason above.
+      loop.execute { [self] in
+        sendBanner(banner)
+        responsePromise.succeed(.failure)
       }
     case .deny(let banner):
       let loop = responsePromise.futureResult.eventLoop

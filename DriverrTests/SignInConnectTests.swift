@@ -81,11 +81,12 @@ struct SignInConnectTests {
   }
 
   /// Tailscale denies a user with a banner and a close. The banner is the reason.
-  @Test("a refusal after a banner fails with the banner's text and shows no URL")
+  @Test("a close after a banner fails with the banner's text and shows no URL")
   func denialBannerIsTheFailure() async {
     let transport = FakeSSHTransport(
       acceptsCredentials: false,
-      authenticationBanner: "\nTailscale SSH: tailnet policy does not permit you here.\n"
+      authenticationBanner: "\nTailscale SSH: tailnet policy does not permit you here.\n",
+      refusalClosesTheConnection: true
     )
     let model = ConnectionModel(host: tailnet, environment: environment(transport))
 
@@ -98,5 +99,22 @@ struct SignInConnectTests {
             host: "100.64.0.1",
             message: "Tailscale SSH: tailnet policy does not permit you here.")))
     #expect(model.signInURL == nil)
+  }
+}
+
+extension SignInConnectTests {
+  /// The fake's ordinary refusal matches `NIOSSHTransport`'s: a banner before a real failure
+  /// message is not quoted.
+  @Test("an ordinary refusal after a notice banner keeps the ordinary error")
+  func ordinaryRefusalIgnoresTheBanner() async {
+    let transport = FakeSSHTransport(
+      acceptsCredentials: false,
+      authenticationBanner: "Authorized use only.\n"
+    )
+    let model = ConnectionModel(host: tailnet, environment: environment(transport))
+
+    await model.connect(password: nil, persistence: .promptEveryTime)
+
+    #expect(model.phase == .failed(.authenticationFailed(host: "100.64.0.1")))
   }
 }

@@ -214,6 +214,51 @@ extension TailscaleSSHTests {
   }
 }
 
+extension TailscaleSSHTests {
+  /// An sshd's notice banner is not the reason a password was wrong, so a real
+  /// SSH_MSG_USERAUTH_FAILURE keeps the ordinary refusal.
+  @Test("a wrong password after a notice banner is an ordinary refusal")
+  func wrongPasswordAfterANoticeBannerIsAnOrdinaryRefusal() async throws {
+    try await withServer(.refuse(banner: "Authorized use only. Activity is logged.\n")) {
+      _, host in
+      let transport = NIOSSHTransport()
+      try await transport.connect(to: host, hostKeyValidator: TrustingValidator())
+      do {
+        try await transport.authenticate(.password("wrong"))
+        Issue.record("a refused password authenticated")
+      } catch let error as AppError {
+        #expect(error == .authenticationFailed(host: "127.0.0.1"))
+      }
+      await transport.disconnect()
+    }
+  }
+
+  /// A close after only the check-mode banner is the sign-in ending. The URL is not a reason
+  /// to quote.
+  @Test("a close after only the sign-in banner does not quote the URL")
+  func closeAfterTheSignInBannerDoesNotQuoteTheURL() async throws {
+    try await withServer(.deny(banner: Self.checkBanner)) { _, host in
+      let log = EventLog()
+      let coordinator = ConnectionCoordinator(transport: NIOSSHTransport())
+      do {
+        try await coordinator.connect(
+          to: host,
+          validator: TrustingValidator(),
+          credential: .none,
+          onSignIn: { url in log.record("signIn: \(url.absoluteString)") }
+        )
+        Issue.record("a closed connect succeeded")
+      } catch let error as AppError {
+        #expect(
+          error
+            == .disconnected(reason: "127.0.0.1 closed the connection before the sign-in finished."))
+      }
+      await coordinator.disconnect()
+      #expect(log.events == ["signIn: https://login.tailscale.com/a/1a2b3c4d5e6f"])
+    }
+  }
+}
+
 /// Records events from the `@Sendable` sign-in callback, in order.
 private final class EventLog: @unchecked Sendable {
   private let lock = NSLock()

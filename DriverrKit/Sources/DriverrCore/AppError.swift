@@ -7,12 +7,13 @@ import Foundation
 public enum AppError: Error, Hashable, Sendable, LocalizedError {
   case connectionFailed(host: String, reason: String)
   case authenticationFailed(host: String)
-  /// The server refused authentication, or closed the connection during it, after it had
-  /// sent a banner. `message` is the banner, already trimmed by `AuthBanner.displayText`.
+  /// The server closed the connection during authentication, with no failure message, after a
+  /// banner that holds no sign-in URL. `message` is that banner, already trimmed by
+  /// `AuthBanner.displayText`.
   ///
   /// Not `authenticationFailed`: a Tailscale SSH host that denies a user says why only in
   /// the banner, and "Check the username and credentials" is wrong advice for a host that
-  /// takes no credential.
+  /// takes no credential. An ordinary refusal stays `authenticationFailed`, banner or not.
   case authenticationRefused(host: String, message: String)
   /// A password host was asked to connect with nothing to offer.
   ///
