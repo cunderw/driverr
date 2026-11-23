@@ -487,6 +487,8 @@ final class ConnectionModel {
     // Set before the credential's actor hop, so "Connecting…" shows on the tap's frame and
     // the button is gone before a second tap.
     phase = .connecting
+    // A retired attempt never clears its own URL, because only the current one writes it.
+    signInURL = nil
     currentAttempt += 1
     let attempt = currentAttempt
     let task = Task {
@@ -986,6 +988,7 @@ final class ConnectionModel {
     paneScreens = nil
     composers = nil
     herdrAvailability = nil
+    signInURL = nil
     phase = .idle
     output = ""
   }

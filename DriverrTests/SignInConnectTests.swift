@@ -62,6 +62,24 @@ struct SignInConnectTests {
     #expect(model.phase == .idle)
   }
 
+  /// Disconnect retires the attempt, and a retired attempt never clears its own URL.
+  @Test("a disconnect during a held sign-in clears the URL")
+  func disconnectClearsTheURL() async {
+    let transport = FakeSSHTransport(
+      authenticationBanner: Self.checkBanner,
+      authenticationHold: .seconds(600)
+    )
+    let model = ConnectionModel(host: tailnet, environment: environment(transport))
+
+    let attempt = Task { await model.connect(password: nil, persistence: .promptEveryTime) }
+    await waitUntil("the sign-in URL is shown") { model.signInURL != nil }
+
+    await model.disconnect()
+    await attempt.value
+    #expect(model.signInURL == nil)
+    #expect(model.phase == .idle)
+  }
+
   /// Tailscale denies a user with a banner and a close. The banner is the reason.
   @Test("a refusal after a banner fails with the banner's text and shows no URL")
   func denialBannerIsTheFailure() async {

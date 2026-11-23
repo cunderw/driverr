@@ -525,18 +525,14 @@ final class HandshakeCoordinator: NIOSSHClientServerAuthenticationDelegate,
     return AppError.authenticationRefused(host: host.hostname, message: message)
   }
 
-  /// Called when the connection closes. Settles whatever is still waiting: a close during
-  /// key exchange reads as an unreachable host, and a close after it as a refusal.
+  /// Called when the connection closes. After the host-key decision, a close settles
+  /// authentication as a refusal, with the server's banner when it sent one.
+  ///
+  /// Before the decision it does nothing. A close then already reaches `errorCaught`
+  /// (measured: a server that closes on accept fails at once), and a close while the trust
+  /// prompt is up is left to the prompt, as before.
   func connectionClosed() {
-    guard hostKeySettled else {
-      settleAuthentication(
-        with: AppError.connectionFailed(
-          host: host.hostname,
-          reason: "It closed the connection during the handshake."
-        )
-      )
-      return
-    }
+    guard hostKeySettled else { return }
     settleAuthentication(with: authenticationFailure)
   }
 
