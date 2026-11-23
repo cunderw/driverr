@@ -17,7 +17,7 @@ struct TailscaleSSHTests {
     "# Tailscale SSH requires an additional check.\n"
     + "# To authenticate, visit: https://login.tailscale.com/a/1a2b3c4d5e6f\n"
 
-  private func withServer(
+  fileprivate func withServer(
     _ policy: TailscaleLikeSSHServer.Policy,
     _ body: (TailscaleLikeSSHServer, DriverrCore.Host) async throws -> Void
   ) async throws {
@@ -111,6 +111,33 @@ struct TailscaleSSHTests {
         phase == .connected,
         "the deadline ended the connect while Tailscale held it for a sign-in: \(phase)"
       )
+    }
+  }
+}
+
+extension TailscaleSSHTests {
+  /// The guard on the fix above. Ordinary sshd hosts send pre-auth banners too (an /etc/issue
+  /// notice), so a banner alone must not stop the deadline; only a sign-in URL may. Passes
+  /// today and must still pass after #171.
+  @Test("a held request after a banner with no URL still fails on the deadline")
+  func bannerWithoutURLKeepsTheDeadline() async throws {
+    let notice = "Authorized use only. Activity is logged.\n"
+    try await withServer(.check(banner: notice, hold: .milliseconds(1500))) { _, host in
+      let coordinator = ConnectionCoordinator(
+        transport: NIOSSHTransport(),
+        handshakeDeadline: .milliseconds(500)
+      )
+      try? await coordinator.connect(
+        to: host,
+        validator: TrustingValidator(),
+        credential: .password("ignored-by-tailscale")
+      )
+      let phase = await coordinator.phase
+      await coordinator.disconnect()
+      guard case .failed(.connectionFailed) = phase else {
+        Issue.record("a banner with no URL stopped the handshake deadline: \(phase)")
+        return
+      }
     }
   }
 }
