@@ -232,9 +232,9 @@ final class KeyManagementUITests: XCTestCase {
     app.typeText("10.1.0.9")
     require(app, "host.username", "Expected a username field").tap()
     app.typeText("carson")
-    setSwitch(app, "host.usesKey", on: true)
+    pickSignIn(app, "Key")
     _ = require(app, "host.keyPicker", "Expected a key to already be selected")
-    // The form sheet can still be moving. `setSwitch` settles before its own tap, but Save
+    // The form sheet can still be moving. `pickSignIn` settles before its own tap, but Save
     // is a separate tap.
     let save = require(app, "host.save", "Expected a save button")
     waitUntilStill(app, save)

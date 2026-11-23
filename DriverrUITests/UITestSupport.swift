@@ -259,6 +259,49 @@ func setSwitch(
   return toggle
 }
 
+/// Picks how a host signs in from the add-host form's menu, and asserts the form took it.
+///
+/// The picker is a menu: one tap opens it and a second picks the item by its title. It settles
+/// first, for the same moving card `setSwitch` waits out.
+@MainActor
+func pickSignIn(
+  _ app: XCUIApplication,
+  _ title: String,
+  file: StaticString = #filePath,
+  line: UInt = #line
+) {
+  let picker = app.buttons["host.signIn"]
+  XCTAssertTrue(
+    picker.waitForExistence(timeout: 10),
+    "No sign-in picker.\nTree was:\n\(app.debugDescription)",
+    file: file,
+    line: line
+  )
+  waitUntilStill(app, picker, waitingForKeyboard: false, file: file, line: line)
+  picker.tap()
+
+  let item = app.buttons.matching(
+    NSPredicate(format: "label == %@ AND identifier != %@", title, "host.signIn")
+  ).firstMatch
+  XCTAssertTrue(
+    item.waitForExistence(timeout: 5),
+    "The sign-in menu has no '\(title)'.\nTree was:\n\(app.debugDescription)",
+    file: file,
+    line: line
+  )
+  item.tap()
+
+  let picked = NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", title, title)
+  let settled = XCTNSPredicateExpectation(predicate: picked, object: picker)
+  XCTAssertEqual(
+    XCTWaiter().wait(for: [settled], timeout: 5),
+    .completed,
+    "The sign-in picker never showed '\(title)'.\nTree was:\n\(app.debugDescription)",
+    file: file,
+    line: line
+  )
+}
+
 /// The terminal's rendered text with the fake shell's `[resized WxH]` notices taken out.
 ///
 /// On `Driverr iPad` the software keyboard goes away when XCUITest starts sending key

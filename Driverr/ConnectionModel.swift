@@ -46,6 +46,13 @@ final class ConnectionModel {
     return error.errorDescription
   }
 
+  /// The page the host asks the user to sign in on, while the attempt waits for it.
+  ///
+  /// Set when the server sends a banner with a sign-in URL and holds authentication:
+  /// Tailscale SSH's check mode. Cleared when the attempt ends, however it ends. Only the
+  /// attempt in flight writes it. See `ConnectionCoordinator.connect`.
+  private(set) var signInURL: URL?
+
   /// What went wrong with the last ad-hoc command, if anything.
   ///
   /// Kept apart from `phase`, so a bad command does not mark a healthy link as failed and
@@ -454,6 +461,7 @@ final class ConnectionModel {
     currentAttempt += 1
     connectAttempt?.cancel()
     connectAttempt = nil
+    signInURL = nil
     // The transport may have opened a socket, and a cancelled task does not close it.
     await coordinator?.disconnect()
     coordinator = nil
@@ -514,7 +522,21 @@ final class ConnectionModel {
       self.coordinator = coordinator
 
       let validator = TOFUHostKeyValidator(store: environment.knownHostsStore, prompt: prompt)
-      try await coordinator.connect(to: host, validator: validator, credential: credential)
+      // Every sign-in call has returned when `connect` does, so the clear on either path is
+      // final. Cleared here, not at the end of the attempt: the set-up below can take two
+      // more deadlines, and the sign-in is over.
+      do {
+        try await coordinator.connect(
+          to: host,
+          validator: validator,
+          credential: credential,
+          onSignIn: { [weak self] url in await self?.showSignIn(url, attempt: attempt) }
+        )
+      } catch {
+        if attempt == currentAttempt { signInURL = nil }
+        throw error
+      }
+      if attempt == currentAttempt { signInURL = nil }
       // Cancel landed while the handshake finished: the link is up and unwanted, so it goes
       // down. A newer attempt is the same case, but the phase and coordinator now belong to
       // it and must be left alone.
@@ -993,6 +1015,13 @@ final class ConnectionModel {
     onLoss?()
   }
 
+  /// Shows the sign-in page an attempt's server asked for, if that attempt still owns the
+  /// phase.
+  private func showSignIn(_ url: URL, attempt: Int) {
+    guard attempt == currentAttempt else { return }
+    signInURL = url
+  }
+
   private func resolveCredential(
     password: String?,
     persistence: PasswordPersistence
@@ -1013,6 +1042,9 @@ final class ConnectionModel {
         persistence: persistence
       )
       return .password(password)
+    // The server decides who logs in, so there is nothing to resolve.
+    case .none:
+      return .none
     }
   }
 

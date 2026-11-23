@@ -49,20 +49,22 @@ final class ToggleUITests: XCTestCase {
     return app
   }
 
-  func testTheAuthToggleActuallyMoves() {
+  /// The sign-in picker replaced the "Use a Key" toggle (#171). Its binding must move both
+  /// ways, as the toggle's had to.
+  func testTheSignInPickerActuallyMoves() {
     let app = launch()
     require(app, "hosts.add", "Expected an add-host button").tap()
 
-    setSwitch(app, "host.usesKey", on: true)
+    pickSignIn(app, "Key")
 
     // The form reacts: with no keys yet, the "no keys" notice appears only if the binding
     // changed.
-    require(app, "host.noKeys", "Expected the form to react to key auth being turned on")
+    require(app, "host.noKeys", "Expected the form to react to key auth being picked")
 
-    setSwitch(app, "host.usesKey", on: false)
+    pickSignIn(app, "Password")
     XCTAssertFalse(
       element(app, "host.noKeys").exists,
-      "Expected the key section to go away when the toggle goes back off"
+      "Expected the key section to go away when password auth is picked again"
     )
   }
 
@@ -79,7 +81,7 @@ final class ToggleUITests: XCTestCase {
     require(app, "host.username", "Expected a username field").tap()
     app.typeText("carson")
 
-    setSwitch(app, "host.usesKey", on: true)
+    pickSignIn(app, "Key")
     require(app, "host.noKeys", "Expected no keys yet")
 
     // `app.buttons`, not an `.any` match. A toolbar `.confirmationAction` button sits in
@@ -141,7 +143,7 @@ final class ToggleUITests: XCTestCase {
     app.typeText("10.1.0.9")
     require(app, "host.username", "Expected a username field").tap()
     app.typeText("carson")
-    setSwitch(app, "host.usesKey", on: true)
+    pickSignIn(app, "Key")
     require(app, "host.keyPicker", "Expected a key to pick, now that one exists")
     let save = require(app, "host.save", "Expected a save button")
     waitUntilStill(app, save, waitingForKeyboard: false)
