@@ -7,6 +7,10 @@ public enum HostAuthMethod: Hashable, Sendable, Codable {
   /// Password auth. Whether the password is remembered is `PasswordCredentials`'s decision;
   /// a host never carries a secret.
   case password
+  /// No credential: SSH "none" authentication. For a server that decides who may log in by
+  /// itself, as Tailscale SSH does from the tailnet identity. Such a server can still hold
+  /// the request while the user signs in on the web. See `AuthBanner`.
+  case none
 }
 
 /// A remote machine Driverr can connect to. Credentials are not stored here; they are in

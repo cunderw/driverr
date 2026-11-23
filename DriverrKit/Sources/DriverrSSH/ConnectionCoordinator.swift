@@ -82,15 +82,23 @@ public actor ConnectionCoordinator {
     self.inputIdleDeadline = inputIdleDeadline
   }
 
+  /// - Parameter onSignIn: called once per attempt, before `connect` returns, when the
+  ///   server sends an auth banner that holds a sign-in URL. Tailscale SSH's check mode
+  ///   then holds the request until the user signs in on the web. From that banner on, the
+  ///   handshake deadline does not count the wait. Every call has returned by the time
+  ///   `connect` returns or throws.
   public func connect(
     to host: DriverrCore.Host,
     validator: any HostKeyValidator,
-    credential: SSHAuthMethod
+    credential: SSHAuthMethod,
+    onSignIn: @escaping @Sendable (URL) async -> Void = { _ in }
   ) async throws {
     stopWatchingForClosure()
     phase = .connecting
     askedTime = .zero
     askingSince = nil
+    signInURL = nil
+    isAuthenticationSettled = false
     do {
       let transport = self.transport
       // Wrapped so the deadline does not count time a person spends on the trust prompt.
@@ -101,7 +109,7 @@ public actor ConnectionCoordinator {
         // mismatched host never sees a password.
         try await transport.connect(to: host, hostKeyValidator: timed)
         await setPhase(.authenticating)
-        try await transport.authenticate(credential)
+        try await authenticate(credential, onSignIn: onSignIn)
       }
       connectedHost = host
       phase = .connected
@@ -171,13 +179,65 @@ public actor ConnectionCoordinator {
   ///
   /// The deadline does not count this time. On first contact the handshake waits inside
   /// the validator while the user compares a fingerprint, and the timeout must not kill
-  /// that.
+  /// that. A server that holds authentication for a sign-in on the web is the same wait.
+  /// See `authenticate(_:onSignIn:)`.
   private func humanTime() -> Duration {
     askedTime + (askingSince.map { ContinuousClock.now - $0 } ?? .zero)
   }
 
   private func setPhase(_ newPhase: ConnectionPhase) {
     phase = newPhase
+  }
+
+  // MARK: - Signing in on the web
+
+  /// The sign-in URL this attempt's server sent, once it has sent one.
+  private var signInURL: URL?
+  /// Set when this attempt's `authenticate` returns or throws. A banner the watcher reads
+  /// after that is too late to show, and must not start the clock again.
+  private var isAuthenticationSettled = false
+
+  /// Offers the credential, and watches the auth banners while the server holds it.
+  ///
+  /// A banner with a sign-in URL counts as asking a person, as the trust prompt does, until
+  /// authentication settles. See `humanTime`. A banner with no URL changes nothing: an
+  /// ordinary sshd sends a notice before every login, and a stalled server must still fail
+  /// on the deadline.
+  private func authenticate(
+    _ credential: SSHAuthMethod,
+    onSignIn: @escaping @Sendable (URL) async -> Void
+  ) async throws {
+    let banners = await transport.authenticationBanners
+    let watcher = Task { [weak self] in
+      for await text in banners {
+        await self?.received(banner: text, onSignIn: onSignIn)
+      }
+    }
+    do {
+      try await transport.authenticate(credential)
+    } catch {
+      await settleAuthentication(watcher)
+      throw error
+    }
+    await settleAuthentication(watcher)
+  }
+
+  private func received(banner text: String, onSignIn: @Sendable (URL) async -> Void) async {
+    guard !isAuthenticationSettled, signInURL == nil,
+      let url = AuthBanner.signInURL(in: text)
+    else { return }
+    signInURL = url
+    startedAsking()
+    await onSignIn(url)
+  }
+
+  /// Stops the sign-in clock and waits for the watcher, so no `onSignIn` call outlives
+  /// `connect`.
+  private func settleAuthentication(_ watcher: Task<Void, Never>) async {
+    isAuthenticationSettled = true
+    if signInURL != nil { stoppedAsking() }
+    watcher.cancel()
+    await watcher.value
   }
 
   /// Runs the handshake with a budget, and adds back any time a person spent deciding.

@@ -5,11 +5,14 @@
 public enum SSHAuthMethod: Sendable, CustomDebugStringConvertible, CustomStringConvertible {
   case password(String)
   case privateKey(SSHPrivateKey)
+  /// SSH "none" authentication: the username and nothing else. See `HostAuthMethod.none`.
+  case none
 
   public var debugDescription: String {
     switch self {
     case .password: "SSHAuthMethod.password(<redacted>)"
     case .privateKey: "SSHAuthMethod.privateKey(<redacted>)"
+    case .none: "SSHAuthMethod.none"
     }
   }
 

@@ -82,6 +82,15 @@ public protocol SSHTransport: Sendable {
   /// the next `connect` gets a fresh one. `disconnect` finishes it before teardown, so a
   /// requested disconnect is never reported as a loss.
   var disconnections: AsyncStream<AppError> { get async }
+  /// The banners the server sends during user authentication, as raw text, in order.
+  ///
+  /// Like `disconnections`, the stream belongs to one connection: each `connect` builds a
+  /// fresh one. It finishes when authentication settles or the connection is torn down.
+  /// Read it after `connect` returns. Before any connect it is already finished.
+  ///
+  /// A banner can arrive while the server holds the request, before `authenticate`
+  /// returns. Tailscale SSH sends its sign-in URL this way. See `AuthBanner`.
+  var authenticationBanners: AsyncStream<String> { get async }
 }
 
 /// The scripted forms of `execChannel` and `execStream`. Each wraps its script with

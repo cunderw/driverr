@@ -7,6 +7,13 @@ import Foundation
 public enum AppError: Error, Hashable, Sendable, LocalizedError {
   case connectionFailed(host: String, reason: String)
   case authenticationFailed(host: String)
+  /// The server refused authentication, or closed the connection during it, after it had
+  /// sent a banner. `message` is the banner, already trimmed by `AuthBanner.displayText`.
+  ///
+  /// Not `authenticationFailed`: a Tailscale SSH host that denies a user says why only in
+  /// the banner, and "Check the username and credentials" is wrong advice for a host that
+  /// takes no credential.
+  case authenticationRefused(host: String, message: String)
   /// A password host was asked to connect with nothing to offer.
   ///
   /// Not `authenticationFailed`: nothing was sent, so "refused by the server" would send
@@ -78,6 +85,8 @@ public enum AppError: Error, Hashable, Sendable, LocalizedError {
       "Could not reach \(host). \(reason)"
     case let .authenticationFailed(host):
       "Authentication was refused by \(host). Check the username and credentials."
+    case let .authenticationRefused(host, message):
+      "Authentication was refused by \(host). The host said:\n\(message)"
     case let .passwordRequired(host):
       "Enter the password for \(host) to connect."
     case let .hostKeyMismatch(host):
@@ -137,6 +146,8 @@ public enum AppError: Error, Hashable, Sendable, LocalizedError {
     switch self {
     case .connectionFailed, .disconnected, .channelFailed, .notConnected: true
     case .authenticationFailed, .hostKeyMismatch, .hostKeyRejected, .cancelled: false
+    // Connect stays on screen. A Retry beside it would promise more than a second try gives.
+    case .authenticationRefused: false
     // The missing thing is a password, and the field is on screen.
     case .passwordRequired: false
     case .keyImportFailed: false

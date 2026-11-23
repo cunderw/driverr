@@ -142,6 +142,90 @@ extension TailscaleSSHTests {
   }
 }
 
+extension TailscaleSSHTests {
+  /// A host saved with "Tailscale SSH (no password)" offers nothing but the username.
+  @Test("none authentication connects to a Tailscale server and offers no credential")
+  func noneAuthenticationConnects() async throws {
+    try await withServer(.accept) { server, host in
+      let transport = NIOSSHTransport()
+      try await transport.connect(to: host, hostKeyValidator: TrustingValidator())
+      try await transport.authenticate(.none)
+      await transport.disconnect()
+      #expect(server.offers.seen == ["none"])
+    }
+  }
+
+  /// Check mode: the URL reaches the caller while the server still holds the request, and
+  /// the connect finishes after the hold.
+  @Test("the check banner's sign-in URL surfaces before the connect succeeds")
+  func checkBannerURLSurfacesBeforeSuccess() async throws {
+    try await withServer(.check(banner: Self.checkBanner, hold: .milliseconds(400))) {
+      server, host in
+      let log = EventLog()
+      let coordinator = ConnectionCoordinator(transport: NIOSSHTransport())
+      try await coordinator.connect(
+        to: host,
+        validator: TrustingValidator(),
+        credential: .none,
+        onSignIn: { url in log.record("signIn: \(url.absoluteString)") }
+      )
+      log.record("connected")
+      let phase = await coordinator.phase
+      await coordinator.disconnect()
+      #expect(phase == .connected)
+      #expect(server.offers.seen == ["none"])
+      #expect(
+        log.events == ["signIn: https://login.tailscale.com/a/1a2b3c4d5e6f", "connected"])
+    }
+  }
+
+  /// A denial sends a banner and closes with no failure message. The banner is the only
+  /// reason the user gets, so the failure carries it.
+  @Test("a denial banner surfaces in the failure")
+  func denialBannerSurfacesInTheFailure() async throws {
+    let denial = "\nTailscale SSH: tailnet policy does not permit you to SSH to this node.\n"
+    try await withServer(.deny(banner: denial)) { _, host in
+      let log = EventLog()
+      let coordinator = ConnectionCoordinator(transport: NIOSSHTransport())
+      do {
+        try await coordinator.connect(
+          to: host,
+          validator: TrustingValidator(),
+          credential: .none,
+          onSignIn: { url in log.record("signIn: \(url.absoluteString)") }
+        )
+        Issue.record("a denied connect succeeded")
+      } catch let error as AppError {
+        #expect(
+          error
+            == .authenticationRefused(
+              host: "127.0.0.1",
+              message: "Tailscale SSH: tailnet policy does not permit you to SSH to this node."))
+      }
+      let phase = await coordinator.phase
+      await coordinator.disconnect()
+      guard case .failed(.authenticationRefused) = phase else {
+        Issue.record("expected the refusal in the phase: \(phase)")
+        return
+      }
+      // A banner with no link offers nothing to open.
+      #expect(log.events.isEmpty)
+    }
+  }
+}
+
+/// Records events from the `@Sendable` sign-in callback, in order.
+private final class EventLog: @unchecked Sendable {
+  private let lock = NSLock()
+  private var recorded: [String] = []
+
+  func record(_ event: String) {
+    lock.withLock { recorded.append(event) }
+  }
+
+  var events: [String] { lock.withLock { recorded } }
+}
+
 private struct TrustingValidator: HostKeyValidator {
   func validate(_ key: SSHHostKey, for host: DriverrCore.Host) async -> HostKeyDecision {
     .trust

@@ -1050,6 +1050,10 @@ private actor CoordinatorStepTransport: SSHTransport {
       return await inner.disconnections
     }
   }
+
+  var authenticationBanners: AsyncStream<String> {
+    get async { await inner.authenticationBanners }
+  }
 }
 
 /// What the live attempt's control reports, and what a superseded one's would.

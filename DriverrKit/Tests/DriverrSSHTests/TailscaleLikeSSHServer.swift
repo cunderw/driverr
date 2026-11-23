@@ -18,13 +18,15 @@ import NIOPosix
 /// - Check mode sends the login message as SSH_MSG_USERAUTH_BANNER
 ///   (`ServerPreAuthConn.SendAuthBanner`), then holds the request while it waits for the
 ///   sign-in. The real hold is up to 30 minutes (`delegateFetchTimeout`), then it accepts.
-/// - A denial (not imitated here) sends a banner and then closes with no failure message.
+/// - A denial sends a banner and then closes with no failure message.
 final class TailscaleLikeSSHServer: @unchecked Sendable {
   enum Policy: Sendable {
     /// The tailnet policy allows the user.
     case accept
     /// Check mode: the banner, then a hold, then success.
     case check(banner: String, hold: TimeAmount)
+    /// The tailnet policy denies the user: the banner, then the connection closes.
+    case deny(banner: String)
   }
 
   private let group: MultiThreadedEventLoopGroup
@@ -54,6 +56,7 @@ final class TailscaleLikeSSHServer: @unchecked Sendable {
             }
           )
           delegate.handler = handler
+          delegate.channel = channel
           try channel.pipeline.syncOperations.addHandler(handler)
         }
       }
@@ -97,6 +100,7 @@ private final class TailscaleAuthDelegate: NIOSSHServerUserAuthenticationDelegat
   private let policy: TailscaleLikeSSHServer.Policy
   private let offers: OfferLog
   weak var handler: NIOSSHHandler?
+  weak var channel: Channel?
 
   init(policy: TailscaleLikeSSHServer.Policy, offers: OfferLog) {
     self.policy = policy
@@ -136,6 +140,14 @@ private final class TailscaleAuthDelegate: NIOSSHServerUserAuthenticationDelegat
       loop.scheduleTask(in: hold) {
         responsePromise.succeed(.success)
       }
+    case .deny(let banner):
+      let loop = responsePromise.futureResult.eventLoop
+      // Not inline, for the reason above. No failure message: the connection just closes.
+      loop.execute { [self] in
+        sendBanner(banner)
+        channel?.close(promise: nil)
+        responsePromise.fail(Denied())
+      }
     }
   }
 
@@ -144,3 +156,8 @@ private final class TailscaleAuthDelegate: NIOSSHServerUserAuthenticationDelegat
     handler?.flushFromChildChannel()
   }
 }
+
+/// Settles a denied request's promise once the connection is closed. NIO traps on a promise
+/// released unfulfilled, and a `.failure` outcome would send the failure message that
+/// Tailscale does not send.
+private struct Denied: Error {}
