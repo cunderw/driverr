@@ -67,8 +67,10 @@ struct CoreSnapshotMapperTests {
     try JSONDecoder().decode(CoreAppDocument.self, from: Data(json.utf8))
   }
 
-  private func leaf(_ terminal: String) -> String {
-    #"{"type":"block","content":{"terminal":"\#(terminal)"}}"#
+  /// A leaf as herdr-app writes it, which leaves `title` out when the pane has no name.
+  private func leaf(_ terminal: String, title: String? = nil) -> String {
+    let titled = title.map { #","title":"\#($0)""# } ?? ""
+    return #"{"type":"block","content":{"terminal":"\#(terminal)"}\#(titled)}"#
   }
 
   @Test("labels build the groups, unlabelled terminals are flat and machines come last")
@@ -407,6 +409,75 @@ struct CoreSnapshotMapperTests {
     #expect(
       CoreSnapshotMapper.tree(from: list, document: strange) == CoreSnapshotMapper.tree(from: list)
     )
+  }
+
+  /// herdr-app's `pane.rename` keeps the name on the pane's leaf in its layout.
+  @Test("a pane named in the desktop app takes that name, ahead of the terminal's own")
+  func paneNames() throws {
+    let doc = try document(
+      #"""
+      {"spaces":[{"id":"a","tabs":[{"id":"b","root":{"children":[
+      \#(leaf("t1", title: "server")),\#(leaf("t2", title: "  logs  "))]}}]},
+      {"id":"flat","tabs":[{"id":"f","root":\#(leaf("t3", title: "scratch"))}]}]}
+      """#)
+    let list = try decoded(
+      #"""
+      {"terminals":[
+      {"address":"t1","name":"build","labels":{"herdr.space":"a","herdr.tab":"b"}},
+      {"address":"t2","labels":{"herdr.space":"a","herdr.tab":"b"},"argv":["/bin/zsh"]},
+      {"address":"t3","name":"build","labels":{}}]}
+      """#)
+    let tree = CoreSnapshotMapper.tree(from: list, document: doc)
+    #expect(tree.pane(id: "core:t1")?.title == "server")
+    #expect(tree.pane(id: "core:t2")?.title == "logs")
+    #expect(tree.pane(id: "core:t3")?.title == "scratch", "an unlabelled terminal too")
+  }
+
+  @Test(
+    "an empty, blank or absent pane name, or one on a split, keeps today's name",
+    arguments: [
+      #"{"type":"block","content":{"terminal":"t1"},"title":""}"#,
+      #"{"type":"block","content":{"terminal":"t1"},"title":" \n "}"#,
+      #"{"type":"block","content":{"terminal":"t1"}}"#,
+      #"{"type":"split","title":"outer","children":[{"content":{"terminal":"t1"}}]}"#,
+    ])
+  func unnamedPanes(root: String) throws {
+    let doc = try document(#"{"spaces":[{"id":"a","tabs":[{"id":"b","root":\#(root)}]}]}"#)
+    let place = labels(space: "a", tab: "b")
+    let named = try decoded(
+      #"{"terminals":[{"address":"t1","name":"build","labels":{\#(place)}}]}"#)
+    #expect(CoreSnapshotMapper.tree(from: named, document: doc).allPanes.only?.title == "build")
+    let bare = try listing([("t1", place)])
+    #expect(CoreSnapshotMapper.tree(from: bare, document: doc).allPanes.only?.title == "t1")
+  }
+
+  @Test("the first non-empty name a terminal's leaves carry wins")
+  func firstPaneNameWins() throws {
+    let doc = try document(
+      #"""
+      {"spaces":[{"id":"a","tabs":[{"id":"b","root":{"children":[
+      \#(leaf("t1", title: "")),\#(leaf("t1", title: "first")),
+      \#(leaf("t1", title: "second"))]}}]}]}
+      """#)
+    let tree = CoreSnapshotMapper.tree(
+      from: try listing([("t1", labels(space: "a", tab: "b"))]), document: doc)
+    #expect(tree.pane(id: "core:t1")?.title == "first")
+  }
+
+  /// Documents written before herdr-app named panes carry no `title` anywhere.
+  @Test("a document with no pane names decodes, and the tree is the same as before")
+  func documentWithoutPaneNames() throws {
+    let list = try decoded(Self.captured)
+    let doc = try document(
+      #"""
+      {"spaces":[{"id":"spA","name":"Main","tabs":[{"id":"tbA","name":"Vault","root":
+      {"type":"split","children":[\#(leaf("t6")),\#(leaf("t1"))]}}]}]}
+      """#)
+    let tree = CoreSnapshotMapper.tree(from: list, document: doc)
+    #expect(tree.workspaces.map(\.label) == ["Main", "herdr-core", "box · root"])
+    #expect(tree.workspaces[0].tabs.map(\.label) == ["Vault"])
+    #expect(tree.workspaces[0].tabs[0].panes.map(\.terminalID) == ["t6", "t1"])
+    #expect(tree.allPanes.map(\.title) == ["nvim", "me", "zsh", "bash"])
   }
 
   @Test("nothing running is no workspace at all")

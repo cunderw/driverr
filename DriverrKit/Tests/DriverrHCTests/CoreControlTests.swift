@@ -170,6 +170,41 @@ struct CoreControlTests {
     #expect(try await control.snapshot().workspaces.map(\.id) == ["core:a", "core:b"])
   }
 
+  /// One terminal, `build` by its own name, in a tab whose leaf herdr-app may name.
+  private func namedPane() -> FakeCoreStream {
+    listing(#"{"address":"t1","name":"build","labels":{"herdr.space":"a","herdr.tab":"x"}}"#)
+  }
+
+  private static func paneDocument(title: String?) -> String {
+    let titled = title.map { #","title":"\#($0)""# } ?? ""
+    return #"""
+      {"value":{"spaces":[{"id":"a","tabs":[{"id":"x","root":
+      {"type":"block","content":{"terminal":"t1"}\#(titled)}}]}]},"version":7}
+      """#
+  }
+
+  @Test("a pane renamed in the desktop app is renamed in the tree")
+  func paneRenamed() async throws {
+    let stream = namedPane()
+    stream.replies["doc.get"] = .result(Self.paneDocument(title: "server"))
+    let control = control(CoreHost(stream))
+    #expect(try await control.snapshot().allPanes.map(\.title) == ["server"])
+
+    try await changeDocument(to: .result(Self.paneDocument(title: "api")), on: stream)
+    #expect(try await control.snapshot().allPanes.map(\.title) == ["api"])
+  }
+
+  @Test("a pane whose name is taken away in the desktop app goes back to its own")
+  func paneNameCleared() async throws {
+    let stream = namedPane()
+    stream.replies["doc.get"] = .result(Self.paneDocument(title: "server"))
+    let control = control(CoreHost(stream))
+    #expect(try await control.snapshot().allPanes.map(\.title) == ["server"])
+
+    try await changeDocument(to: .result(Self.paneDocument(title: nil)), on: stream)
+    #expect(try await control.snapshot().allPanes.map(\.title) == ["build"])
+  }
+
   @Test("snapshots share one connection and one subscription")
   func oneConnection() async throws {
     let stream = listing(terminal)
