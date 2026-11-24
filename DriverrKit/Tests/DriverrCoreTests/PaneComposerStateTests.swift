@@ -1265,8 +1265,12 @@ struct PaneComposerCopySentVerdictTests {
     #expect(PaneComposerCopy.sentVerdict(for: .down) == "Sent Down")
     #expect(PaneComposerCopy.sentVerdict(for: .tab) == "Sent Tab")
     #expect(PaneComposerCopy.sentVerdict(for: .backTab) == "Sent Shift-Tab")
-    #expect(PaneComposerCopy.sentVerdict(for: .yes) == "Sent y")
-    #expect(PaneComposerCopy.sentVerdict(for: .no) == "Sent n")
+  }
+
+  @Test("Approve and Deny name the choice, not the key they send")
+  func approveAndDenyNameTheChoice() {
+    #expect(PaneComposerCopy.sentVerdict(for: .yes) == "Approved")
+    #expect(PaneComposerCopy.sentVerdict(for: .no) == "Denied")
   }
 
   @Test("no two keys share a sentence, except Enter sharing text's")
