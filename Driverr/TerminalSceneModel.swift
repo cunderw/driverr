@@ -1067,7 +1067,10 @@ final class TerminalSceneModel {
         measuredSize: measuredSize(for: target),
         sizeDeadline: coreSizeDeadline,
         takeover: takeover,
-        recordsFailure: !automatic
+        // Not while the link is down either. The open then fails on a connection that is not
+        // up, often one still signing in, and recording it would write `.failed` over that
+        // attempt's `.connecting`, so `stopReconnecting` could not end it.
+        recordsFailure: !automatic && connectionNotice == nil
       )
     else {
       // An automatic reattach fails silently; see `openSurface`. The last frame stays. A
