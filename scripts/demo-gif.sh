@@ -2,8 +2,8 @@
 #
 # Record the README's demo GIF, docs/readme/demo.gif.
 #
-#   scripts/demo-gif.sh          record on `Driverr iPhone 17`, which must be booted
-#   scripts/demo-gif.sh <udid>   record on that simulator instead, an iPhone that is booted
+#   scripts/demo-gif.sh          record on `Driverr iPhone 17`
+#   scripts/demo-gif.sh <udid>   record on that simulator instead, an iPhone
 #   scripts/demo-gif.sh --help   this text. It touches no simulator
 #
 # The GIF is the core flow, recorded against the seeded test session: Needs You lists two
@@ -13,7 +13,10 @@
 #
 # How it works:
 #
-# 1. It fixes the status bar at 9:41 with full bars and battery, and clears it again on exit.
+# 1. It shuts the simulator down and boots it, as scripts/screenshots.sh does, because a
+#    device that has stopped getting attention reports draws the home indicator in every
+#    frame. It never erases it. Then it fixes the status bar at 9:41 with full bars and
+#    battery, and clears it again on exit.
 # 2. It starts `xcrun simctl io <udid> recordVideo`.
 # 3. scripts/look.sh walks the flow in dark appearance. Its `shot:start` (Needs You) and
 #    `shot:end` (the agent working) are the two screens the cut is found by.
@@ -55,8 +58,8 @@ cd "$REPO_ROOT"
 command -v ffmpeg >/dev/null || fail "ffmpeg is not on PATH"
 command -v ffprobe >/dev/null || fail "ffprobe is not on PATH"
 
-# The named udid, or the one available device called `Driverr iPhone 17`, and its state.
-read -r UDID STATE < <(xcrun simctl list -j devices available | UDID="${1:-}" python3 -c '
+# The named udid, or the one available device called `Driverr iPhone 17`.
+read -r UDID _ < <(xcrun simctl list -j devices available | UDID="${1:-}" python3 -c '
 import json, os, sys
 devices = [d for ds in json.load(sys.stdin)["devices"].values() for d in ds]
 asked = os.environ["UDID"]
@@ -66,7 +69,6 @@ if len(found) != 1:
     sys.exit(f"{len(found)} available simulators match {want!r}, expected 1")
 print(found[0]["udid"], found[0]["state"])
 ') || fail "could not find the simulator to record on"
-[ "$STATE" = "Booted" ] || fail "simulator $UDID is $STATE; boot it first"
 
 # The limits the README asks for, and the GIF's width in pixels.
 MAX_SECONDS=15
@@ -88,11 +90,12 @@ TARGET="$REPO_ROOT/docs/readme/demo.gif"
 # The walk. `shot:start` is Needs You once the session's second poll has added its second
 # blocked pane, `schema sync`, so the GIF does not open on the list growing. `shot:end` is the
 # chat once it says the agent is working again. The sleeps after each shot keep the GIF's
-# holds clear of the next step.
+# holds clear of the next step. Approve is a held press, not a tap, so the GIF shows the
+# chip pressed for a few frames before it sends.
 STEPS='tap:hosts.row,wait:session.blockedPane|schema sync,sleep:1,shot:start,sleep:2'
 STEPS+=',tap:session.blockedPane|needs a decision'
-STEPS+=',wait:pane.chat.turn.pending.chip.Approve,sleep:1.5'
-STEPS+=',tap:pane.chat.turn.pending.chip.Approve'
+STEPS+=',wait:pane.chat.turn.pending.chip.Approve,sleep:0.5'
+STEPS+=',press:pane.chat.turn.pending.chip.Approve:0.4'
 STEPS+=',wait:pane.chat.activity|working,sleep:1,shot:end,sleep:3'
 ARGS='-uiTestingConnected -uiTestingDemoTranscript -uiTestingApproveContinues'
 
@@ -109,6 +112,12 @@ cleanup() {
   xcrun simctl status_bar "$UDID" clear >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
+
+# A warm boot brings the attention reports back; see scripts/screenshots.sh. `-b` returns
+# once the boot has finished, and the status bar override needs a booted device.
+note "booting $UDID again"
+xcrun simctl shutdown "$UDID" 2>/dev/null || true
+xcrun simctl bootstatus "$UDID" -b >/dev/null || fail "simulator $UDID did not boot"
 
 # The same form scripts/screenshots.sh uses; see `tour_time` there.
 OFFSET="$(/bin/date -j -f '%Y-%m-%d %H:%M:%S' '2007-01-09 09:41:00' '+%z')"

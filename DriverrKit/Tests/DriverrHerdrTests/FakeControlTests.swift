@@ -464,6 +464,32 @@ struct FakeControlTests {
     #expect(try await control.snapshot().pane(id: "w1:p3") == nil)
   }
 
+  @Test(
+    "a delayed after-send tree moves only after its delay, and signals the change",
+    .timeLimit(.minutes(1)))
+  func treeAfterSendWaitsAndSignals() async throws {
+    let after = FakeControl.treeWithIdleAgent
+    let control = FakeControl(
+      script: FakeControl.blockingScript, treeAfterSend: after,
+      treeAfterSendDelay: .milliseconds(200))
+    let changes = try #require(control.changes)
+    _ = try await control.snapshot()
+
+    try await control.sendKeys(paneID: "w1:p2", keys: [.enter])
+    // Still the script straight after the send: the agent has not started yet.
+    #expect(try await control.snapshot() == FakeControl.blockingScript[1])
+
+    var listener = changes.makeAsyncIterator()
+    #expect(await listener.next() != nil, "the move is signalled")
+    #expect(try await control.snapshot() == after)
+  }
+
+  @Test("a fake with no after-send tree signals nothing, so it is polled as before")
+  func noAfterSendTreeHasNoChanges() {
+    #expect(FakeControl(script: FakeControl.blockingScript).changes == nil)
+    #expect(FakeControl().changes == nil)
+  }
+
   @Test("the tour after Approve has its chat's agent working and the other pane still blocked")
   func storeTourTreeAfterApprove() {
     let before = FakeControl.storeTourScript[FakeControl.storeTourScript.count - 1]

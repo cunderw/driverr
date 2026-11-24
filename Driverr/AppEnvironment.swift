@@ -576,12 +576,14 @@ struct AppEnvironment {
   }
 
   /// The herdr fake this launch uses, held here so the transcript runner can see what was
-  /// sent. Its first send moves `w1:p2` to working, so the tree and the transcript both turn
-  /// on that one fact and cannot disagree. One instance for every host, never reset, as with
-  /// `firstMessageControl`.
+  /// sent. A second after its first send, `w1:p2` is working, and the fake signals the change
+  /// so the chat shows it then and not on the next poll. The second keeps the chat's
+  /// `Approved` notice on screen long enough to read. One instance for every host, never
+  /// reset, as with `firstMessageControl`.
   static let approveContinuesControl = FakeControl(
     script: FakeControl.storeTourScript,
-    treeAfterSend: FakeControl.storeTourTreeAfterApprove)
+    treeAfterSend: FakeControl.storeTourTreeAfterApprove,
+    treeAfterSendDelay: .seconds(1))
 
   /// Serves the tour's conversation until a reply goes over, then the one where the edit ran.
   private static var approveContinuesRunner: CommandRunner {

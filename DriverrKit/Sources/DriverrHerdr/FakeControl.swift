@@ -54,6 +54,12 @@ public actor FakeControl: HerdrControl {
   /// The tree after the first accepted steering send, which stops the script: an agent that
   /// carries on once it is answered. `nil` leaves the tree alone, as every other fake does.
   private let treeAfterSend: SessionTree?
+  /// How long after that send the tree moves, as an agent takes a moment to start again.
+  private let treeAfterSendDelay: Duration
+  /// Tells the listening session when the tree has moved after a send, so the change shows
+  /// at once and not on the next poll. Only a fake with `treeAfterSend` has one, so every
+  /// other fake reports `changes` as `nil` and is polled alone, as before.
+  private nonisolated let afterSendSignal: AfterSendSignal?
 
   /// Builds an upload from a pane id, the bytes and the file name.
   public typealias ImageUploads =
@@ -95,6 +101,8 @@ public actor FakeControl: HerdrControl {
     self.imageUploads = imageUploads
     self.modeCycle = modeCycle
     treeAfterSend = nil
+    treeAfterSendDelay = .zero
+    afterSendSignal = nil
   }
 
   /// A session that changes as it is polled, for exercising live updates.
@@ -104,11 +112,13 @@ public actor FakeControl: HerdrControl {
   ///     any change the fake makes to its own tree does.
   ///   - agentStart: how a start answers. See `AgentStartBehaviour`.
   ///   - treeAfterSend: the tree from the first accepted send on, in place of the script.
+  ///   - treeAfterSendDelay: how long after that send the tree moves.
   public init(
     script: [SessionTree], canStartAgent: Bool = false,
     agentStart: AgentStartBehaviour = .starts(after: .zero),
     modeCycle: [PaneScreen]? = nil,
-    treeAfterSend: SessionTree? = nil
+    treeAfterSend: SessionTree? = nil,
+    treeAfterSendDelay: Duration = .zero
   ) {
     self.script = script
     tree = script.first ?? .empty
@@ -125,7 +135,13 @@ public actor FakeControl: HerdrControl {
     imageUploads = nil
     self.modeCycle = modeCycle
     self.treeAfterSend = treeAfterSend
+    self.treeAfterSendDelay = treeAfterSendDelay
+    afterSendSignal = treeAfterSend == nil ? nil : AfterSendSignal()
   }
+
+  /// A signal when the tree moves after a send, for a fake with `treeAfterSend`; `nil`
+  /// otherwise. Polling goes on either way, because `needsPolling` stays `true`.
+  public nonisolated var changes: AsyncStream<Void>? { afterSendSignal?.listen() }
 
   /// A fake that fails, for exercising the error surfaces without a broken host.
   public static func failing(_ error: AppError) -> FakeControl {
@@ -245,13 +261,26 @@ public actor FakeControl: HerdrControl {
   /// cannot undo an action taken since.
   private var hasMovedOnAfterSend = false
 
-  /// Moves the tree to `treeAfterSend` on the first send that was not refused.
+  /// Moves the tree to `treeAfterSend` on the first send that was not refused, after
+  /// `treeAfterSendDelay`, and signals `changes`.
   private func moveOnAfterSend() {
     guard let treeAfterSend, !hasMovedOnAfterSend else { return }
     hasMovedOnAfterSend = true
-    tree = treeAfterSend
+    guard treeAfterSendDelay > .zero else {
+      moveOn(to: treeAfterSend)
+      return
+    }
+    Task { [treeAfterSendDelay] in
+      try? await Task.sleep(for: treeAfterSendDelay)
+      moveOn(to: treeAfterSend)
+    }
+  }
+
+  private func moveOn(to tree: SessionTree) {
+    self.tree = tree
     // Stop the script, as in `perform`.
     scriptOverridden = true
+    afterSendSignal?.fire()
   }
 
   public func sendText(paneID: String, text: String) async throws {
@@ -1388,5 +1417,26 @@ public actor FakeControl: HerdrControl {
   ///
   /// Not a failure: the sidebar renders its own empty view.
   public static let emptyTree = SessionTree.empty
+}
+/// The one listener's stream of "the tree moved after a send". A stream per listen, newest
+/// listener wins, because a stream ends for good with the task reading it. The same shape as
+/// `DriverrHC`'s `CoreChangeSignal`. A lock, because `changes` is not async.
+private final class AfterSendSignal: @unchecked Sendable {
+  private let lock = NSLock()
+  private var listener: AsyncStream<Void>.Continuation?
+
+  func listen() -> AsyncStream<Void> {
+    let (stream, continuation) = AsyncStream.makeStream(
+      of: Void.self, bufferingPolicy: .bufferingNewest(1))
+    lock.withLock {
+      listener?.finish()
+      listener = continuation
+    }
+    return stream
+  }
+
+  func fire() {
+    lock.withLock { _ = listener?.yield() }
+  }
 }
 #endif
