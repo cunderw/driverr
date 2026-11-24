@@ -90,7 +90,7 @@ public struct PaneComposerState: Equatable, Sendable {
   /// on the next evidence. A Shift-Tab is a mode change, never a reply. The mode button is
   /// off while the pane is blocked, so only a race could send one to a blocked pane.
   public var answeredBlockedAgent: Bool {
-    false
+    phase == .sent && sentAgainst?.status == .blocked && sentKey != .backTab
   }
 
   /// Whether a picked image or file may be staged. An attachment's hand-off types its path

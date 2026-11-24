@@ -59,6 +59,9 @@ final class PaneComposerModel: Identifiable {
 
   var isSending: Bool { state.isSending }
   var canSend: Bool { state.canSend }
+  /// See `PaneComposerState.answeredBlockedAgent`. True right after a reply herdr took while
+  /// the pane was blocked, until the `Sent` notice retires.
+  var answeredBlockedAgent: Bool { state.answeredBlockedAgent }
   /// See `PaneComposerState.canAttach`.
   var canAttach: Bool { state.canAttach }
   var failure: AppError? { state.failure }

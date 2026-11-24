@@ -2,6 +2,7 @@ import DriverrCore
 import DriverrHerdr
 import DriverrTerm
 import PhotosUI
+import StoreKit
 import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
@@ -119,6 +120,8 @@ struct ContentView: View {
   /// the split view's root, because its columns get their own traits. See
   /// `TerminalSceneRoute`.
   @Environment(\.horizontalSizeClass) private var sizeClass
+  /// The system's App Store rating request. Called only from `deliverReviewRequest(in:)`.
+  @Environment(\.requestReview) private var requestReview
 
   @State private var model: HostListModel?
   @State private var isShowingKeys = false
@@ -177,6 +180,13 @@ struct ContentView: View {
   /// What the Photos picker last handed back. Cleared as soon as the change handler has it,
   /// so picking the same photo twice is still a change.
   @State private var pickedImageItem: PhotosPickerItem?
+
+  /// When to ask for an App Store rating. See `deliverReviewRequest(in:)`.
+  @State private var reviewPrompt = ReviewPromptModel(
+    suiteName: nil,
+    arguments: ProcessInfo.processInfo.arguments,
+    appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+  )
 
   /// The sidebar's width, scaled by the reader's text size.
   ///
@@ -374,6 +384,8 @@ struct ContentView: View {
       case .active:
         backgroundAssertion.end()
         Task { await connections.probeConnections() }
+        // A request that came due while the app was away waits for this.
+        deliverReviewRequest(in: phase)
       case .background:
         backgroundAssertion.begin()
         // The assertion buys under 30 seconds; this requests a check in fifteen minutes. Also
@@ -382,6 +394,9 @@ struct ContentView: View {
       default:
         break
       }
+    }
+    .onChange(of: reviewPrompt.isRequestPending) { _, _ in
+      deliverReviewRequest(in: scenePhase)
     }
     // Persist the selection here, not at each setter, so no route can skip it.
     .onChange(of: selectedHostID) { _, id in
@@ -458,6 +473,11 @@ struct ContentView: View {
             observations, scope: .everyConnectedHost, canRequest: canRequest)
         }
       }
+      // Every host's replies count toward one rating rule. The instance is captured, not
+      // `self`: a closure capturing this `View` to reach its `@State` would act on a stale
+      // copy.
+      let reviewPrompt = reviewPrompt
+      connections.onReplyReachedBlockedAgent = { reviewPrompt.replyReachedBlockedAgent() }
       // One pass on launch, before anything connects. A card outlives its process, so a build
       // killed while connected leaves one standing. With no models yet, the reconciler ends it.
       connections.pushLiveActivityObservations()
@@ -919,6 +939,18 @@ struct ContentView: View {
       return
     }
     selectedHostID = id
+  }
+
+  /// Asks the system for an App Store rating, when the rule has one waiting and the app is in
+  /// front. The system decides whether a sheet shows.
+  ///
+  /// At the root, not on the pane screen: the reset alert's Continue can succeed with no pane
+  /// screen up. A UI-test launch never gets here, because
+  /// `ReviewPromptModel` never marks a request pending under a `-uiTesting*` argument.
+  private func deliverReviewRequest(in phase: ScenePhase) {
+    guard reviewPrompt.isRequestPending, phase == .active else { return }
+    requestReview()
+    reviewPrompt.requestDelivered()
   }
 
   /// Records the chosen host, or forgets it when there is none.

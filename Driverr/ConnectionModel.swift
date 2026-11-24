@@ -29,6 +29,11 @@ final class ConnectionModel {
   /// `onLoss`, because what follows is work, and an observed property is for a view to read.
   @ObservationIgnored var onLiveActivityInputChanged: (@MainActor () -> Void)?
 
+  /// Told after each reply herdr took while the pane was blocked, for the App Store rating
+  /// rule. Set by `ConnectionRegistry`, like `onLiveActivityInputChanged`. A background pass
+  /// builds its connection outside the registry, so its sends never count.
+  @ObservationIgnored var onReplyReachedBlockedAgent: (@MainActor () -> Void)?
+
   /// The cores of the other hosts Driverr holds a link to. Set by `ConnectionRegistry`, like
   /// `isAppActive`. A connection the registry does not hold covers nothing with anything.
   @ObservationIgnored var coveringCoreIDs: @MainActor () -> Set<String> = { [] }
@@ -658,6 +663,9 @@ final class ConnectionModel {
             // new `transcripts`.
             onSent: { [weak self] paneID, attempt in
               guard let self else { return }
+              // Read first: the re-reads below can retire the `Sent` notice it is read from.
+              let answeredBlockedAgent =
+                composers?.existingModel(for: paneID)?.answeredBlockedAgent == true
               // Only text is echoed. An Esc or a key press is not a turn, but both still
               // warrant a re-read.
               let typed: String? = if case .text(let text) = attempt { text } else { nil }
@@ -670,6 +678,7 @@ final class ConnectionModel {
               } else {
                 screen?.refresh()
               }
+              if answeredBlockedAgent { onReplyReachedBlockedAgent?() }
             }
           )
         }

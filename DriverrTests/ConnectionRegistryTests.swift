@@ -248,4 +248,29 @@ struct ConnectionRegistryTests {
       "a host added again under the same id would resume a stranger's connection"
     )
   }
+
+  // MARK: - The App Store rating rule's input
+
+  /// The path from a composer to `ContentView`'s rating model: the composer's `onSent`, the
+  /// connection's hook, then the registry's. A reply to a pane that is not blocked is not a
+  /// reply to a waiting agent and does not reach it.
+  @Test("a reply to a blocked pane reaches the registry's rating hook, and other replies do not")
+  func aReplyToABlockedPaneReachesTheRatingHook() async throws {
+    let registry = ConnectionRegistry()
+    var replies = 0
+    registry.onReplyReachedBlockedAgent = { replies += 1 }
+    let model = registry.model(for: workbox, environment: environment())
+    await model.connect(password: "hunter2", persistence: .promptEveryTime)
+    await model.session?.refresh()
+    let tree = try #require(model.session?.reportedTree)
+    let blocked = try #require(tree.blockedPanes.first)
+    let working = try #require(tree.allPanes.first { $0.agent?.status == .working })
+    let composers = try #require(model.composers)
+
+    await composers.model(for: working).send(.enter)
+    #expect(replies == 0)
+
+    await composers.model(for: blocked).send(.enter)
+    #expect(replies == 1)
+  }
 }

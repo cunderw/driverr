@@ -593,6 +593,24 @@ struct PaneComposerModelTests {
     #expect(announced == 0)
   }
 
+  /// What the connection reads in `onSent` for the App Store rating rule. Read inside the
+  /// callback, as the connection does, because the next evidence retires it.
+  @Test("a reply herdr took for a blocked pane says so to onSent, and a failed one is not sent")
+  func aReplyToABlockedPaneIsVisibleInOnSent() async {
+    var seen: [Bool] = []
+    var model: PaneComposerModel?
+    model = composer(
+      FakeControl(), onSent: { _, _ in seen.append(model?.answeredBlockedAgent == true) })
+    await model?.send(.enter)
+    #expect(seen == [true])
+
+    let control = FakeControl()
+    await control.failNextSends(1, with: .herdrCommandFailed(reason: "no such pane"))
+    let failing = composer(control)
+    await failing.send(.enter)
+    #expect(!failing.answeredBlockedAgent)
+  }
+
   // MARK: - A send that never comes back
 
   /// A stalled send needs a deadline. Otherwise the bar sits on `Sending…` with every key

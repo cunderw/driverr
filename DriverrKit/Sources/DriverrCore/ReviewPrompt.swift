@@ -41,6 +41,12 @@ public enum ReviewPrompt {
     appVersion: String?,
     arguments: [String]
   ) -> Bool {
-    false
+    guard !isUITestLaunch(arguments) else { return false }
+    ledger.replies += 1
+    guard let appVersion, ledger.replies >= repliesBeforePrompt,
+      ledger.lastPromptedVersion != appVersion
+    else { return false }
+    ledger.lastPromptedVersion = appVersion
+    return true
   }
 }
