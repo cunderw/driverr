@@ -417,7 +417,8 @@ public enum PaneComposerCopy {
   ///
   /// Typed text and Enter get `sent`, because Enter answers what was on screen. Esc and
   /// Ctrl-C have their own meaning, and "waiting for the agent" over a Ctrl-C reads as a
-  /// reply. Ctrl-C says what it did.
+  /// reply. Ctrl-C says what it did. Approve and Deny send `y` and `n`, and a lone letter
+  /// reads as cut-off text, so each names the choice.
   public static func sentVerdict(for key: PaneKey?) -> String {
     guard let key else { return sent }
     switch key {
@@ -426,7 +427,11 @@ public enum PaneComposerCopy {
       return sent
     case .interrupt:
       return "Sent Ctrl-C · Claude was interrupted"
-    case .esc, .up, .down, .left, .right, .tab, .backTab, .yes, .no:
+    case .yes:
+      return "Approved"
+    case .no:
+      return "Denied"
+    case .esc, .up, .down, .left, .right, .tab, .backTab:
       return "Sent \(key.label)"
     }
   }
