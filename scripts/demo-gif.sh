@@ -134,7 +134,7 @@ stop_recorder
 # How like each shot every frame of the movie is, at $FPS frames a second. Small and grey,
 # because only the screen's layout has to match: a spinner's turn must not count.
 for which in start end; do
-  shot="$(ls "$SHOTS"/*-"$which".png 2>/dev/null | head -n 1)"
+  shot="$(ls "$SHOTS"/*-"$which".png 2>/dev/null | head -n 1 || true)"
   [ -n "$shot" ] || fail "look.sh wrote no '$which' shot; read $SHOTS"
   ffmpeg -v error -i "$MOV" -i "$shot" -lavfi \
     "[0]fps=$FPS,scale=160:-1,format=gray[a];[1]scale=160:-1,format=gray[b];[a][b]ssim=stats_file=$WORK/ssim-$which.txt" \
