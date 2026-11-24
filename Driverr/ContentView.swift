@@ -363,6 +363,8 @@ struct ContentView: View {
     )
     // And its Files picker. See `ComposerFileImporter`.
     .modifier(ComposerFileImporter(presenter: terminalPresenter))
+    // The App Store rating request. See `ReviewRequestDelivery`.
+    .modifier(ReviewRequestDelivery(connections: connections))
     // Returning to the foreground is when Driverr learns what backgrounding cost: a link that
     // died while suspended announced nothing. Nothing is torn down on the way out, because a
     // short suspension usually leaves the connection alive.

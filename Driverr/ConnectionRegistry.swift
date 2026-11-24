@@ -82,6 +82,9 @@ final class ConnectionRegistry {
     }
     // One card covers every host, so any change on this host triggers a pass over all of them.
     model.onLiveActivityInputChanged = { [weak self] in self?.hostChanged() }
+    // Read when it fires, so a closure `ReviewRequestDelivery` sets later still reaches every
+    // host.
+    model.onReplyReachedBlockedAgent = { [weak self] in self?.onReplyReachedBlockedAgent?() }
     models[host.id] = model
     pushLiveActivityObservations()
     return model
@@ -145,6 +148,10 @@ final class ConnectionRegistry {
   /// The second argument is `isAppActive`, passed so the far end need not hold the registry.
   @ObservationIgnored var onLiveActivityInputChanged:
     (@MainActor ([HostActivityObservation], Bool) -> Void)?
+
+  /// Told after a reply on any host reached a blocked agent, for the App Store rating rule.
+  /// Set by `ReviewRequestDelivery`, which owns the rule's model and the `requestReview` action.
+  @ObservationIgnored var onReplyReachedBlockedAgent: (@MainActor () -> Void)?
 
   /// Every host this registry holds a model for, as the card's input.
   ///
