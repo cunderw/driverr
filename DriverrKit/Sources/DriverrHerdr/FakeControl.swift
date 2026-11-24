@@ -262,7 +262,9 @@ public actor FakeControl: HerdrControl {
   private var hasMovedOnAfterSend = false
 
   /// Moves the tree to `treeAfterSend` on the first send that was not refused, after
-  /// `treeAfterSendDelay`, and signals `changes`.
+  /// `treeAfterSendDelay`, and signals `changes`. `hasMovedOnAfterSend` is set before the
+  /// delay, so an action taken inside the delay (a `perform`) is overwritten when the move
+  /// lands.
   private func moveOnAfterSend() {
     guard let treeAfterSend, !hasMovedOnAfterSend else { return }
     hasMovedOnAfterSend = true
@@ -1418,6 +1420,7 @@ public actor FakeControl: HerdrControl {
   /// Not a failure: the sidebar renders its own empty view.
   public static let emptyTree = SessionTree.empty
 }
+
 /// The one listener's stream of "the tree moved after a send". A stream per listen, newest
 /// listener wins, because a stream ends for good with the task reading it. The same shape as
 /// `DriverrHC`'s `CoreChangeSignal`. A lock, because `changes` is not async.

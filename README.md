@@ -1,6 +1,6 @@
 # Driverr
 
-<img src="docs/readme/demo.gif" align="right" width="300" alt="Driverr on an iPhone. The host screen lists two blocked agents under Needs You. A tap on one opens its chat, where the agent waits for permission to edit session.rs. A tap on Approve sends the answer, and the chat then says Claude is working">
+<img src="docs/readme/demo.gif" align="right" width="300" hspace="16" alt="Driverr on an iPhone. The host screen lists two blocked agents under Needs You. A tap on one opens its chat, where the agent waits for permission to edit session.rs. A tap on Approve sends the answer, and the chat then says Claude is working">
 
 A free, native iOS and iPadOS SSH client built around
 [herdr](https://github.com/herdrdev/herdr) and [tmux](https://github.com/tmux/tmux), the
