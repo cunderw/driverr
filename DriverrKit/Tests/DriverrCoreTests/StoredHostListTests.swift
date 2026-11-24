@@ -5,8 +5,8 @@ import Testing
 
 @Suite("StoredHostList")
 struct StoredHostListTests {
-  private func host(_ name: String) -> Host {
-    Host(name: name, hostname: "10.1.0.9", username: "carson")
+  private func host(_ name: String) -> DriverrCore.Host {
+    DriverrCore.Host(name: name, hostname: "10.1.0.9", username: "carson")
   }
 
   /// One stored element as JSON text, with `authMethod` as raw JSON.
@@ -135,7 +135,10 @@ struct StoredHostListTests {
 
   @Test("with nothing unreadable the bytes are JSONEncoder's for [Host]")
   func roundTripMatchesEncoder() throws {
-    let hosts = [host("one"), Host(name: "two", hostname: "h", username: "u", authMethod: .none)]
+    let hosts = [
+      host("one"),
+      DriverrCore.Host(name: "two", hostname: "h", username: "u", authMethod: .none),
+    ]
     let data = try JSONEncoder().encode(hosts)
 
     let list = StoredHostList(data: data)
