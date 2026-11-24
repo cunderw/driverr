@@ -26,10 +26,18 @@ struct CoreAppDocument: Decodable, Equatable, Sendable {
 
     let children: [Node]?
     let content: Content?
+    /// The name the app's `pane.rename` gave this pane. The app leaves it out when the pane has
+    /// none. Only a leaf's is read, because a split names no terminal.
+    let title: String?
 
     /// The terminals under this node, depth first.
     var terminals: [String] {
       [content?.terminal].compactMap { $0 } + (children ?? []).flatMap(\.terminals)
+    }
+
+    /// Each leaf's terminal with its title, depth first.
+    var terminalTitles: [(terminal: String, title: String?)] {
+      (content?.terminal.map { [($0, title)] } ?? []) + (children ?? []).flatMap(\.terminalTitles)
     }
   }
 
@@ -43,6 +51,8 @@ struct CoreAppDocument: Decodable, Equatable, Sendable {
     private(set) var tabRanks: [String: Int] = [:]
     private(set) var terminalRanks: [String: Int] = [:]
     private(set) var names: [String: String] = [:]
+    /// The name the app gave each terminal's pane, by terminal address.
+    private(set) var terminalNames: [String: String] = [:]
 
     init(_ document: CoreAppDocument?) {
       for space in document?.spaces ?? [] {
@@ -51,6 +61,11 @@ struct CoreAppDocument: Decodable, Equatable, Sendable {
           Self.note(tab.id, name: tab.name, in: &tabRanks, names: &names)
           for terminal in tab.root?.terminals ?? [] where terminalRanks[terminal] == nil {
             terminalRanks[terminal] = terminalRanks.count
+          }
+          for (terminal, title) in tab.root?.terminalTitles ?? []
+          where terminalNames[terminal] == nil {
+            let name = title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if !name.isEmpty { terminalNames[terminal] = name }
           }
         }
       }

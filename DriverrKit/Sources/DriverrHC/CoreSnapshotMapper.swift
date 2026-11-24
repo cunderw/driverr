@@ -76,7 +76,7 @@ enum CoreSnapshotMapper {
       guard let key = space.key else {
         return flatWorkspace(
           space.terminals, on: machine, coreID: coreID, prefix: prefix, number: offset + 1,
-          sessions: sessions)
+          index: index, sessions: sessions)
       }
       let id = prefix + key
       let tabs = ordered(grouped(space.terminals) { label("herdr.tab", of: $0) }) { tab in
@@ -107,12 +107,15 @@ enum CoreSnapshotMapper {
     coreID: String?,
     prefix: String,
     number: Int,
+    index: Index,
     sessions: [String: String]
   ) -> Workspace {
     let workspaceID = prefix + "workspace"
     let tabID = prefix + "tab"
     let panes = terminals.map {
-      pane(of: $0, tabID: tabID, workspaceID: workspaceID, sessions: sessions)
+      pane(
+        of: $0, named: index.terminalNames[$0.address], tabID: tabID, workspaceID: workspaceID,
+        sessions: sessions)
     }
     return Workspace(
       id: workspaceID,
@@ -145,7 +148,11 @@ enum CoreSnapshotMapper {
   ) -> Tab {
     let id = prefix + (tab.key ?? space + ".tab")
     let panes = ordered(tab.terminals) { index.terminalRanks[$0.address] }
-      .map { pane(of: $0, tabID: id, workspaceID: workspaceID, sessions: sessions) }
+      .map {
+        pane(
+          of: $0, named: index.terminalNames[$0.address], tabID: id, workspaceID: workspaceID,
+          sessions: sessions)
+      }
     let name = tab.key.flatMap { index.names[$0] } ?? place(among: tab.terminals, \.tab)
     // The app numbers an unnamed tab, as herdr does.
     let isAutoNamed = name?.allSatisfy(\.isWholeNumber) ?? true
@@ -162,6 +169,7 @@ enum CoreSnapshotMapper {
 
   private static func pane(
     of terminal: CoreTerminal,
+    named name: String?,
     tabID: String,
     workspaceID: String,
     sessions: [String: String]
@@ -170,7 +178,7 @@ enum CoreSnapshotMapper {
       id: CorePaneID.id(forAddress: terminal.address),
       tabID: tabID,
       workspaceID: workspaceID,
-      title: title(of: terminal),
+      title: title(of: terminal, named: name),
       agent: agent(of: terminal, sessions: sessions),
       terminalID: terminal.address,
       directory: directory(of: terminal),
@@ -303,10 +311,13 @@ enum CoreSnapshotMapper {
       .map(\.element)
   }
 
-  /// A name the user gave, the terminal's own title, then what is running in it. `title` is
-  /// usually `""`, so an empty string falls through like an absent one.
-  private static func title(of terminal: CoreTerminal) -> String {
+  /// The name the desktop app gave the pane, a name the terminal was given, the terminal's own
+  /// title, then what is running in it. `title` is usually `""`, so an empty string falls
+  /// through like an absent one. `name` comes from the app's document, so a terminal on a
+  /// machine the core added has none.
+  private static func title(of terminal: CoreTerminal, named name: String?) -> String {
     let candidates = [
+      name,
       terminal.name,
       terminal.title,
       terminal.foreground?.argv?.first.map(commandName),
