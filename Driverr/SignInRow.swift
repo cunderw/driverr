@@ -50,9 +50,14 @@ struct SignInRow: View {
           .accessibilityIdentifier(identifiers.url)
       }
       Spacer(minLength: 0)
-      Button("Open") { openURL(url) }
-        .buttonStyle(.bordered)
-        .accessibilityIdentifier(identifiers.open)
+      // The label, not the tint: accent text on the tinted fill measured 2.61:1 in light.
+      Button {
+        openURL(url)
+      } label: {
+        BorderedButtonLabel("Open")
+      }
+      .buttonStyle(.bordered)
+      .accessibilityIdentifier(identifiers.open)
     }
   }
 }
