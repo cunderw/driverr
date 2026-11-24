@@ -82,7 +82,8 @@ final class ConnectionRegistry {
     }
     // One card covers every host, so any change on this host triggers a pass over all of them.
     model.onLiveActivityInputChanged = { [weak self] in self?.hostChanged() }
-    // Read when it fires, so a closure `ContentView` sets later still reaches every host.
+    // Read when it fires, so a closure `ReviewRequestDelivery` sets later still reaches every
+    // host.
     model.onReplyReachedBlockedAgent = { [weak self] in self?.onReplyReachedBlockedAgent?() }
     models[host.id] = model
     pushLiveActivityObservations()

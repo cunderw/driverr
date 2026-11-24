@@ -49,13 +49,13 @@ struct ReviewRequestDelivery: ViewModifier {
 /// Keeps the App Store rating rule's ledger in `UserDefaults`, and says when a request waits.
 ///
 /// The rule is `DriverrCore.ReviewPrompt`. This object only persists its ledger and holds the
-/// answer until `ContentView` can call the system's `requestReview`. The pending request is
-/// in memory only: an app that dies before it is delivered skips that version's request,
-/// because the version is already recorded.
+/// answer until `ReviewRequestDelivery` can call the system's `requestReview`. The pending
+/// request is in memory only: an app that dies before it is delivered skips that version's
+/// request, because the version is already recorded.
 @MainActor
 @Observable
 final class ReviewPromptModel {
-  /// A rating request waits for `ContentView` to deliver it.
+  /// A rating request waits for `ReviewRequestDelivery` to deliver it.
   private(set) var isRequestPending = false
 
   @ObservationIgnored private let defaults: UserDefaults

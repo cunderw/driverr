@@ -251,9 +251,9 @@ struct ConnectionRegistryTests {
 
   // MARK: - The App Store rating rule's input
 
-  /// The path from a composer to `ContentView`'s rating model: the composer's `onSent`, the
-  /// connection's hook, then the registry's. A reply to a pane that is not blocked is not a
-  /// reply to a waiting agent and does not reach it.
+  /// The path from a composer to `ReviewRequestDelivery`'s rating model: the composer's
+  /// `onSent`, the connection's hook, then the registry's. A reply to a pane that is not
+  /// blocked is not a reply to a waiting agent and does not reach it.
   @Test("a reply to a blocked pane reaches the registry's rating hook, and other replies do not")
   func aReplyToABlockedPaneReachesTheRatingHook() async throws {
     let registry = ConnectionRegistry()
