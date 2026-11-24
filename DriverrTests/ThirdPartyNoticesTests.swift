@@ -6,8 +6,8 @@ import Testing
 ///
 /// The file is at the repository root, outside every folder-synced group. One file entry in
 /// `project.xcproj`, with target membership `Driverr/resources`, puts it in the app's
-/// resources, and a project edit that drops it leaves the build green. The kit tier cannot see a built product.
-/// `DriverrTests` is app-hosted, so `Bundle.main` here is the Driverr app.
+/// resources, and a project edit that drops it leaves the build green. The kit tier cannot
+/// see a built product. `DriverrTests` is app-hosted, so `Bundle.main` here is the Driverr app.
 ///
 /// The app does not show the file. This checks only that it ships.
 @Suite("Third-party notices")

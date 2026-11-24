@@ -117,8 +117,9 @@ This file holds the rules and traps on top of that.
   (`"kind": "folder"`) are folder-synced groups, so a new file needs no project edit. A new
   target or package product dependency needs a direct `project.xcproj` edit and a build.
   Do not add a generate step or `ci_scripts/`.
-  - Keep comments out of it. A write through Xcode or `xcrun xcodeproj` rewrites the file
-    and deletes every comment, so the rationale lives here.
+  - Keep comments out of it. A write through `xcrun xcodeproj` rewrote the file and deleted
+    every comment, and a write by Xcode itself is expected to do the same, so the rationale
+    lives here.
   - The `Driverr` and `DriverrWatch` folders exclude their `Info.plist`. It is read through
     `INFOPLIST_FILE` and `GENERATE_INFOPLIST_FILE`, and a copy as a bundle resource
     collides with the generated `Info.plist` at the same output path.
