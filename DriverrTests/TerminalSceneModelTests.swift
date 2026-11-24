@@ -4406,6 +4406,36 @@ extension TerminalSceneModelTests {
     #expect(scene.notice == .disconnected)
   }
 
+  /// Showing the terminal during the hold opens the pane on a connection that is still
+  /// signing in. That open fails, and recorded as the host's failure it wrote `.failed` over
+  /// `.connecting`. `cancelConnect` then found nothing to cancel, and the hold ran on.
+  @Test("an open that fails during a held sign-in leaves the stop able to end it")
+  func anOpenDuringTheHoldLeavesTheStopWorking() async {
+    let (scene, model, supply) = await makeReconnectingScene(wait: { _ in })
+    scene.start()
+    await scene.settle()
+    supply.holdsNewTransportsForSignIn = true
+    await dropLink(scene, supply)
+    await waitUntil("the reconnect never showed the sign-in URL") { model.signInURL != nil }
+    let target = TerminalTarget.pane(id: "w1:p1")
+
+    // To the chat and back, as a reader toggles. The chat opens nothing that can fail aloud,
+    // so the notice is the terminal's open.
+    scene.show(.chat)
+    scene.show(.terminal)
+    await waitUntil("the terminal's open never finished") { scene.notices[target] != nil }
+    #expect(model.phase == .connecting, "the failed open was recorded as \(model.phase)")
+
+    await scene.stopReconnecting()
+
+    #expect(model.phase == .idle, "the stop left the connection at \(model.phase)")
+    #expect(model.signInURL == nil, "the stop left the held attempt running")
+    #expect(scene.notice == .disconnected)
+    // Ends a hold the stop could not reach, so `settle()` returns either way.
+    await model.disconnect()
+    await scene.settle()
+  }
+
   /// The host ends the sign-in by closing the connection. The URL goes with it, and the
   /// schedule carries on as for any failed attempt.
   @Test("a close during the sign-in clears the URL and the schedule continues")

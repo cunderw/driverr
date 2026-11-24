@@ -118,7 +118,9 @@ final class TerminalSceneModel {
   /// `TerminalSettings.panesOpenOn`. A closure, so a change reaches a scene already up, and
   /// given at init, so a pane never draws one surface for a frame and then flips.
   private let firstSurface: @MainActor () -> PaneSurface
-  private var notices: [TerminalTarget: Notice] = [:]
+  /// What the scene has to say about each target. Readable so `TerminalSceneModelTests` can
+  /// wait for an open that failed under a connection notice, which `notice` hides.
+  private(set) var notices: [TerminalTarget: Notice] = [:]
   /// How many times each target's stream has ended with no `terminal.closed` record and
   /// been reattached with no frame painted since. `TerminalEndDisposition` bounds the
   /// reattach with it.
