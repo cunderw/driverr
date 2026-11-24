@@ -4307,6 +4307,204 @@ struct TerminalSceneModelTests {
   }
 }
 
+// MARK: - A reconnect that meets a sign-in
+
+/// A host that holds the reconnect for a sign-in on the web, as Tailscale SSH's check mode
+/// does (#175). The model's side is `SignInConnectTests`; this is what the scene does with it.
+///
+/// No test here calls `settle()` while a hold is live, because `settle()` waits on the parked
+/// reconnect. Every test ends the hold itself, because `close()` does not cancel the model's
+/// connect.
+extension TerminalSceneModelTests {
+  @Test("a reconnect that meets a sign-in shows its URL and keeps reconnecting")
+  func aReconnectThatMeetsASignInShowsItsURL() async {
+    let (scene, model, supply) = await makeReconnectingScene(wait: { _ in })
+    scene.start()
+    await scene.settle()
+    supply.holdsNewTransportsForSignIn = true
+
+    await dropLink(scene, supply)
+    await waitUntil("the reconnect never showed the sign-in URL") { model.signInURL != nil }
+
+    #expect(scene.notice == .reconnecting)
+    #expect(model.signInURL?.absoluteString == "https://login.tailscale.com/a/1a2b3c4d5e6f")
+
+    // Closed first, so no further attempt starts, then the held one ended.
+    scene.close()
+    await model.cancelConnect()
+    await scene.settle()
+  }
+
+  /// Cancelling the model's connect alone is not a stop: the schedule tries again a step
+  /// later, and the user is back on the same sign-in.
+  @Test("stopping a reconnect held for a sign-in ends it and the schedule")
+  func stoppingAHeldReconnectEndsTheSchedule() async {
+    let (scene, model, supply) = await makeReconnectingScene(wait: { _ in })
+    scene.start()
+    await scene.settle()
+    supply.holdsNewTransportsForSignIn = true
+    await dropLink(scene, supply)
+    await waitUntil("the reconnect never showed the sign-in URL") { model.signInURL != nil }
+    // Any later attempt is refused at once, so a schedule that carries on runs out rather
+    // than parking on another hold.
+    supply.holdsNewTransportsForSignIn = false
+    supply.isAccepting = false
+    let issued = supply.attempts
+
+    await scene.stopReconnecting()
+
+    #expect(scene.notice == .disconnected, "the banner still says \(String(describing: scene.notice))")
+    #expect(model.signInURL == nil)
+    #expect(model.phase == .idle)
+    await scene.settle()
+    #expect(supply.attempts == issued, "the schedule went on after the stop")
+    #expect(scene.notice == .disconnected)
+  }
+
+  @Test("the Reconnect after a stopped sign-in starts a new attempt")
+  func reconnectingAfterAStopStartsAgain() async {
+    let (scene, model, supply) = await makeReconnectingScene(wait: { _ in })
+    scene.start()
+    await scene.settle()
+    supply.holdsNewTransportsForSignIn = true
+    await dropLink(scene, supply)
+    await waitUntil("the reconnect never showed the sign-in URL") { model.signInURL != nil }
+    supply.holdsNewTransportsForSignIn = false
+    await scene.stopReconnecting()
+    await scene.settle()
+    let issued = supply.attempts
+
+    scene.reconnectNow()
+    await scene.settle()
+
+    #expect(supply.attempts == issued + 1, "Reconnect made \(supply.attempts - issued) attempts")
+    #expect(scene.notice == nil)
+    #expect(model.phase == .connected)
+    #expect(scene.role(for: .pane(id: "w1:p1")) == .controller)
+  }
+
+  /// The user stopped it. Nothing was refused, and the bar must not say so.
+  @Test("stopping a sign-in the typed password reached is not a refusal")
+  func stoppingAPromptedReconnectIsNotARefusal() async {
+    let (scene, model, supply) = await makeReconnectingScene(
+      persistence: .promptEveryTime,
+      wait: { _ in }
+    )
+    scene.start()
+    await scene.settle()
+    await dropLink(scene, supply)
+    await scene.settle()
+    #expect(scene.notice == .needsPassword)
+    supply.holdsNewTransportsForSignIn = true
+
+    scene.reconnect(with: "hunter2")
+    await waitUntil("the reconnect never showed the sign-in URL") { model.signInURL != nil }
+    await scene.stopReconnecting()
+    await scene.settle()
+
+    #expect(!scene.passwordWasRefused, "a stop was reported as a refused password")
+    #expect(scene.notice == .disconnected)
+  }
+
+  /// Showing the terminal during the hold opens the pane on a connection that is still
+  /// signing in. That open fails, and recorded as the host's failure it wrote `.failed` over
+  /// `.connecting`. `cancelConnect` then found nothing to cancel, and the hold ran on.
+  @Test("an open that fails during a held sign-in leaves the stop able to end it")
+  func anOpenDuringTheHoldLeavesTheStopWorking() async {
+    let (scene, model, supply) = await makeReconnectingScene(wait: { _ in })
+    scene.start()
+    await scene.settle()
+    supply.holdsNewTransportsForSignIn = true
+    await dropLink(scene, supply)
+    await waitUntil("the reconnect never showed the sign-in URL") { model.signInURL != nil }
+    let target = TerminalTarget.pane(id: "w1:p1")
+
+    // To the chat and back, as a reader toggles. The chat opens nothing that can fail aloud,
+    // so the notice is the terminal's open.
+    scene.show(.chat)
+    scene.show(.terminal)
+    await waitUntil("the terminal's open never finished") { scene.notices[target] != nil }
+    #expect(model.phase == .connecting, "the failed open was recorded as \(model.phase)")
+
+    await scene.stopReconnecting()
+
+    #expect(model.phase == .idle, "the stop left the connection at \(model.phase)")
+    #expect(model.signInURL == nil, "the stop left the held attempt running")
+    #expect(scene.notice == .disconnected)
+    // Ends a hold the stop could not reach, so `settle()` returns either way.
+    await model.disconnect()
+    await scene.settle()
+  }
+
+  /// The shell opens through a pty, and a pty open that fails writes `.failed` whatever the
+  /// scene asks. Selecting it during the hold must not reach the held connection.
+  @Test("selecting the shell during a held sign-in leaves the stop able to end it")
+  func selectingTheShellDuringTheHoldLeavesTheStopWorking() async {
+    let (scene, model, supply) = await makeReconnectingScene(wait: { _ in })
+    scene.start()
+    await scene.settle()
+    supply.holdsNewTransportsForSignIn = true
+    await dropLink(scene, supply)
+    await waitUntil("the reconnect never showed the sign-in URL") { model.signInURL != nil }
+    let pane = TerminalTarget.pane(id: "w1:p1")
+
+    scene.select(.shell)
+    // Back to the pane, whose failed open always leaves a notice. The steps run in order, so
+    // the notice says the shell's step has run too.
+    scene.select(pane)
+    await waitUntil("the pane's open never finished") { scene.notices[pane] != nil }
+    #expect(model.phase == .connecting, "the shell's open was recorded as \(model.phase)")
+
+    await scene.stopReconnecting()
+
+    #expect(model.phase == .idle, "the stop left the connection at \(model.phase)")
+    #expect(model.signInURL == nil, "the stop left the held attempt running")
+    // Ends a hold the stop could not reach, so `settle()` returns either way.
+    await model.disconnect()
+    await scene.settle()
+  }
+
+  /// The host ends the sign-in by closing the connection. The URL goes with it, and the
+  /// schedule carries on as for any failed attempt.
+  @Test("a close during the sign-in clears the URL and the schedule continues")
+  func aCloseDuringTheSignInClearsTheURL() async {
+    let watch = SignInWatch()
+    let (scene, model, supply) = await makeReconnectingScene(
+      wait: { _ in
+        watch.urlsAtEachWait.append(watch.model?.signInURL)
+        // The next attempt connects.
+        watch.supply?.holdsNewTransportsForSignIn = false
+        watch.supply?.isAccepting = true
+      }
+    )
+    watch.model = model
+    watch.supply = supply
+    scene.start()
+    await scene.settle()
+    supply.holdsNewTransportsForSignIn = true
+
+    await dropLink(scene, supply)
+    await waitUntil("the reconnect never showed the sign-in URL") { model.signInURL != nil }
+    // The host closes the connection, which ends the hold.
+    supply.endSignInHolds()
+    await scene.settle()
+
+    #expect(watch.urlsAtEachWait == [nil], "the waits saw \(watch.urlsAtEachWait)")
+    #expect(scene.notice == nil)
+    #expect(model.phase == .connected)
+    #expect(model.signInURL == nil)
+  }
+}
+
+/// What `aCloseDuringTheSignInClearsTheURL`'s waiter reads and records. A class, because the
+/// waiter is built before the model and the supply exist.
+@MainActor
+private final class SignInWatch {
+  var model: ConnectionModel?
+  var supply: TransportSupply?
+  var urlsAtEachWait: [URL?] = []
+}
+
 /// Which of a dropped link's two signals the scene is made to act on first.
 ///
 /// A real transport offers no ordering. `NIOSSHTransport` yields the loss off the parent

@@ -170,6 +170,7 @@ struct AppEnvironment {
       hostStore: InMemoryHostStore(seeded: seededHosts),
       settingsStore: InMemorySettingsStore(seededSettings),
       makeTransport: {
+        let holdsForSignIn = isSigningInOnReconnect && outage.hasBegun
         let transport = FakeSSHTransport(
           responses: [
             "uname -a": CommandResult(
@@ -196,6 +197,9 @@ struct AppEnvironment {
           echoesInput: !isDemoTranscript,
           // A host that accepts the connection and then says nothing. See `stalledHandshake`.
           handshakeStall: stalledHandshake,
+          // Tailscale SSH's check mode on the way back. See `isSigningInOnReconnect`.
+          authenticationBanner: holdsForSignIn ? signInBanner : nil,
+          authenticationHold: holdsForSignIn ? .seconds(600) : nil,
           // The app supplies herdr-shaped frames, because `DriverrSSH` must not learn herdr's
           // protocol, and the bridge command carries `--cols`/`--rows`, so it cannot be keyed.
           // Observers answer too, or a warm pane would look like a cold open when switched to.
@@ -3001,6 +3005,21 @@ struct AppEnvironment {
   /// How long the launch's simulated outage still has to run.
   private static let outage = Outage()
 
+  /// Whether every connection after this launch's drop holds authentication for a sign-in
+  /// on the web, as Tailscale SSH's check mode does. Combined with `-uiTestingDropOnPaneOpen`,
+  /// it puts a pane scene's reconnect on the sign-in, with the URL and Cancel in its banner.
+  ///
+  /// Keyed on the drop having fired, not on a count of transports, so the first connect is an
+  /// ordinary one however it was reached. The hold outlasts any test, so only Cancel ends it.
+  static var isSigningInOnReconnect: Bool {
+    ProcessInfo.processInfo.arguments.contains("-uiTestingSignInOnReconnect")
+  }
+
+  /// What a check-mode host sends before it holds the request.
+  private static let signInBanner =
+    "# Tailscale SSH requires an additional check.\n"
+    + "# To authenticate, visit: https://login.tailscale.com/a/1a2b3c4d5e6f\n"
+
   /// Whether this launch ends one pane's bridge stream with the link left up.
   ///
   /// No other flag reaches this. The link is fine and herdr has sent no `terminal.closed`;
@@ -3267,6 +3286,11 @@ private final class Outage: @unchecked Sendable {
       guard let endsAt else { return false }
       return Date() < endsAt
     }
+  }
+
+  /// Whether the outage has begun, ended or not. It begins as the link drops.
+  var hasBegun: Bool {
+    lock.withLock { endsAt != nil }
   }
 }
 

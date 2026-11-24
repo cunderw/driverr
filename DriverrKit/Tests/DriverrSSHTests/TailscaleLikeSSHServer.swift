@@ -25,6 +25,10 @@ final class TailscaleLikeSSHServer: @unchecked Sendable {
     case accept
     /// Check mode: the banner, then a hold, then success.
     case check(banner: String, hold: TimeAmount)
+    /// Check mode with a hold the test ends: the banner, then a hold until `endCheck()` or
+    /// `stop()`. A long `.check` hold leaves its promise unfulfilled at `stop()`, and NIO
+    /// traps on that.
+    case checkUntilEnded(banner: String)
     /// The tailnet policy denies the user: the banner, then the connection closes.
     case deny(banner: String)
     /// A denial whose end the test picks: the banner, then a hold until `endDenial(_:)`.
@@ -41,6 +45,7 @@ final class TailscaleLikeSSHServer: @unchecked Sendable {
   /// The auth methods clients offered, in order.
   let offers: OfferLog
   private let heldDenial = HeldDenial()
+  private let heldCheck = HeldCheck()
 
   /// How a held denial ends. A real tailscaled may end one with SSH_MSG_DISCONNECT or a
   /// dropped socket instead of a plain close.
@@ -54,6 +59,7 @@ final class TailscaleLikeSSHServer: @unchecked Sendable {
     let offers = OfferLog()
     self.offers = offers
     let heldDenial = heldDenial
+    let heldCheck = heldCheck
     let hostKey = NIOSSHPrivateKey(ed25519Key: .init())
     hostPublicKey = hostKey.publicKey
 
@@ -62,7 +68,7 @@ final class TailscaleLikeSSHServer: @unchecked Sendable {
       .childChannelInitializer { channel in
         channel.eventLoop.makeCompletedFuture {
           let delegate = TailscaleAuthDelegate(
-            policy: policy, offers: offers, heldDenial: heldDenial)
+            policy: policy, offers: offers, heldDenial: heldDenial, heldCheck: heldCheck)
           let handler = NIOSSHHandler(
             role: .server(SSHServerConfiguration(hostKeys: [hostKey], userAuthDelegate: delegate)),
             allocator: channel.allocator,
@@ -114,8 +120,20 @@ final class TailscaleLikeSSHServer: @unchecked Sendable {
     }.always { _ in held.promise.fail(Denied()) }.get()
   }
 
+  /// Ends the request a `.checkUntilEnded` policy holds, with no success. Call it after the
+  /// client has gone. Does nothing when no request is held.
+  func endCheck() async {
+    guard let promise = heldCheck.take() else { return }
+    // On the promise's loop, which `stop()` has not shut down yet.
+    try? await promise.futureResult.eventLoop.submit { promise.fail(Denied()) }.get()
+  }
+
   /// Awaited, never blocking. See `EmbeddedSSHServer.stop()`.
+  ///
+  /// Ends a check still held first, so a test that fails before its own `endCheck()` does
+  /// not trap the whole process on an unfulfilled promise.
   func stop() async {
+    await endCheck()
     try? await channel.close().get()
     try? await group.shutdownGracefully()
   }
@@ -145,6 +163,23 @@ private final class HeldDenial: @unchecked Sendable {
   }
 }
 
+/// The request a `.checkUntilEnded` policy holds, until the test ends it.
+private final class HeldCheck: @unchecked Sendable {
+  private let lock = NSLock()
+  private var held: EventLoopPromise<NIOSSHUserAuthenticationOutcome>?
+
+  func hold(_ promise: EventLoopPromise<NIOSSHUserAuthenticationOutcome>) {
+    lock.withLock { held = promise }
+  }
+
+  func take() -> EventLoopPromise<NIOSSHUserAuthenticationOutcome>? {
+    lock.withLock {
+      defer { held = nil }
+      return held
+    }
+  }
+}
+
 final class OfferLog: @unchecked Sendable {
   private let lock = NSLock()
   private var methods: [String] = []
@@ -163,13 +198,20 @@ private final class TailscaleAuthDelegate: NIOSSHServerUserAuthenticationDelegat
   private let policy: TailscaleLikeSSHServer.Policy
   private let offers: OfferLog
   private let heldDenial: HeldDenial
+  private let heldCheck: HeldCheck
   weak var handler: NIOSSHHandler?
   weak var channel: Channel?
 
-  init(policy: TailscaleLikeSSHServer.Policy, offers: OfferLog, heldDenial: HeldDenial) {
+  init(
+    policy: TailscaleLikeSSHServer.Policy,
+    offers: OfferLog,
+    heldDenial: HeldDenial,
+    heldCheck: HeldCheck
+  ) {
     self.policy = policy
     self.offers = offers
     self.heldDenial = heldDenial
+    self.heldCheck = heldCheck
   }
 
   var supportedAuthenticationMethods: NIOSSHAvailableUserAuthenticationMethods {
@@ -205,6 +247,12 @@ private final class TailscaleAuthDelegate: NIOSSHServerUserAuthenticationDelegat
       loop.scheduleTask(in: hold) {
         responsePromise.succeed(.success)
       }
+    case .checkUntilEnded(let banner):
+      // Held before the banner goes out, so a client that has the banner can end the hold.
+      heldCheck.hold(responsePromise)
+      let loop = responsePromise.futureResult.eventLoop
+      // Not inline, for the reason above.
+      loop.execute { [self] in sendBanner(banner) }
     case .refuse(let banner):
       let loop = responsePromise.futureResult.eventLoop
       // Not inline, for the reason above.

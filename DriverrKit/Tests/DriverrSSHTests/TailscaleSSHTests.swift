@@ -288,6 +288,49 @@ extension TailscaleSSHTests {
     }
   }
 
+  /// Cancel during a held sign-in, as a scene's Cancel does (#175). `NIOSSHTransport` waits
+  /// on futures that ignore cancellation, so cancelling the task alone ends nothing. The
+  /// disconnect is what fails the held request, and the connect has to settle after it.
+  @Test("cancelling a held sign-in settles the connect", .timeLimit(.minutes(1)))
+  func cancellingAHeldSignInSettlesTheConnect() async throws {
+    try await withServer(.checkUntilEnded(banner: Self.checkBanner)) { server, host in
+      let coordinator = ConnectionCoordinator(transport: NIOSSHTransport())
+      let (signIns, signedIn) = AsyncStream.makeStream(of: URL.self)
+      let attempt = Task {
+        try await coordinator.connect(
+          to: host,
+          validator: TrustingValidator(),
+          credential: .none,
+          onSignIn: { url in signedIn.yield(url) }
+        )
+      }
+      // A signal, not a sleep: the server holds the request from here on.
+      var received = signIns.makeAsyncIterator()
+      let url = await received.next()
+      #expect(url?.absoluteString == "https://login.tailscale.com/a/1a2b3c4d5e6f")
+
+      attempt.cancel()
+      await coordinator.disconnect()
+      // A connect that does not settle is the regression. The `.timeLimit` cancels this wait,
+      // and ending the server's hold then fails the request, so the tier does not hang.
+      let outcome = await withTaskCancellationHandler {
+        await attempt.result
+      } onCancel: {
+        Task { await server.endCheck() }
+      }
+      let phase = await coordinator.phase
+      await server.endCheck()
+
+      guard case .failure = outcome else {
+        Issue.record("a connect cancelled during its sign-in succeeded")
+        return
+      }
+      // Not `.idle`: the cancelled attempt's catch writes `.failed` after `disconnect()` wrote
+      // `.idle`. The app never reads it, because `cancelConnect` drops the coordinator.
+      #expect(phase != .connected, "the cancelled connect left the coordinator connected")
+    }
+  }
+
   /// The error `authenticate(.none)` fails with, or `nil` when it succeeds.
   private static func failure(of transport: NIOSSHTransport) async -> AppError? {
     do {

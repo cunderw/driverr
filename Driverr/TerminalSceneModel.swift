@@ -118,7 +118,9 @@ final class TerminalSceneModel {
   /// `TerminalSettings.panesOpenOn`. A closure, so a change reaches a scene already up, and
   /// given at init, so a pane never draws one surface for a frame and then flips.
   private let firstSurface: @MainActor () -> PaneSurface
-  private var notices: [TerminalTarget: Notice] = [:]
+  /// What the scene has to say about each target. Readable so `TerminalSceneModelTests` can
+  /// wait for an open that failed under a connection notice, which `notice` hides.
+  private(set) var notices: [TerminalTarget: Notice] = [:]
   /// How many times each target's stream has ended with no `terminal.closed` record and
   /// been reattached with no frame painted since. `TerminalEndDisposition` bounds the
   /// reattach with it.
@@ -990,6 +992,9 @@ final class TerminalSceneModel {
     switch target {
     case .shell:
       guard entry(for: .shell) == nil else { return }
+      // Nothing while the link is down. A pty open that fails writes `.failed` over a
+      // reconnect still signing in, and `restoreAfterReconnect` opens the current target.
+      guard connectionNotice == nil else { return }
       guard let session = await model.openTerminal(size: viewportSize) else {
         notices[.shell] = .failed(
           model.failure ?? .channelFailed(reason: "The terminal could not be opened.")
@@ -1027,6 +1032,8 @@ final class TerminalSceneModel {
           notices[target] = .failed(.paneTerminalUnavailable)
           return
         }
+        // Not while the link is down, for the shell's reason above.
+        guard connectionNotice == nil else { return }
         guard let session = await model.openTerminal(size: viewportSize) else {
           notices[target] = .failed(
             model.failure ?? .channelFailed(reason: "The pane could not be opened.")
@@ -1065,7 +1072,10 @@ final class TerminalSceneModel {
         measuredSize: measuredSize(for: target),
         sizeDeadline: coreSizeDeadline,
         takeover: takeover,
-        recordsFailure: !automatic
+        // Not while the link is down either. The open then fails on a connection that is not
+        // up, often one still signing in, and recording it would write `.failed` over that
+        // attempt's `.connecting`, so `stopReconnecting` could not end it.
+        recordsFailure: !automatic && connectionNotice == nil
       )
     else {
       // An automatic reattach fails silently; see `openSurface`. The last frame stays. A
@@ -1433,6 +1443,8 @@ final class TerminalSceneModel {
     reconnectWork = Task { [weak self] in
       guard let self else { return }
       await model.connect(password: password, persistence: .promptEveryTime)
+      // Stopped by `stopReconnecting`, which writes the notice. Nothing was refused.
+      if Task.isCancelled { return }
       guard model.phase == .connected else {
         // Refused, or the host is still absent. Ask again, with the refusal said, rather
         // than back off on a rejected credential.
@@ -1442,6 +1454,25 @@ final class TerminalSceneModel {
       }
       passwordWasRefused = false
       restoreAfterReconnect()
+    }
+  }
+
+  /// The Cancel beside a sign-in the reconnect is waiting on. Ends the attempt and the
+  /// schedule, and leaves the Reconnect the banner offers once the schedule has run out.
+  ///
+  /// The work is cancelled first. `cancelConnect` alone ends only the attempt, and the
+  /// schedule would try again a step later, into the same sign-in. The handle is kept, so
+  /// `settle()` still waits for the work to wind down.
+  func stopReconnecting() async {
+    guard !isClosed, connectionNotice == .reconnecting else { return }
+    reconnectWork?.cancel()
+    await model.cancelConnect()
+    // The connect finished before the cancel reached it. The cancelled work will not restore,
+    // so this does.
+    if model.phase == .connected {
+      restoreAfterReconnect()
+    } else {
+      connectionNotice = .disconnected
     }
   }
 
@@ -1459,7 +1490,10 @@ final class TerminalSceneModel {
 
   /// Try now; then `ReconnectSchedule`; then hand it to the user.
   private func runReconnect() async {
-    if await model.needsPasswordToReconnect() {
+    let needsPassword = await model.needsPasswordToReconnect()
+    // Stopped during the read. `stopReconnecting` wrote the notice.
+    if Task.isCancelled { return }
+    if needsPassword {
       // The first ask, so nothing has been refused yet.
       passwordWasRefused = false
       connectionNotice = .needsPassword
