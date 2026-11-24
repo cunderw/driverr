@@ -117,14 +117,17 @@ This file holds the rules and traps on top of that.
   (`"kind": "folder"`) are folder-synced groups, so a new file needs no project edit. A new
   target or package product dependency needs a direct `project.xcproj` edit and a build.
   Do not add a generate step or `ci_scripts/`.
-  - Edit it by hand. Any write through Xcode or `xcrun xcodeproj` deletes every comment in
-    the file and the two `.entitlements` exclusions below. Read the diff after such a write
-    and put the exclusions back.
-  - The `Driverr` and `DriverrWatch` folders exclude their `.entitlements` file. Their
-    consumer is `CODE_SIGN_ENTITLEMENTS`, and a copy in the product would be wrong and
-    invisible, because it collides with nothing and the build stays green. A build without
-    the exclusions copied neither file when measured, so the exclusions are a guard, not a
-    fix.
+  - Edit it by hand. A write through `xcrun xcodeproj setting set` deleted every comment in
+    the file and the two `.entitlements` exclusions below. Expect the same from any write
+    through Xcode or `xcrun xcodeproj`. Read the diff after such a write and put the
+    exclusions back.
+  - The `Driverr` and `DriverrWatch` folders exclude their `Info.plist`. It is read through
+    `INFOPLIST_FILE` and `GENERATE_INFOPLIST_FILE`, and a copy as a bundle resource
+    collides with the generated `Info.plist` at the same output path.
+  - The same two folders exclude their `.entitlements` file. Its consumer is
+    `CODE_SIGN_ENTITLEMENTS`, and a copy in the product would be wrong and invisible,
+    because it collides with nothing and the build stays green. A build without the
+    exclusions copied neither file when measured, so the exclusions are a guard, not a fix.
   - `DriverrTests` has no package product dependency, deliberately. It is app-hosted
     (`TEST_HOST`, `BUNDLE_LOADER`), so it reaches `DriverrCore` through the app process,
     which already links it. With its own dependency on `DriverrCore`, the framework is
