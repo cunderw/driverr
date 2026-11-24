@@ -288,6 +288,41 @@ extension TailscaleSSHTests {
     }
   }
 
+  /// Cancel during a held sign-in, as a scene's Cancel does (#175). `NIOSSHTransport` waits
+  /// on futures that ignore cancellation, so cancelling the task alone ends nothing. The
+  /// disconnect is what fails the held request, and the connect has to settle after it.
+  @Test("cancelling a held sign-in settles the connect", .timeLimit(.minutes(1)))
+  func cancellingAHeldSignInSettlesTheConnect() async throws {
+    try await withServer(.checkUntilEnded(banner: Self.checkBanner)) { server, host in
+      let coordinator = ConnectionCoordinator(transport: NIOSSHTransport())
+      let (signIns, signedIn) = AsyncStream.makeStream(of: URL.self)
+      let attempt = Task {
+        try await coordinator.connect(
+          to: host,
+          validator: TrustingValidator(),
+          credential: .none,
+          onSignIn: { url in signedIn.yield(url) }
+        )
+      }
+      // A signal, not a sleep: the server holds the request from here on.
+      var received = signIns.makeAsyncIterator()
+      let url = await received.next()
+      #expect(url?.absoluteString == "https://login.tailscale.com/a/1a2b3c4d5e6f")
+
+      attempt.cancel()
+      await coordinator.disconnect()
+      let outcome = await attempt.result
+      let phase = await coordinator.phase
+      await server.endCheck()
+
+      guard case .failure = outcome else {
+        Issue.record("a connect cancelled during its sign-in succeeded")
+        return
+      }
+      #expect(phase == .idle, "the cancelled connect left the coordinator at \(phase)")
+    }
+  }
+
   /// The error `authenticate(.none)` fails with, or `nil` when it succeeds.
   private static func failure(of transport: NIOSSHTransport) async -> AppError? {
     do {
