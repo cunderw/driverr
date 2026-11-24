@@ -439,6 +439,41 @@ struct FakeControlTests {
     #expect(try await control.snapshot().pane(id: "w1:p3") == nil, "still gone next poll")
   }
 
+  @Test("a scripted session moves to its after-send tree on the first accepted send, and stays")
+  func treeAfterSendReplacesTheScript() async throws {
+    // The README's demo: the agent carries on once Approve goes over. A script indexed by
+    // poll count would put the blocked tree back on the next poll.
+    let after = FakeControl.treeWithIdleAgent
+    let control = FakeControl(script: FakeControl.blockingScript, treeAfterSend: after)
+    #expect(try await control.snapshot() == FakeControl.blockingScript[0])
+
+    // A refused send is not an answer, so the session does not move on.
+    await control.failNextSends(1, with: .herdrCommandFailed(reason: "nope"))
+    await #expect(throws: AppError.herdrCommandFailed(reason: "nope")) {
+      try await control.sendKeys(paneID: "w1:p2", keys: [.enter])
+    }
+    #expect(try await control.snapshot() == FakeControl.blockingScript[1])
+
+    try await control.sendKeys(paneID: "w1:p2", keys: [.enter])
+    #expect(try await control.snapshot() == after)
+    #expect(try await control.snapshot() == after, "still moved on next poll")
+
+    // Later sends do not put it back over an action taken since.
+    try await control.perform(.close, on: "w1:p3")
+    try await control.sendText(paneID: "w1:p2", text: "y")
+    #expect(try await control.snapshot().pane(id: "w1:p3") == nil)
+  }
+
+  @Test("the tour after Approve has its chat's agent working and the other pane still blocked")
+  func storeTourTreeAfterApprove() {
+    let before = FakeControl.storeTourScript[FakeControl.storeTourScript.count - 1]
+    let after = FakeControl.storeTourTreeAfterApprove
+    #expect(before.blockedPanes.map(\.id).sorted() == ["w1:p2", "w2:p1"])
+    #expect(after.blockedPanes.map(\.id) == ["w2:p1"])
+    #expect(after.pane(id: "w1:p2")?.agent?.status == .working)
+    #expect(after.allPanes.map(\.id) == before.allPanes.map(\.id))
+  }
+
   @Test("a failing fake refuses actions too")
   func failingFakeRefusesActions() async {
     let control = FakeControl.failing(.herdrCommandFailed(reason: "nope"))

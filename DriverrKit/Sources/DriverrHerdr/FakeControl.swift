@@ -51,6 +51,9 @@ public actor FakeControl: HerdrControl {
   /// What puts an image beside a pane, for a test of a machine's upload. `nil` answers `nil`
   /// for every pane, as the TUI does.
   private let imageUploads: ImageUploads?
+  /// The tree after the first accepted steering send, which stops the script: an agent that
+  /// carries on once it is answered. `nil` leaves the tree alone, as every other fake does.
+  private let treeAfterSend: SessionTree?
 
   /// Builds an upload from a pane id, the bytes and the file name.
   public typealias ImageUploads =
@@ -91,6 +94,7 @@ public actor FakeControl: HerdrControl {
     self.startFailure = startFailure
     self.imageUploads = imageUploads
     self.modeCycle = modeCycle
+    treeAfterSend = nil
   }
 
   /// A session that changes as it is polled, for exercising live updates.
@@ -99,10 +103,12 @@ public actor FakeControl: HerdrControl {
   ///   - canStartAgent: whether the New Agent sheet is offered. A start stops the script, as
   ///     any change the fake makes to its own tree does.
   ///   - agentStart: how a start answers. See `AgentStartBehaviour`.
+  ///   - treeAfterSend: the tree from the first accepted send on, in place of the script.
   public init(
     script: [SessionTree], canStartAgent: Bool = false,
     agentStart: AgentStartBehaviour = .starts(after: .zero),
-    modeCycle: [PaneScreen]? = nil
+    modeCycle: [PaneScreen]? = nil,
+    treeAfterSend: SessionTree? = nil
   ) {
     self.script = script
     tree = script.first ?? .empty
@@ -118,6 +124,7 @@ public actor FakeControl: HerdrControl {
     startFailure = nil
     imageUploads = nil
     self.modeCycle = modeCycle
+    self.treeAfterSend = treeAfterSend
   }
 
   /// A fake that fails, for exercising the error surfaces without a broken host.
@@ -234,20 +241,36 @@ public actor FakeControl: HerdrControl {
     throw steeringFailure
   }
 
+  /// Whether a send has moved the tree to `treeAfterSend` yet. Once only, so a later send
+  /// cannot undo an action taken since.
+  private var hasMovedOnAfterSend = false
+
+  /// Moves the tree to `treeAfterSend` on the first send that was not refused.
+  private func moveOnAfterSend() {
+    guard let treeAfterSend, !hasMovedOnAfterSend else { return }
+    hasMovedOnAfterSend = true
+    tree = treeAfterSend
+    // Stop the script, as in `perform`.
+    scriptOverridden = true
+  }
+
   public func sendText(paneID: String, text: String) async throws {
     sent.append(.text(paneID: paneID, text: text))
     try refuseSteeringIfOwed()
+    moveOnAfterSend()
   }
 
   public func submitText(paneID: String, text: String) async throws {
     // Trimmed, so a test reads what `pane run` would receive.
     sent.append(.submit(paneID: paneID, text: CLIControl.submittable(text)))
     try refuseSteeringIfOwed()
+    moveOnAfterSend()
   }
 
   public func sendKeys(paneID: String, keys: [PaneKey]) async throws {
     sent.append(.keys(paneID: paneID, keys: keys))
     try refuseSteeringIfOwed()
+    moveOnAfterSend()
   }
 
   /// Every batched read, with the ids exactly as asked.
@@ -969,6 +992,25 @@ public actor FakeControl: HerdrControl {
   public static let storeTourScript: [SessionTree] = [
     storeTourTree, mapPanes(storeTourTree, blockingSchemaSync),
   ]
+
+  /// The tour's last tree with `w1:p2`'s Claude working: the README's demo, once Approve has
+  /// answered it. `w2:p1` stays blocked, so Needs You goes from two panes to one.
+  public static let storeTourTreeAfterApprove: SessionTree = mapPanes(
+    storeTourScript[storeTourScript.count - 1]
+  ) { pane in
+    guard pane.id == "w1:p2", let agent = pane.agent else { return pane }
+    return Pane(
+      id: pane.id,
+      tabID: pane.tabID,
+      workspaceID: pane.workspaceID,
+      title: pane.title,
+      agent: Agent(name: agent.name, kind: agent.kind, status: .working, session: agent.session),
+      terminalID: pane.terminalID,
+      directory: pane.directory,
+      isFocused: pane.isFocused,
+      viewportRows: pane.viewportRows
+    )
+  }
 
   /// `seededTree` with `w1:p1`'s Claude idle instead of working.
   ///
