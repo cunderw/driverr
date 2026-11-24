@@ -500,7 +500,7 @@ struct AppEnvironment {
   ///
   /// XCUITest cannot drive the out-of-process Photos picker, so the composer is handed these
   /// bytes, exercising everything after the pick. Generated rather than bundled, because an
-  /// asset means a `project.pbxproj` change. 2400×1600, so it exceeds the 1568 px cap and the
+  /// asset means a `project.xcproj` change. 2400×1600, so it exceeds the 1568 px cap and the
   /// downscale runs.
   static var seededPickedImage: Data? {
     guard isUITesting,

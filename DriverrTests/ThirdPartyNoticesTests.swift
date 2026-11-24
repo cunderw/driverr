@@ -4,10 +4,10 @@ import Testing
 /// The app bundle carries `THIRD-PARTY-NOTICES.md`, so the Apache, MIT and font credits travel
 /// with the binary.
 ///
-/// The file is at the repository root, outside every folder-synced group. One file reference
-/// and one build file in `project.pbxproj` put it in the app's resources, and a project edit
-/// that drops either one leaves the build green. The kit tier cannot see a built product.
-/// `DriverrTests` is app-hosted, so `Bundle.main` here is the Driverr app.
+/// The file is at the repository root, outside every folder-synced group. One file entry in
+/// `project.xcproj`, with target membership `Driverr/resources`, puts it in the app's
+/// resources, and a project edit that drops it leaves the build green. The kit tier cannot
+/// see a built product. `DriverrTests` is app-hosted, so `Bundle.main` here is the Driverr app.
 ///
 /// The app does not show the file. This checks only that it ships.
 @Suite("Third-party notices")

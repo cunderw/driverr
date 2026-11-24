@@ -173,9 +173,9 @@ identifier ends in `.watch`, the same string as the background task identifier
 
 To run on a device under your own team, change these in your working copy:
 
-1. `DEVELOPMENT_TEAM` in `Driverr.xcodeproj/project.pbxproj`. It appears on four lines: the
-   app and the widget extension, each in Debug and Release. It is one value.
-2. `PRODUCT_BUNDLE_IDENTIFIER` on the same four lines. The widget extension's identifier must
+1. `DEVELOPMENT_TEAM` in `Driverr.xcodeproj/project.xcproj`. It appears on two lines: the
+   app's build settings and the widget extension's. It is one value.
+2. `PRODUCT_BUNDLE_IDENTIFIER` in the same two targets. The widget extension's identifier must
    keep the app's identifier as its prefix.
 3. The app group, in three places that must hold the same string:
    `Driverr/Driverr.entitlements`, `DriverrWatch/DriverrWatch.entitlements` and

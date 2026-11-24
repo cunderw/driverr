@@ -95,7 +95,7 @@
        fight over one pane's "Take over" prompt. The dict is written by hand because no
        build setting can set `UIApplicationSupportsMultipleScenes` to false:
        `INFOPLIST_KEY_UIApplicationSceneManifest_Generation` either omits the manifest or
-       generates it with the value `true`. That setting is `NO` in project.pbxproj. -->
+       generates it with the value `true`. That setting is `NO` in project.xcproj. -->
   <key>UIApplicationSceneManifest</key>
   <dict>
     <key>UIApplicationSupportsMultipleScenes</key>

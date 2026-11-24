@@ -21,7 +21,7 @@ struct AppGroupContainerTests {
       url != nil,
       """
       No container for \(WidgetThemeSnapshot.appGroupID). Driverr/Driverr.entitlements is \
-      missing, empty, or not wired into CODE_SIGN_ENTITLEMENTS on EB01/EB02.
+      missing, empty, or not wired into the Driverr target's CODE_SIGN_ENTITLEMENTS.
       """)
   }
 

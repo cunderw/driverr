@@ -111,10 +111,27 @@ This file holds the rules and traps on top of that.
 - **`DriverrCore.Host` collides with `Foundation.Host`, and `DriverrCore.Tab` with
   SwiftUI's `Tab`.** Qualify them in any file that imports both, or the compiler reports
   "'Host' is ambiguous for type lookup".
-- **The Xcode project is hand-authored, not generated.** `Driverr.xcodeproj` uses
-  folder-synced groups (`PBXFileSystemSynchronizedRootGroup`), so a new file needs no
-  project edit. A new target or package product dependency needs a direct
-  `project.pbxproj` edit and a build. Do not add a generate step or `ci_scripts/`.
+- **The Xcode project is hand-authored, not generated.** It is
+  `Driverr.xcodeproj/project.xcproj`, in Xcode's JSON project format: JSON with trailing
+  commas, so `plutil` and strict JSON parsers reject it. Its four folder entries
+  (`"kind": "folder"`) are folder-synced groups, so a new file needs no project edit. A new
+  target or package product dependency needs a direct `project.xcproj` edit and a build.
+  Do not add a generate step or `ci_scripts/`.
+  - Keep comments out of it. A write through `xcrun xcodeproj` rewrote the file and deleted
+    every comment, and a write by Xcode itself is expected to do the same, so the rationale
+    lives here.
+  - The `Driverr` and `DriverrWatch` folders exclude their `Info.plist`. It is read through
+    `INFOPLIST_FILE` and `GENERATE_INFOPLIST_FILE`, and a copy as a bundle resource
+    collides with the generated `Info.plist` at the same output path.
+  - The `.entitlements` files need no exclusion. Their consumer is `CODE_SIGN_ENTITLEMENTS`,
+    and a measured build copies neither file into the product without one.
+  - `DriverrTests` has no package product dependency, deliberately. It is app-hosted
+    (`TEST_HOST`, `BUNDLE_LOADER`), so it reaches `DriverrCore` through the app process,
+    which already links it. With its own dependency on `DriverrCore`, the framework is
+    embedded twice, once in `Driverr.app/Frameworks` and once in
+    `Driverr.app/PlugIns/DriverrTests.xctest/Frameworks`, which Apple warns causes casting
+    failures and crashes. If you add one, check that the second directory holds no
+    `.framework`.
 - **The scheme is committed** at `Driverr.xcodeproj/xcshareddata/xcschemes/Driverr.xcscheme`.
   Edit it by hand. Do not add an empty `<TestPlans></TestPlans>` element: xcodebuild then
   says the scheme "is not currently configured for the test action".
@@ -354,7 +371,7 @@ printed value instead.
 
 ## Identifiers
 
-The sources are `Driverr.xcodeproj/project.pbxproj`, the two `.entitlements` files and
+The sources are `Driverr.xcodeproj/project.xcproj`, the two `.entitlements` files and
 `Driverr/Info.plist`. Check a value there before changing it.
 
 - **Do not commit a change to `DEVELOPMENT_TEAM`.** Sign locally with your own team. The
@@ -384,8 +401,10 @@ The release procedure lives outside this repo. These are only the facts about th
 - **A push to `main` that changes the app uploads a TestFlight build**
   (`.github/workflows/testflight.yml`). A manual run of that workflow validates only,
   unless it is told to upload. `scripts/testflight.mjs` holds its App Store Connect calls.
-- **`MARKETING_VERSION` appears twice** in `project.pbxproj`, Debug and Release. Change
-  both; nothing warns about a mismatch.
+- **`MARKETING_VERSION` is one project-level entry** in `project.xcproj`, for both
+  configurations. Bump it with
+  `xcrun xcodeproj setting set --project Driverr.xcodeproj MARKETING_VERSION <version>`,
+  or by hand.
 - **Never commit a `CURRENT_PROJECT_VERSION` bump.** The build number is supplied on the
   archive command line.
 - **The whole App Store listing is `docs/appstore/copy.json`.** There is no prose mirror.
