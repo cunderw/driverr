@@ -992,6 +992,9 @@ final class TerminalSceneModel {
     switch target {
     case .shell:
       guard entry(for: .shell) == nil else { return }
+      // Nothing while the link is down. A pty open that fails writes `.failed` over a
+      // reconnect still signing in, and `restoreAfterReconnect` opens the current target.
+      guard connectionNotice == nil else { return }
       guard let session = await model.openTerminal(size: viewportSize) else {
         notices[.shell] = .failed(
           model.failure ?? .channelFailed(reason: "The terminal could not be opened.")
@@ -1029,6 +1032,8 @@ final class TerminalSceneModel {
           notices[target] = .failed(.paneTerminalUnavailable)
           return
         }
+        // Not while the link is down, for the shell's reason above.
+        guard connectionNotice == nil else { return }
         guard let session = await model.openTerminal(size: viewportSize) else {
           notices[target] = .failed(
             model.failure ?? .channelFailed(reason: "The pane could not be opened.")
