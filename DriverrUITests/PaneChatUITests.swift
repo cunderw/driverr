@@ -1018,12 +1018,13 @@ final class PaneChatUITests: XCTestCase {
 
     let status = require(
       app, "pane.chat.activity", "Expected the send verdict at the foot of the conversation")
+    // Approve sends `y`, and the verdict names the choice rather than the letter (#190).
     let deadline = Date().addingTimeInterval(10)
-    while Date() < deadline && !status.label.contains("Sent") {
+    while Date() < deadline && !status.label.contains("Approved") {
       usleep(150_000)
     }
     XCTAssertTrue(
-      status.label.contains("Sent"),
+      status.label.contains("Approved"),
       "Expected tapping the chip to send through the composer, got '\(status.label)'.\n"
         + "Tree was:\n\(app.debugDescription)"
     )

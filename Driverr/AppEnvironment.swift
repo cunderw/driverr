@@ -279,7 +279,11 @@ struct AppEnvironment {
         if isPaneVanishingOnce { return FakeControl(script: FakeControl.vanishingPaneScript) }
         // The store tour's larger session, so its pane switcher shot is a full grid. The
         // seed's panes and its blocked pair are unchanged inside it.
-        if isDemoTranscript { return FakeControl(script: FakeControl.storeTourScript) }
+        if isDemoTranscript {
+          // The README's demo: the same session, whose agent carries on after Approve.
+          if isApproveContinuing { return approveContinuesControl }
+          return FakeControl(script: FakeControl.storeTourScript)
+        }
         // Starts agents, so the host screen offers New Agent. See `FakeControl.startAgent`.
         // `-uiTestingModeCycle` adds a footer that steps through Claude Code's modes on each
         // Shift-Tab. See `isModeCycle`.
@@ -557,8 +561,60 @@ struct AppEnvironment {
     if isTranscriptGrowing { return growingRunner }
     if isScreenQuestionHandover { return handoverRunner }
     if isAnswerGrowing { return growingAnswerRunner }
+    if isApproveContinuing { return approveContinuesRunner }
     return fixtureRunner
   }
+
+  // MARK: - An agent that carries on after Approve
+
+  /// Whether the store tour's chat agent goes back to work once a reply is sent: the README's
+  /// demo GIF, which `scripts/demo-gif.sh` records. Read only with `-uiTestingDemoTranscript`,
+  /// so the tour itself is unchanged.
+  static var isApproveContinuing: Bool {
+    isDemoTranscript
+      && ProcessInfo.processInfo.arguments.contains("-uiTestingApproveContinues")
+  }
+
+  /// The herdr fake this launch uses, held here so the transcript runner can see what was
+  /// sent. A second after its first send, `w1:p2` is working, and the fake signals the change
+  /// so the chat shows it then and not on the next poll. The second keeps the chat's
+  /// `Approved` notice on screen long enough to read. One instance for every host, never
+  /// reset, as with `firstMessageControl`.
+  static let approveContinuesControl = FakeControl(
+    script: FakeControl.storeTourScript,
+    treeAfterSend: FakeControl.storeTourTreeAfterApprove,
+    treeAfterSendDelay: .seconds(1))
+
+  /// Serves the tour's conversation until a reply goes over, then the one where the edit ran.
+  private static var approveContinuesRunner: CommandRunner {
+    { command in
+      let hasReplied = await !approveContinuesControl.sent.isEmpty
+      if isTranscriptSlow { try await Task.sleep(for: .milliseconds(900)) }
+      return try await (hasReplied ? storeTourApprovedTranscript : storeTourTranscript)
+        .run(command)
+    }
+  }
+
+  /// `storeTourTranscript` after Approve: the waiting edit has run, and the agent has gone on
+  /// to the two handlers the person asked about. No call is pending, so the chat draws no
+  /// chips while herdr still reports `blocked` before the next poll.
+  static let storeTourApprovedTranscript: FakeTranscriptHost = {
+    let tour = storeTourTranscript.sessions.first?.turns ?? []
+    return FakeTranscriptHost(
+      sessionID: "3f8c1d20-0000-4000-8000-000000000002",
+      turns: Array(tour.dropLast())
+        + [
+          .init(
+            speaker: .tools([
+              ToolCall(name: "Edit", target: "session.rs", outcome: .succeeded),
+              ToolCall(name: "Edit", target: "handlers.rs", outcome: .succeeded),
+            ]),
+            secondsAgo: 2
+          )
+        ],
+      codexSessions: storeTourTranscript.codexSessions
+    ).serving(storeTourSubagents)
+  }()
 
   // MARK: - A conversation that grows while you read it
 

@@ -1,10 +1,14 @@
 # Driverr
 
+<img src="docs/readme/demo.gif" align="right" width="300" alt="Driverr on an iPhone. The host screen lists two blocked agents under Needs You. A tap on one opens its chat, where the agent waits for permission to edit session.rs. A tap on Approve sends the answer, and the chat then says Claude is working">
+
 A free, native iOS and iPadOS SSH client built around
 [herdr](https://github.com/herdrdev/herdr) and [tmux](https://github.com/tmux/tmux), the
 tools that keep coding agents running in persistent background terminals. Driverr is an
 independent project. It is not affiliated with or endorsed by the herdr project, the tmux
 project, Anthropic, OpenAI, Google or Apple.
+
+<a href="https://apps.apple.com/app/id6813186738"><img src="docs/readme/app-store-badge.svg" alt="Download on the App Store" height="40"></a>
 
 Most terminal apps treat herdr and tmux as one more TUI to render. Driverr treats them as
 what they are: remote object models. herdr's workspaces and tabs, tmux's sessions and
@@ -15,12 +19,9 @@ The specific thing Driverr does better than a general-purpose SSH client is tell
 phone, that an agent is **waiting on you** — and let you answer it without reading a
 terminal.
 
-| Blocked agents, first | Answer without a terminal |
-| --- | --- |
-| <img src="docs/app-store-assets/raw/iphone-max/needs-you.png" alt="The host screen, with a Needs You section that lists two blocked panes above the session tree" width="300"> | <img src="docs/app-store-assets/raw/iphone-max/chat.png" alt="The chat for a blocked pane. The agent asks a question, then waits for permission to edit session.rs. Approve and Deny chips are above the composer" width="300"> |
-
-*Both are screenshots captured by the UI test suite against a seeded test session. That is
-why they are identical on every run.*
+*In the recording, an agent waits in Needs You. Open its chat, tap Approve, and the agent
+continues. It is the app on a seeded test session, not on a real host, and the session puts
+the agent back to work when Approve is sent. `scripts/demo-gif.sh` records it.*
 
 ## What it does
 
@@ -82,7 +83,8 @@ You need:
 
 - A Mac with Xcode 27 and the iOS 27 simulator runtime
 - Node.js and npm, which provide `npx`
-- `python3`, which `scripts/look.sh` and `scripts/screenshots.sh` call
+- `python3`, which `scripts/look.sh`, `scripts/screenshots.sh` and `scripts/demo-gif.sh` call
+- `ffmpeg`, only for `scripts/demo-gif.sh`, which records the GIF at the top of this file
 - Xcode's Metal toolchain component
 
 The deployment target is iOS 26.0.

@@ -73,6 +73,22 @@ struct StoreTourSeedTests {
     #expect(lastWords == seededWords)
   }
 
+  /// The README's demo GIF swaps the conversation once Approve goes over. No call may be
+  /// pending after it: herdr still says `blocked` until the next poll, and a pending call on
+  /// a blocked pane would draw Approve and Deny again under the next edit.
+  @Test("After Approve the tour's conversation keeps every earlier turn and waits on nothing")
+  func theApprovedConversationWaitsOnNothing() {
+    let tour = turns(AppEnvironment.storeTourTranscript)
+    let approved = turns(AppEnvironment.storeTourApprovedTranscript)
+    #expect(approved.dropLast().map(\.text) == tour.dropLast().map(\.text))
+    #expect(calls(tour.last).map(\.target) == ["session.rs"])
+    #expect(calls(approved.last).map(\.target) == ["session.rs", "handlers.rs"])
+    #expect(approved.flatMap { calls($0) }.allSatisfy { $0.outcome != .pending })
+    #expect(
+      AppEnvironment.storeTourApprovedTranscript.subagents.count
+        == AppEnvironment.storeTourTranscript.subagents.count)
+  }
+
   /// The `chat` capture shows the bar's sub-agents button, which needs at least one active
   /// sub-agent. Read through a real `TranscriptReader`, so the meta and the file's age are
   /// parsed as the pane parses them. No turns are merged, because the tour's page carries no
