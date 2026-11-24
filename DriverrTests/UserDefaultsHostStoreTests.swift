@@ -96,4 +96,73 @@ struct UserDefaultsHostStoreTests {
 
     #expect(try await UserDefaultsHostStore(suiteName: suite).hosts().isEmpty)
   }
+
+  /// One stored host as a JSON object, with `authMethod` as raw JSON.
+  private func hostJSON(_ name: String, authMethod: String) -> [String: Any] {
+    let object = try? JSONSerialization.jsonObject(with: Data(authMethod.utf8))
+    return [
+      "id": UUID().uuidString, "name": name, "hostname": "10.1.0.9", "port": 22,
+      "username": "carson", "authMethod": object ?? [:],
+    ]
+  }
+
+  @Test("a host this build cannot read survives a save of another host")
+  func unknownAuthMethodSurvivesSave() async throws {
+    let suite = makeSuiteName()
+    defer { cleanUp(suite) }
+    let unknown = hostJSON("future", authMethod: #"{"quantum":{}}"#)
+    let stored: [[String: Any]] = [
+      hostJSON("first", authMethod: #"{"password":{}}"#),
+      unknown,
+      hostJSON("last", authMethod: #"{"password":{}}"#),
+    ]
+    UserDefaults(suiteName: suite)?.set(
+      try JSONSerialization.data(withJSONObject: stored), forKey: "com.cunderw.driverr.hosts")
+    let store = UserDefaultsHostStore(suiteName: suite)
+
+    #expect(try await store.hosts().map(\.name) == ["first", "last"])
+    try await store.save(host("added"))
+
+    let written = try #require(
+      UserDefaults(suiteName: suite)?.data(forKey: "com.cunderw.driverr.hosts"))
+    let elements = try #require(
+      try JSONSerialization.jsonObject(with: written) as? [[String: Any]])
+    #expect(elements.count == 4)
+    #expect(
+      elements.count > 1
+        && NSDictionary(dictionary: elements[1]) == NSDictionary(dictionary: unknown))
+    let reread = try await UserDefaultsHostStore(suiteName: suite).hosts()
+    #expect(reread.map(\.name) == ["first", "last", "added"])
+  }
+
+  @Test("a list that is not an array is copied aside once before the first save")
+  func corruptListIsBackedUpOnSave() async throws {
+    let suite = makeSuiteName()
+    defer { cleanUp(suite) }
+    let corrupt = Data("nope".utf8)
+    let defaults = try #require(UserDefaults(suiteName: suite))
+    defaults.set(corrupt, forKey: "com.cunderw.driverr.hosts")
+    let store = UserDefaultsHostStore(suiteName: suite)
+
+    try await store.save(host("workbox"))
+    defaults.set(Data(#"{"also":"not an array"}"#.utf8), forKey: "com.cunderw.driverr.hosts")
+    try await store.delete(UUID())
+
+    #expect(defaults.data(forKey: "com.cunderw.driverr.hosts.unreadable") == corrupt)
+    #expect(try await store.hosts().isEmpty)
+  }
+
+  @Test("a list that is not an array is copied aside when the first write is a delete")
+  func corruptListIsBackedUpOnDelete() async throws {
+    let suite = makeSuiteName()
+    defer { cleanUp(suite) }
+    let corrupt = Data("nope".utf8)
+    let defaults = try #require(UserDefaults(suiteName: suite))
+    defaults.set(corrupt, forKey: "com.cunderw.driverr.hosts")
+
+    try await UserDefaultsHostStore(suiteName: suite).delete(UUID())
+
+    #expect(defaults.data(forKey: "com.cunderw.driverr.hosts.unreadable") == corrupt)
+    #expect(defaults.data(forKey: "com.cunderw.driverr.hosts") == Data("[]".utf8))
+  }
 }
