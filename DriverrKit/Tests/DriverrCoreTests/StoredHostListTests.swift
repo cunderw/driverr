@@ -56,7 +56,7 @@ struct StoredHostListTests {
     #expect(!list.storedDataIsUnreadable)
   }
 
-  @Test("a save keeps the unreadable element, in its position and with the same bytes")
+  @Test("a save keeps the unreadable element, JSON-equal, in its position, with stable bytes")
   func saveKeepsUnreadable() throws {
     let (data, middle) = threeWithUnknownMiddle()
     var list = StoredHostList(data: data)
@@ -133,7 +133,7 @@ struct StoredHostListTests {
     #expect(StoredHostList(data: saved).hosts.map(\.name) == ["ok", "added"])
   }
 
-  @Test("with nothing unreadable the bytes are JSONEncoder's for [Host]")
+  @Test("a list JSONEncoder wrote reads back and writes back JSON-equal")
   func roundTripMatchesEncoder() throws {
     let hosts = [
       host("one"),
@@ -142,9 +142,40 @@ struct StoredHostListTests {
     let data = try JSONEncoder().encode(hosts)
 
     let list = StoredHostList(data: data)
+    let written = try list.encoded()
 
     #expect(list.hosts == hosts)
-    #expect(try list.encoded() == JSONEncoder().encode(hosts))
+    #expect(try array(written) == array(data))
+    #expect(try JSONDecoder().decode([DriverrCore.Host].self, from: written) == hosts)
+  }
+
+  @Test("a readable host keeps a field this build does not know when another host changes")
+  func unknownFieldSurvivesOtherWrites() throws {
+    let newer = #"{"id":"\#(UUID().uuidString)","name":"newer","hostname":"h","port":22,"#
+      + #""username":"u","authMethod":{"password":{}},"futureField":"kept"}"#
+    let text = "[\(newer),\(element("other", authMethod: password))]"
+    let original = try array(Data(text.utf8))[0] as? NSDictionary
+
+    var saved = StoredHostList(data: Data(text.utf8))
+    saved.save(host("added"))
+    var deleted = StoredHostList(data: Data(text.utf8))
+    deleted.delete(deleted.hosts[1].id)
+
+    #expect(saved.hosts.map(\.name) == ["newer", "other", "added"])
+    #expect(try array(saved.encoded())[0] as? NSDictionary == original)
+    #expect(deleted.hosts.map(\.name) == ["newer"])
+    #expect(try array(deleted.encoded())[0] as? NSDictionary == original)
+  }
+
+  @Test("a number JSON cannot write back makes the whole list unreadable instead of crashing")
+  func infinityIsUnreadable() {
+    let nested = "[\(element("ok", authMethod: password)),{\"port\":[-1e400]}]"
+    for text in ["[-1e400]", nested, "[1e400,\(element("ok", authMethod: password))]"] {
+      let list = StoredHostList(data: Data(text.utf8))
+      #expect(list.hosts.isEmpty)
+      #expect(list.entries.isEmpty)
+      #expect(list.storedDataIsUnreadable)
+    }
   }
 
   @Test("data that is not an array reads as empty and is marked unreadable")

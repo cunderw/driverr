@@ -151,4 +151,18 @@ struct UserDefaultsHostStoreTests {
     #expect(defaults.data(forKey: "com.cunderw.driverr.hosts.unreadable") == corrupt)
     #expect(try await store.hosts().isEmpty)
   }
+
+  @Test("a list that is not an array is copied aside when the first write is a delete")
+  func corruptListIsBackedUpOnDelete() async throws {
+    let suite = makeSuiteName()
+    defer { cleanUp(suite) }
+    let corrupt = Data("nope".utf8)
+    let defaults = try #require(UserDefaults(suiteName: suite))
+    defaults.set(corrupt, forKey: "com.cunderw.driverr.hosts")
+
+    try await UserDefaultsHostStore(suiteName: suite).delete(UUID())
+
+    #expect(defaults.data(forKey: "com.cunderw.driverr.hosts.unreadable") == corrupt)
+    #expect(defaults.data(forKey: "com.cunderw.driverr.hosts") == Data("[]".utf8))
+  }
 }

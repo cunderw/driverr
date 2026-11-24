@@ -7,8 +7,9 @@ import Foundation
 /// kept as written, so editing an entry does not reshuffle the list.
 ///
 /// `StoredHostList` reads the list one host at a time. A host this build cannot read, for
-/// example one a newer build saved with a new auth method, is left out of `hosts()` and is
-/// written back unchanged on every save and delete.
+/// example one a newer build saved with a new auth method, is left out of `hosts()`. Every
+/// save and delete writes it back JSON-equal, and keeps a readable host's unknown fields
+/// unless that host is the one saved.
 actor UserDefaultsHostStore: HostStore {
   private let defaults: UserDefaults
   private let key = "com.cunderw.driverr.hosts"
