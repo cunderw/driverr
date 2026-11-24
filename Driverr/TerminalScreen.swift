@@ -1329,11 +1329,28 @@ struct TerminalScreen: View {
   private var connectionBar: some View {
     switch scene.notice {
     case .reconnecting?:
-      HStack(spacing: 8) {
-        ProgressView().controlSize(.small)
-        Text("Reconnecting to \(host.displayName)…")
-          .font(.footnote)
-          .accessibilityIdentifier("terminal.reconnecting")
+      VStack(alignment: .leading, spacing: 8) {
+        HStack(spacing: 8) {
+          ProgressView().controlSize(.small)
+          Text("Reconnecting to \(host.displayName)…")
+            .font(.footnote)
+            .accessibilityIdentifier("terminal.reconnecting")
+        }
+        // A host holding the reconnect for a sign-in on the web, as Tailscale SSH's check mode
+        // does. The hold can last half an hour, so the URL and a way out are both here.
+        if let url = scene.model.signInURL {
+          SignInRow(url: url, identifiers: .terminal)
+          HStack {
+            Spacer()
+            Button {
+              Task { await scene.stopReconnecting() }
+            } label: {
+              BorderedButtonLabel("Cancel")
+            }
+            .buttonStyle(.bordered)
+            .accessibilityIdentifier("terminal.signIn.cancel")
+          }
+        }
       }
       .padding(12)
       .frame(maxWidth: .infinity, alignment: .leading)
