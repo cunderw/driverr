@@ -154,10 +154,13 @@ final class KeyInstallModel {
   /// Why the test login failed. A refused key gets its likely causes instead of the connect
   /// screen's "Check the username and credentials", which is wrong advice here.
   static func loginFailure(_ error: AppError) -> String {
-    if case .authenticationFailed = error {
+    switch error {
+    case .authenticationFailed, .authenticationRefused:
+      // A refusal after a banner too: an sshd's notice banner says nothing about the key.
       return "The host refused the key. Its sshd may read keys from another file than ~/.ssh/authorized_keys, or refuse the file because of its permissions."
+    default:
+      return error.errorDescription ?? "The login was refused."
     }
-    return error.errorDescription ?? "The login was refused."
   }
 
   var isBusy: Bool {

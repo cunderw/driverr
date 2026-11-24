@@ -16,6 +16,7 @@ struct HostDetailView: View {
   @Environment(\.liveActivityPreferences) private var liveActivityPreferences
   /// Continue in Background's one run, and whether it is this host's.
   @Environment(\.backgroundWatch) private var backgroundWatch
+  @Environment(\.openURL) private var openURL
 
   /// The host as the caller had it. A fallback only: `host` prefers the list's live copy, so
   /// an edit made from this screen reaches it without a rebuild.
@@ -459,11 +460,20 @@ struct HostDetailView: View {
         connectionPill(model)
       }
 
-      // Every spinner has a way out. The coordinator's deadline is twenty seconds.
+      // Every spinner has a way out. The coordinator's deadline is twenty seconds, and it
+      // does not run while the host waits for a sign-in on the web.
       //
       // Beside the pill, not in the details: SwiftUI does not build a collapsed
       // `DisclosureGroup`'s content, so Cancel there would not exist during an unattended
       // connect. `testCancelEndsAConnectThatIsStillRunning` covers this.
+      // Beside the pill for the same reason as Cancel: a host that needs no credential
+      // connects unattended, with the details folded.
+      if let url = model.signInURL,
+        model.phase == .connecting || model.phase == .authenticating
+      {
+        signInRow(url)
+      }
+
       if model.phase == .connecting || model.phase == .authenticating {
         Button("Cancel", role: .cancel) {
           // Cleared on the tap: the cancelled attempt stays suspended in the handshake and the
@@ -473,6 +483,40 @@ struct HostDetailView: View {
         }
         .accessibilityIdentifier("connect.cancel")
       }
+    }
+  }
+
+  /// The page a host asked the user to sign in on, while it holds the connection. Tailscale
+  /// SSH's check mode does this. The connect finishes by itself once the sign-in is done.
+  ///
+  /// The host gets a line of its own, cut from the front, so the end of the name, which
+  /// holds the registrable domain, always shows. A long name such as
+  /// `login.tailscale.com.aaaa….evil.example` cannot then pass for a trusted one. The server
+  /// writes the URL.
+  ///
+  /// Identifiers on the host, the URL and the button, never the stack.
+  private func signInRow(_ url: URL) -> some View {
+    HStack(spacing: 12) {
+      VStack(alignment: .leading, spacing: 3) {
+        Text("Sign in to continue")
+        if let host = url.host() {
+          Text(host)
+            .font(.footnote.weight(.semibold))
+            .lineLimit(1)
+            .truncationMode(.head)
+            .accessibilityIdentifier("connect.signInHost")
+        }
+        Text(url.absoluteString)
+          .font(.footnote)
+          .foregroundStyle(.secondary)
+          .lineLimit(2)
+          .truncationMode(.middle)
+          .accessibilityIdentifier("connect.signInURL")
+      }
+      Spacer(minLength: 0)
+      Button("Open") { openURL(url) }
+        .buttonStyle(.bordered)
+        .accessibilityIdentifier("connect.signInOpen")
     }
   }
 

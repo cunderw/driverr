@@ -55,5 +55,6 @@ struct SSHAuthMethodTests {
     let key = SSHPrivateKey(rawRepresentation: Data(repeating: 1, count: 32))
     #expect(SSHAuthMethod.password("x").debugDescription.contains("password"))
     #expect(SSHAuthMethod.privateKey(key).debugDescription.contains("privateKey"))
+    #expect(SSHAuthMethod.none.debugDescription == "SSHAuthMethod.none")
   }
 }

@@ -82,6 +82,36 @@ public protocol SSHTransport: Sendable {
   /// the next `connect` gets a fresh one. `disconnect` finishes it before teardown, so a
   /// requested disconnect is never reported as a loss.
   var disconnections: AsyncStream<AppError> { get async }
+  /// The banners the server sends during user authentication, as raw text, in order.
+  ///
+  /// Like `disconnections`, the stream belongs to one connection: each `connect` builds a
+  /// fresh one. It finishes when authentication settles or the connection is torn down.
+  /// Read it after `connect` returns. Before any connect it is already finished.
+  ///
+  /// A banner can arrive while the server holds the request, before `authenticate`
+  /// returns. Tailscale SSH sends its sign-in URL this way. See `AuthBanner`.
+  var authenticationBanners: AsyncStream<String> { get async }
+}
+
+/// What a server's close during user authentication means, from the banners it sent first.
+///
+/// A refusal that arrives as SSH_MSG_USERAUTH_FAILURE is not this: it is always
+/// `authenticationFailed`, whatever banner came before, because an sshd's notice banner is not
+/// the reason a password was wrong. A close with no failure message is how Tailscale SSH denies
+/// a user, and its last banner without a sign-in URL is the reason. A close after only the
+/// sign-in banner is the sign-in ending, and the URL is not a reason to quote. A pipeline
+/// error during authentication, such as a TCP reset, reads the same way as a close.
+enum AuthenticationClose {
+  static func failure(host: String, banners: [String]) -> AppError {
+    let reasons = banners.filter { AuthBanner.signInURL(in: $0) == nil }
+    if let message = reasons.last.flatMap(AuthBanner.displayText) {
+      return .authenticationRefused(host: host, message: message)
+    }
+    if !banners.isEmpty {
+      return .disconnected(reason: "\(host) closed the connection before the sign-in finished.")
+    }
+    return .authenticationFailed(host: host)
+  }
 }
 
 /// The scripted forms of `execChannel` and `execStream`. Each wraps its script with

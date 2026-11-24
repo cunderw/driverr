@@ -46,6 +46,19 @@ public actor FakeSSHTransport: SSHTransport {
   /// Handshakes parked on `hangsUntilDisconnected`. `disconnect()` always resumes them,
   /// because a dropped `CheckedContinuation` logs a runtime misuse warning.
   private var parkedHandshakes: [CheckedContinuation<Void, any Error>] = []
+  /// Sent as an auth banner when `authenticate` starts, if set, as Tailscale SSH's check
+  /// mode sends its sign-in URL.
+  private let authenticationBanner: String?
+  /// When set, a refusal is a close with no failure message, as Tailscale SSH denies a user,
+  /// and its error follows `AuthenticationClose`. Otherwise a refusal is an ordinary
+  /// SSH_MSG_USERAUTH_FAILURE and is `authenticationFailed` whatever the banner said.
+  private let refusalClosesTheConnection: Bool
+  /// How long `authenticate` holds the request after the banner, as check mode holds it
+  /// while the user signs in on the web. Cancellation ends the hold.
+  private let authenticationHold: Duration?
+  /// The auth banners of the current connection. See `SSHTransport.authenticationBanners`.
+  private var bannerStream: AsyncStream<String>?
+  private var bannerSignal: AsyncStream<String>.Continuation?
   private var openChannels: [FakePTYChannel] = []
   private var openStreams: [FakeExecStream] = []
   /// Remembered from `connect` so failures name the host that refused, as
@@ -95,6 +108,9 @@ public actor FakeSSHTransport: SSHTransport {
     echoesInput: Bool = true,
     handshakeStall: Duration? = nil,
     hangsUntilDisconnected: Bool = false,
+    authenticationBanner: String? = nil,
+    authenticationHold: Duration? = nil,
+    refusalClosesTheConnection: Bool = false,
     streamResponder: (@Sendable (String) -> Data?)? = nil,
     onStreamClose: (@Sendable (String) -> Void)? = nil,
     onActivity: (@Sendable () -> Void)? = nil
@@ -109,6 +125,9 @@ public actor FakeSSHTransport: SSHTransport {
     self.echoesInput = echoesInput
     self.handshakeStall = handshakeStall
     self.hangsUntilDisconnected = hangsUntilDisconnected
+    self.authenticationBanner = authenticationBanner
+    self.authenticationHold = authenticationHold
+    self.refusalClosesTheConnection = refusalClosesTheConnection
     self.streamResponder = streamResponder
     self.onStreamClose = onStreamClose
     self.onActivity = onActivity
@@ -144,7 +163,14 @@ public actor FakeSSHTransport: SSHTransport {
       connectedHost = host
       state = .connected
       armClosureSignal()
+      bannerSignal?.finish()
+      (bannerStream, bannerSignal) = AsyncStream.makeStream(of: String.self)
     }
+  }
+
+  public var authenticationBanners: AsyncStream<String> {
+    // With nothing connected, a finished stream, as `disconnections` does.
+    bannerStream ?? AsyncStream { $0.finish() }
   }
 
   public func authenticate(_ method: SSHAuthMethod) async throws {
@@ -152,13 +178,28 @@ public actor FakeSSHTransport: SSHTransport {
       throw AppError.channelFailed(reason: "Not connected.")
     }
     authenticationAttempts.append(method)
-    guard acceptsCredentials else {
-      throw AppError.authenticationFailed(host: connectedHost?.hostname ?? "unknown host")
+    // Settled on every path, as `NIOSSHTransport` finishes its stream when auth settles.
+    defer {
+      bannerSignal?.finish()
+      bannerSignal = nil
     }
-    if case .privateKey = method, !acceptsPrivateKeys {
-      throw AppError.authenticationFailed(host: connectedHost?.hostname ?? "unknown host")
-    }
+    if let authenticationBanner { bannerSignal?.yield(authenticationBanner) }
+    if let authenticationHold { try await Task.sleep(for: authenticationHold) }
+    let refused = !acceptsCredentials || (isPrivateKey(method) && !acceptsPrivateKeys)
+    guard !refused else { throw refusal }
     state = .authenticated
+  }
+
+  private func isPrivateKey(_ method: SSHAuthMethod) -> Bool {
+    if case .privateKey = method { return true }
+    return false
+  }
+
+  /// What `NIOSSHTransport` throws for the same refusal.
+  private var refusal: AppError {
+    let host = connectedHost?.hostname ?? "unknown host"
+    guard refusalClosesTheConnection else { return .authenticationFailed(host: host) }
+    return AuthenticationClose.failure(host: host, banners: authenticationBanner.map { [$0] } ?? [])
   }
 
   public func ptyChannel(size: TerminalSize) async throws -> any PTYChannel {
@@ -371,6 +412,8 @@ public actor FakeSSHTransport: SSHTransport {
     // Finished, never yielded to: a closure Driverr asked for is not a loss.
     closureSignal?.finish()
     closureSignal = nil
+    bannerSignal?.finish()
+    bannerSignal = nil
     // Before the channels. A real transport gets this for free, because closing the NIO
     // channel fails every promise waiting on it.
     failParkedHandshakes()

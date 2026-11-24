@@ -119,4 +119,33 @@ struct HostAuthSettingsTests {
     #expect(decoded.authMethod == .password)
     #expect(decoded.herdrSocketPath == nil)
   }
+
+  /// A Tailscale SSH host saves with no credential (#171).
+  @Test("a host with no credential round-trips through Codable")
+  func noneRoundTrips() throws {
+    let host = DriverrCore.Host(
+      name: "tailnet", hostname: "100.64.0.1", username: "carson", authMethod: .none)
+    let decoded = try JSONDecoder().decode(DriverrCore.Host.self, from: JSONEncoder().encode(host))
+    #expect(decoded == host)
+    #expect(decoded.authMethod == HostAuthMethod.none)
+  }
+
+  /// Adding a case must not change how the existing ones are written, or a saved host would
+  /// stop decoding on upgrade.
+  @Test("password and key hosts saved by an earlier build still decode")
+  func earlierAuthEncodingsStillDecode() throws {
+    let identityID = UUID()
+    let written: [(json: String, expected: HostAuthMethod)] = [
+      (#"{"password":{}}"#, .password),
+      (#"{"identity":{"_0":"\#(identityID.uuidString)"}}"#, .identity(identityID)),
+    ]
+    for (authJSON, expected) in written {
+      let json = """
+        {"id":"\(UUID().uuidString)","name":"old","hostname":"10.1.0.9","port":22,
+         "username":"carson","authMethod":\(authJSON)}
+        """
+      let decoded = try JSONDecoder().decode(DriverrCore.Host.self, from: Data(json.utf8))
+      #expect(decoded.authMethod == expected)
+    }
+  }
 }

@@ -31,6 +31,17 @@ struct AppErrorTests {
     #expect(error != AppError.authenticationFailed(host: "workbox"))
   }
 
+  /// A Tailscale SSH denial says why only in its banner, so the message carries it.
+  @Test("a refusal after a banner names the host and quotes the banner")
+  func authenticationRefusedQuotesTheBanner() {
+    let error = AppError.authenticationRefused(host: "tailnet", message: "policy says no")
+    #expect(
+      error.errorDescription
+        == "Authentication was refused by tailnet. The host said:\n“policy says no”")
+    #expect(!error.isRetryable)
+    #expect(error != AppError.authenticationFailed(host: "tailnet"))
+  }
+
   @Test("a dropped connection is retryable, unlike a key mismatch")
   func disconnectionIsRetryable() {
     #expect(AppError.disconnected(reason: "timed out").isRetryable)
@@ -52,6 +63,7 @@ struct AppErrorTests {
     let cases: [AppError] = [
       .connectionFailed(host: "h", reason: "refused"),
       .authenticationFailed(host: "h"),
+      .authenticationRefused(host: "h", message: "policy says no"),
       .passwordRequired(host: "h"),
       .hostKeyMismatch(host: "h"),
       .hostKeyRejected(host: "h"),

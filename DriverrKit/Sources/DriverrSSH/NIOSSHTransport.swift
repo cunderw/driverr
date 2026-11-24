@@ -32,6 +32,11 @@ public actor NIOSSHTransport: SSHTransport {
     closureStream ?? AsyncStream { $0.finish() }
   }
 
+  public var authenticationBanners: AsyncStream<String> {
+    // With nothing connected, a finished stream, as `disconnections` does.
+    coordinator?.banners ?? AsyncStream { $0.finish() }
+  }
+
   public func connect(
     to host: DriverrCore.Host,
     hostKeyValidator: any HostKeyValidator
@@ -75,6 +80,11 @@ public actor NIOSSHTransport: SSHTransport {
     do {
       connected = try await bootstrap.connect(host: host.hostname, port: host.port).get()
       channel = connected
+      // A server that closes during the handshake sends no failure message, and the close
+      // does not reach `AuthenticationOutcomeHandler`. Tailscale SSH denies a user this
+      // way, after a banner. Without this the attempt waits for the handshake deadline.
+      // On the channel's loop, where the coordinator is confined. A no-op once settled.
+      connected.closeFuture.whenComplete { _ in coordinator.connectionClosed() }
     } catch {
       await teardown()
       throw AppError.connectionFailed(
@@ -317,6 +327,13 @@ final class HandshakeCoordinator: NIOSSHClientServerAuthenticationDelegate,
   private let hostKeyDecided: EventLoopPromise<Void>
   private let credentialAvailable: EventLoopPromise<SSHAuthMethod>
   private let authenticationFinished: EventLoopPromise<Void>
+  /// The server's auth banners. Read from any thread; written only on the loop.
+  let banners: AsyncStream<String>
+  private let bannerSignal: AsyncStream<String>.Continuation
+  /// The banners so far, newest last, so a close after them can say what the server said.
+  /// A Tailscale SSH host that denies a user sends the reason as a banner and then closes the
+  /// connection. See `AuthenticationClose`. Bounded, because the server writes them.
+  private var receivedBanners: [String] = []
 
   /// Driverr offers one credential per `authenticate` call. A refusal then surfaces at
   /// once, instead of the delegate parking on a second credential nobody supplies.
@@ -335,6 +352,7 @@ final class HandshakeCoordinator: NIOSSHClientServerAuthenticationDelegate,
     hostKeyDecided = eventLoop.makePromise(of: Void.self)
     credentialAvailable = eventLoop.makePromise(of: SSHAuthMethod.self)
     authenticationFinished = eventLoop.makePromise(of: Void.self)
+    (banners, bannerSignal) = AsyncStream.makeStream(of: String.self)
   }
 
   func waitForHostKeyDecision() async throws {
@@ -369,6 +387,7 @@ final class HandshakeCoordinator: NIOSSHClientServerAuthenticationDelegate,
         authenticationSettled = true
         authenticationFinished.fail(AppError.cancelled)
       }
+      bannerSignal.finish()
     }.get()
   }
 
@@ -463,6 +482,10 @@ final class HandshakeCoordinator: NIOSSHClientServerAuthenticationDelegate,
         serviceName: "",
         offer: .password(.init(password: password))
       )
+    case .none:
+      // Not checked against `availableMethods`: no server lists "none" there (RFC 4252,
+      // section 5.2), and Tailscale SSH accepts it anyway.
+      return NIOSSHUserAuthenticationOffer(username: host.username, serviceName: "", offer: .none)
     case .privateKey(let key):
       guard availableMethods.contains(.publicKey),
         let signingKey = try? Curve25519.Signing.PrivateKey(
@@ -482,6 +505,7 @@ final class HandshakeCoordinator: NIOSSHClientServerAuthenticationDelegate,
   func settleAuthentication(with error: (any Error)?) {
     guard !authenticationSettled else { return }
     authenticationSettled = true
+    bannerSignal.finish()
     if let error {
       authenticationFinished.fail(error)
       // A connection that dies during key exchange never reaches the host-key decision.
@@ -494,12 +518,45 @@ final class HandshakeCoordinator: NIOSSHClientServerAuthenticationDelegate,
     }
   }
 
+  /// A refusal the server sent as SSH_MSG_USERAUTH_FAILURE. Never quotes a banner. See
+  /// `AuthenticationClose`.
   var authenticationFailure: AppError {
     AppError.authenticationFailed(host: host.hostname)
+  }
+
+  /// Called when the connection closes. After the host-key decision, a close settles
+  /// authentication with what the banners before it say. See `AuthenticationClose`.
+  ///
+  /// Before the decision it does nothing. A close then already reaches `errorCaught`
+  /// (measured: a server that closes on accept fails at once), and a close while the trust
+  /// prompt is up is left to the prompt, as before.
+  func connectionClosed() {
+    guard hostKeySettled else { return }
+    settleAuthentication(
+      with: AuthenticationClose.failure(host: host.hostname, banners: receivedBanners))
+  }
+
+  /// Called when the pipeline fails, such as on a TCP reset. Settles the same way as a close,
+  /// because a reset can end a denial before the close does. With no banner it is
+  /// `authenticationFailed`, as before.
+  func pipelineFailed() {
+    settleAuthentication(
+      with: AuthenticationClose.failure(host: host.hostname, banners: receivedBanners))
+  }
+
+  /// Called by the pipeline for each SSH_MSG_USERAUTH_BANNER. Ignored once authentication
+  /// has settled.
+  func receivedBanner(_ text: String) {
+    guard !authenticationSettled else { return }
+    receivedBanners = Array((receivedBanners + [text]).suffix(8))
+    bannerSignal.yield(text)
   }
 }
 
 /// Watches the parent channel for the end of user authentication.
+///
+/// It never sees `channelInactive`: `NIOSSHHandler` (checked on 0.15.0) does not pass it on.
+/// `connect` watches the channel's `closeFuture` for a server that closes instead.
 private final class AuthenticationOutcomeHandler: ChannelInboundHandler {
   typealias InboundIn = Any
 
@@ -512,20 +569,15 @@ private final class AuthenticationOutcomeHandler: ChannelInboundHandler {
   func userInboundEventTriggered(context: ChannelHandlerContext, event: Any) {
     if event is UserAuthSuccessEvent {
       coordinator.settleAuthentication(with: nil)
+    } else if let banner = event as? NIOUserAuthBannerEvent {
+      coordinator.receivedBanner(banner.message)
     }
     context.fireUserInboundEventTriggered(event)
   }
 
   func errorCaught(context: ChannelHandlerContext, error: any Error) {
-    coordinator.settleAuthentication(with: coordinator.authenticationFailure)
+    coordinator.pipelineFailed()
     context.fireErrorCaught(error)
-  }
-
-  /// Reached when the server rejects the credential: NIOSSH tears the connection down
-  /// rather than reporting a failure inline.
-  func channelInactive(context: ChannelHandlerContext) {
-    coordinator.settleAuthentication(with: coordinator.authenticationFailure)
-    context.fireChannelInactive()
   }
 }
 

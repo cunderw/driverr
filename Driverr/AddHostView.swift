@@ -20,11 +20,27 @@ struct AddHostView: View {
   @State private var hostname = ""
   @State private var port = "22"
   @State private var username = ""
-  @State private var usesKey = false
+  @State private var signIn = SignIn.password
   @State private var selectedIdentity: UUID?
   @State private var herdrSocketPath = ""
   @State private var identities: [SSHIdentity] = []
   @State private var generateKeyError: String?
+
+  /// How the host signs in, as the form offers it. `makeHost()` turns it into a
+  /// `HostAuthMethod`.
+  private enum SignIn: Hashable, CaseIterable {
+    case password, key, tailscale
+
+    var title: String {
+      switch self {
+      case .password: "Password"
+      case .key: "Key"
+      // Named for the one server Driverr knows takes no credential. "None" alone would read
+      // as "no security".
+      case .tailscale: "Tailscale SSH (no password)"
+      }
+    }
+  }
 
   private enum Field: Hashable {
     case name, hostname, port, username
@@ -76,14 +92,19 @@ struct AddHostView: View {
         }
 
         Section {
-          Toggle("Use a Key", isOn: $usesKey)
-            .accessibilityIdentifier("host.usesKey")
-            .onChange(of: usesKey) { _, isOn in
-              // Default to the first key. An unset picker would save the host as password auth.
-              if isOn, selectedIdentity == nil { selectedIdentity = identities.first?.id }
+          Picker("Sign In", selection: $signIn) {
+            ForEach(SignIn.allCases, id: \.self) { choice in
+              Text(choice.title).tag(choice)
             }
+          }
+          .pickerStyle(.menu)
+          .accessibilityIdentifier("host.authMethod")
+          .onChange(of: signIn) { _, choice in
+            // Default to the first key. An unset picker would save the host as password auth.
+            if choice == .key, selectedIdentity == nil { selectedIdentity = identities.first?.id }
+          }
 
-          if usesKey {
+          if signIn == .key {
             if let selectedIdentity, !identities.contains(where: { $0.id == selectedIdentity }) {
               // The selected identity was deleted from the Keys screen. Without this the picker
               // looks the same as "no key chosen yet".
@@ -115,10 +136,17 @@ struct AddHostView: View {
         } header: {
           Text("Authentication")
         } footer: {
-          // A footer for the reason the port hint is. Only for password auth, because with a
-          // key there is no password to ask for.
-          if !usesKey {
+          // A footer for the reason the port hint is. None for a key, which needs no word.
+          switch signIn {
+          case .password:
             Text("You'll be asked for a password when connecting.")
+          case .tailscale:
+            Text(
+              "Tailscale signs you in with your tailnet identity. If the host asks you to "
+                + "sign in again, Driverr shows the link while it waits."
+            )
+          case .key:
+            EmptyView()
           }
         }
 
@@ -181,7 +209,7 @@ struct AddHostView: View {
       !username.trimmingCharacters(in: .whitespaces).isEmpty,
       let portValue = Int(port), (1...65535).contains(portValue)
     else { return false }
-    if usesKey {
+    if signIn == .key {
       // Invalid while there is no selection or the selected identity is gone, so the host
       // is never saved as password auth by accident.
       guard let selectedIdentity, identities.contains(where: { $0.id == selectedIdentity })
@@ -196,9 +224,14 @@ struct AddHostView: View {
     port = String(host.port)
     username = host.username
     herdrSocketPath = host.herdrSocketPath ?? ""
-    if case .identity(let id) = host.authMethod {
-      usesKey = true
+    switch host.authMethod {
+    case .identity(let id):
+      signIn = .key
       selectedIdentity = id
+    case .password:
+      signIn = .password
+    case .none:
+      signIn = .tailscale
     }
   }
 
@@ -210,10 +243,18 @@ struct AddHostView: View {
       hostname: hostname.trimmingCharacters(in: .whitespaces),
       port: Int(port) ?? 22,
       username: username.trimmingCharacters(in: .whitespaces),
-      authMethod: (usesKey ? selectedIdentity.map { HostAuthMethod.identity($0) } : nil)
-        ?? .password,
+      authMethod: authMethod,
       herdrSocketPath: socket.isEmpty ? nil : socket
     )
+  }
+
+  private var authMethod: HostAuthMethod {
+    switch signIn {
+    case .password: .password
+    // `isValid` keeps Save off without a selection, so the fallback is never saved.
+    case .key: selectedIdentity.map { .identity($0) } ?? .password
+    case .tailscale: .none
+    }
   }
 
   /// Generates a key and selects it, as `IdentityListModel.generate()` does on the Keys

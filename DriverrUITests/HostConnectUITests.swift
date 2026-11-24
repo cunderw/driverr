@@ -89,7 +89,9 @@ final class HostConnectUITests: XCTestCase {
     _ app: XCUIApplication,
     name: String = "workbox",
     hostname: String = "10.1.0.9",
-    username: String = "carson"
+    username: String = "carson",
+    /// The sign-in picker's title to choose, or `nil` to keep its default, Password.
+    signIn: String? = nil
   ) {
     require(app, "hosts.add", "Expected an add-host button").tap()
 
@@ -99,6 +101,7 @@ final class HostConnectUITests: XCTestCase {
     app.typeText(hostname)
     require(app, "host.username", "Expected a username field").tap()
     app.typeText(username)
+    if let signIn { pickSignIn(app, signIn) }
 
     // This tap follows typing into a form sheet, which can still be moving. See
     // `waitUntilStill`.
@@ -282,6 +285,24 @@ final class HostConnectUITests: XCTestCase {
     XCTAssertTrue(
       output.label.contains("Linux"),
       "Expected the command's stdout, got: \(output.label)"
+    )
+  }
+
+  /// A Tailscale SSH host takes no credential (#171): the form saves it with none, and the
+  /// host screen connects on appearance with no password field. The fake accepts "none" the
+  /// way tailscaled does.
+  func testATailscaleHostConnectsWithNoPassword() {
+    let app = launchApp()
+    addHost(app, name: "tailnet", signIn: "Tailscale SSH (no password)")
+    require(app, "hosts.row", "Expected the new host").tap()
+
+    // Nothing is tapped to connect. First contact still asks about the host key.
+    tapTrustPrompt(app, "Expected first contact to still ask about the host key")
+    require(app, "connect.connected", "Expected the host to connect with no password", timeout: 15)
+    XCTAssertFalse(
+      element(app, "connect.password").exists,
+      "A host that takes no credential must not ask for a password."
+        + "\nTree was:\n\(app.debugDescription)"
     )
   }
 
