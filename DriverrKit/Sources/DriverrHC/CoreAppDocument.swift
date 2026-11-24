@@ -3,8 +3,8 @@ import Foundation
 /// The part of the Herdr desktop app's `herdr-app` document that names and orders things.
 ///
 /// The format is private to the app and can change under any release, so nothing here is
-/// required and a document this cannot read costs only the order. Labels build the groups;
-/// this never adds or removes one. Driverr never writes it.
+/// required and a document this cannot read costs only the order and the names. Labels build
+/// the groups; this never adds or removes one. Driverr never writes it.
 struct CoreAppDocument: Decodable, Equatable, Sendable {
   struct Space: Decodable, Equatable, Sendable {
     let id: String?
