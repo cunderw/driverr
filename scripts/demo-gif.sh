@@ -2,7 +2,8 @@
 #
 # Record the README's demo GIF, docs/readme/demo.gif.
 #
-#   scripts/demo-gif.sh <udid>   record on that simulator, an iPhone that is booted
+#   scripts/demo-gif.sh          record on `Driverr iPhone 17`, which must be booted
+#   scripts/demo-gif.sh <udid>   record on that simulator instead, an iPhone that is booted
 #   scripts/demo-gif.sh --help   this text. It touches no simulator
 #
 # The GIF is the core flow, recorded against the seeded test session: Needs You lists two
@@ -13,24 +14,24 @@
 # How it works:
 #
 # 1. It fixes the status bar at 9:41 with full bars and battery, and clears it again on exit.
-# 2. It starts `xcrun simctl io <udid> recordVideo` and notes the time it started.
-# 3. scripts/look.sh walks the flow in dark appearance. Its `shot:start` and `shot:end`
-#    steps mark where the GIF begins and ends.
-# 4. It stops the recorder, reads the two shots' times from look.sh's attachment manifest,
-#    and cuts the video between them. So the build before the walk and the app's exit after
-#    it are not in the GIF, and no trim point is typed in by hand.
+# 2. It starts `xcrun simctl io <udid> recordVideo`.
+# 3. scripts/look.sh walks the flow in dark appearance. Its `shot:start` (Needs You) and
+#    `shot:end` (the agent working) are the two screens the cut is found by.
+# 4. It stops the recorder and finds those two screens in the movie by SSIM. The GIF opens
+#    HOLD_BEFORE_TAP seconds before Needs You is left and ends HOLD_AT_END seconds after the
+#    agent is first shown working. So the build before the walk, the app's exit after it and
+#    the time XCUITest takes over each step are not in the GIF, and no trim point is typed in
+#    by hand. The wall clock is no use here: the movie's clock does not follow it, and a cut
+#    from the shots' timestamps landed 6 s off after a build.
 # 5. ffmpeg turns the cut into a GIF with its own palette. It fails over 15 s or 5 MB.
 #
 # The video, the shots and a copy of every GIF frame go to .build-logs/demo-gif/, which git
 # ignores. Read the frames before you commit a new GIF: the flow must be right and nothing
 # private may show.
 #
-# Run it through the gate locks, which also boot the device:
-#
-#   ~/.claude/tools/gatelocks.py run --repo "$PWD" --pool "Driverr iPhone 17" -- \
-#     scripts/demo-gif.sh {udid}
-#
-# It needs ffmpeg and ffprobe on PATH.
+# Nothing else may run on that simulator or in this checkout while it records (CONTRIBUTING.md,
+# "Two runs in one checkout or on one simulator give a wrong result"). It needs ffmpeg and
+# ffprobe on PATH.
 
 set -euo pipefail
 
@@ -43,12 +44,10 @@ fail() {
 
 case "${1:-}" in
   -h | --help)
-    sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '3,/^$/p' "$0" | sed 's/^# \{0,1\}//'
     exit 0
     ;;
-  "") fail "name the simulator: scripts/demo-gif.sh <udid> (see --help)" ;;
 esac
-UDID="$1"
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO_ROOT"
@@ -56,20 +55,27 @@ cd "$REPO_ROOT"
 command -v ffmpeg >/dev/null || fail "ffmpeg is not on PATH"
 command -v ffprobe >/dev/null || fail "ffprobe is not on PATH"
 
-STATE="$(xcrun simctl list -j devices | UDID="$UDID" python3 -c '
+# The named udid, or the one available device called `Driverr iPhone 17`, and its state.
+read -r UDID STATE < <(xcrun simctl list -j devices available | UDID="${1:-}" python3 -c '
 import json, os, sys
-for ds in json.load(sys.stdin)["devices"].values():
-    for d in ds:
-        if d["udid"] == os.environ["UDID"]:
-            print(d["state"])
-')"
-[ "$STATE" = "Booted" ] || fail "simulator $UDID is '${STATE:-not found}', not Booted"
+devices = [d for ds in json.load(sys.stdin)["devices"].values() for d in ds]
+asked = os.environ["UDID"]
+want = asked or "Driverr iPhone 17"
+found = [d for d in devices if d["udid" if asked else "name"] == want]
+if len(found) != 1:
+    sys.exit(f"{len(found)} available simulators match {want!r}, expected 1")
+print(found[0]["udid"], found[0]["state"])
+') || fail "could not find the simulator to record on"
+[ "$STATE" = "Booted" ] || fail "simulator $UDID is $STATE; boot it first"
 
 # The limits the README asks for, and the GIF's width in pixels.
 MAX_SECONDS=15
 MAX_BYTES=$((5 * 1024 * 1024))
-WIDTH=360
+WIDTH=480
 FPS=12
+# Seconds of Needs You before the tap, and of the working agent at the end.
+HOLD_BEFORE_TAP=2
+HOLD_AT_END=2.5
 
 WORK="$REPO_ROOT/.build-logs/demo-gif"
 rm -rf "$WORK"
@@ -79,13 +85,15 @@ SHOTS="$WORK/shots"
 GIF="$WORK/demo.gif"
 TARGET="$REPO_ROOT/docs/readme/demo.gif"
 
-# The walk. `shot:start` is on Needs You after it has settled, and `shot:end` is a moment
-# after the chat says the agent is working again.
-STEPS='tap:hosts.row,wait:session.needsYou,sleep:1.5,shot:start,sleep:2'
+# The walk. `shot:start` is Needs You once the session's second poll has added its second
+# blocked pane, `schema sync`, so the GIF does not open on the list growing. `shot:end` is the
+# chat once it says the agent is working again. The sleeps after each shot keep the GIF's
+# holds clear of the next step.
+STEPS='tap:hosts.row,wait:session.blockedPane|schema sync,sleep:1,shot:start,sleep:2'
 STEPS+=',tap:session.blockedPane|needs a decision'
-STEPS+=',wait:pane.chat.turn.pending.chip.Approve,sleep:2'
+STEPS+=',wait:pane.chat.turn.pending.chip.Approve,sleep:1.5'
 STEPS+=',tap:pane.chat.turn.pending.chip.Approve'
-STEPS+=',wait:pane.chat.activity|working,sleep:2.5,shot:end'
+STEPS+=',wait:pane.chat.activity|working,sleep:1,shot:end,sleep:3'
 ARGS='-uiTestingConnected -uiTestingDemoTranscript -uiTestingApproveContinues'
 
 RECORDER_PID=""
@@ -118,33 +126,61 @@ for _ in $(seq 1 100); do
 done
 grep -q "Recording started" "$WORK/recorder.log" \
   || fail "the recorder did not start; read $WORK/recorder.log"
-RECORD_START="$(python3 -c 'import time; print(time.time())')"
 
 scripts/look.sh --simulator-id "$UDID" --dark --args "$ARGS" --steps "$STEPS" --out "$SHOTS" \
   || fail "the walk failed; the shots are in $SHOTS"
 stop_recorder
 
-# Where `start` and `end` fall in the movie, from the attachment times in look.sh's manifest.
-read -r CUT_START CUT_LENGTH < <(SHOTS="$SHOTS" RECORD_START="$RECORD_START" python3 -c '
-import json, os, sys
-times = {}
-for test in json.load(open(os.path.join(os.environ["SHOTS"], "manifest.json"))):
-    for a in test.get("attachments", []):
-        name = (a.get("suggestedHumanReadableName") or "").split("_")[0]
-        times[name.split("-", 1)[-1]] = float(a["timestamp"])
-if "start" not in times or "end" not in times:
-    sys.exit("the manifest has no start or end shot: " + ", ".join(sorted(times)))
-start = times["start"] - float(os.environ["RECORD_START"])
-print(f"{start:.2f} {times['end'] - times['start']:.2f}")
-') || fail "could not read the shot times from $SHOTS/manifest.json"
-note "cut: from ${CUT_START} s, ${CUT_LENGTH} s long"
-python3 -c "import sys; sys.exit(0 if 0 < $CUT_LENGTH <= $MAX_SECONDS else 1)" \
-  || fail "the walk is ${CUT_LENGTH} s between its shots; the GIF must be 0 to $MAX_SECONDS s"
+# How like each shot every frame of the movie is, at $FPS frames a second. Small and grey,
+# because only the screen's layout has to match: a spinner's turn must not count.
+for which in start end; do
+  shot="$(ls "$SHOTS"/*-"$which".png 2>/dev/null | head -n 1)"
+  [ -n "$shot" ] || fail "look.sh wrote no '$which' shot; read $SHOTS"
+  ffmpeg -v error -i "$MOV" -i "$shot" -lavfi \
+    "[0]fps=$FPS,scale=160:-1,format=gray[a];[1]scale=160:-1,format=gray[b];[a][b]ssim=stats_file=$WORK/ssim-$which.txt" \
+    -f null - || fail "could not compare the movie with $shot"
+done
 
-FILTER="fps=$FPS,scale=$WIDTH:-1:flags=lanczos,split[a][b]"
+# The first run of frames that match each shot. Needs You is still until the tap, so the cut
+# starts HOLD_BEFORE_TAP before that run ends. The working chat starts at the first frame of
+# its run, and the cut ends HOLD_AT_END after it.
+read -r CUT_START CUT_END < <(WORK="$WORK" FPS="$FPS" HOLD_BEFORE_TAP="$HOLD_BEFORE_TAP" \
+  HOLD_AT_END="$HOLD_AT_END" python3 -c '
+import os, re, sys
+work, fps = os.environ["WORK"], float(os.environ["FPS"])
+def first_run(which):
+    scores = [float(re.search(r"All:([0-9.]+)", line).group(1))
+              for line in open(os.path.join(work, f"ssim-{which}.txt"))]
+    best = max(scores)
+    if best < 0.95:
+        sys.exit(f"no frame of the movie matches the {which} shot (best SSIM {best:.3f})")
+    match = [score >= best - 0.01 for score in scores]
+    first = match.index(True)
+    last = first
+    while last + 1 < len(match) and match[last + 1]:
+        last += 1
+    return first / fps, (last + 1) / fps
+_, leaves = first_run("start")
+working, _ = first_run("end")
+start = max(0.0, leaves - float(os.environ["HOLD_BEFORE_TAP"]))
+end = working + float(os.environ["HOLD_AT_END"])
+if end <= start:
+    sys.exit(f"the working chat ({working:.2f} s) comes before Needs You is left ({leaves:.2f} s)")
+print(f"{start:.2f} {end:.2f}")
+') || fail "could not find the cut in $MOV"
+note "cut: from ${CUT_START} s to ${CUT_END} s of the movie"
+python3 -c "import sys; sys.exit(0 if 0 < $CUT_END - $CUT_START < $MAX_SECONDS else 1)" \
+  || fail "the walk runs from $CUT_START s to $CUT_END s; the GIF must be under $MAX_SECONDS s"
+
+# The recorder writes a frame only when the screen changes, so a still screen is one frame
+# that lasts seconds. `fps` first makes a frame at every step, then `trim` cuts on them. An
+# input seek (`-ss`, `-t`), or a `trim` before `fps`, skipped the still Needs You frame and
+# let the home screen after the app's exit into the GIF.
+FILTER="fps=$FPS,trim=start=$CUT_START:end=$CUT_END,setpts=PTS-STARTPTS"
+FILTER+=",scale=$WIDTH:-1:flags=lanczos,split[a][b]"
 FILTER+=";[a]palettegen=stats_mode=diff[p]"
 FILTER+=";[b][p]paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle"
-ffmpeg -v error -y -ss "$CUT_START" -t "$CUT_LENGTH" -i "$MOV" -vf "$FILTER" -loop 0 "$GIF"
+ffmpeg -v error -y -i "$MOV" -vf "$FILTER" -loop 0 "$GIF"
 
 SECONDS_LONG="$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$GIF")"
 BYTES="$(stat -f %z "$GIF")"
