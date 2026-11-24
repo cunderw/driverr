@@ -27,6 +27,8 @@ final class TransportSupply: @unchecked Sendable {
   private let lock = NSLock()
   private var accepting = true
   private var stalling = false
+  private var holdingForSignIn = false
+  private var hold = Duration.seconds(600)
   private var handed: [FakeSSHTransport] = []
   private var issued = 0
   private let responder: (@Sendable (String) -> Data?)?
@@ -57,6 +59,28 @@ final class TransportSupply: @unchecked Sendable {
     set { lock.withLock { stalling = newValue } }
   }
 
+  /// Whether every transport handed out from now on holds authentication for a sign-in on the
+  /// web, as Tailscale SSH's check mode does: the check banner, then `signInHold`.
+  ///
+  /// Scoped to new transports, so a test can arm it before dropping the link and only the
+  /// reconnect meets the sign-in. Cancelling the connect ends the hold early.
+  var holdsNewTransportsForSignIn: Bool {
+    get { lock.withLock { holdingForSignIn } }
+    set { lock.withLock { holdingForSignIn = newValue } }
+  }
+
+  /// How long a held transport holds. A hold that ends while `isAccepting` is `false` ends
+  /// in a close, as a host closes the connection before the sign-in finishes.
+  var signInHold: Duration {
+    get { lock.withLock { hold } }
+    set { lock.withLock { hold = newValue } }
+  }
+
+  /// What a check-mode host sends before it holds the request.
+  static let checkBanner =
+    "# Tailscale SSH requires an additional check.\n"
+    + "# To authenticate, visit: https://login.tailscale.com/a/1a2b3c4d5e6f\n"
+
   /// The transport the connection is on now — what a test drops, and what it reads a
   /// stream log off.
   var latest: FakeSSHTransport? { lock.withLock { handed.last } }
@@ -72,12 +96,17 @@ final class TransportSupply: @unchecked Sendable {
 
   func make() -> any SSHTransport {
     let accepting = isAccepting
+    let holding = holdsNewTransportsForSignIn
+    let hold = signInHold
     let id = lock.withLock {
       issued += 1
       return issued
     }
     let transport = FakeSSHTransport(
       acceptsCredentials: accepting,
+      authenticationBanner: holding ? Self.checkBanner : nil,
+      authenticationHold: holding ? hold : nil,
+      refusalClosesTheConnection: holding,
       streamResponder: tokens?.responder(connection: id) ?? responder,
       onStreamClose: tokens?.closeHook(connection: id),
       // On every transport: a reconnect test waits on the new transport's log, so a hook on

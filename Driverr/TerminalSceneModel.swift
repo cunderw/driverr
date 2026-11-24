@@ -1445,6 +1445,12 @@ final class TerminalSceneModel {
     }
   }
 
+  /// The Cancel beside a sign-in the reconnect is waiting on. Ends the attempt and the
+  /// schedule, and leaves the Reconnect the banner offers once the schedule has run out.
+  func stopReconnecting() async {
+    await model.cancelConnect()
+  }
+
   /// The Reconnect the banner offers once the schedule has run out. Starts it over.
   func reconnectNow() {
     guard !isClosed else { return }

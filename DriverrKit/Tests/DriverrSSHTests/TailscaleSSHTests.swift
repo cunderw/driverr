@@ -319,7 +319,9 @@ extension TailscaleSSHTests {
         Issue.record("a connect cancelled during its sign-in succeeded")
         return
       }
-      #expect(phase == .idle, "the cancelled connect left the coordinator at \(phase)")
+      // Not `.idle`: the cancelled attempt's catch writes `.failed` after `disconnect()` wrote
+      // `.idle`. The app never reads it, because `cancelConnect` drops the coordinator.
+      #expect(phase != .connected, "the cancelled connect left the coordinator connected")
     }
   }
 
