@@ -117,17 +117,13 @@ This file holds the rules and traps on top of that.
   (`"kind": "folder"`) are folder-synced groups, so a new file needs no project edit. A new
   target or package product dependency needs a direct `project.xcproj` edit and a build.
   Do not add a generate step or `ci_scripts/`.
-  - Edit it by hand. A write through `xcrun xcodeproj setting set` deleted every comment in
-    the file and the two `.entitlements` exclusions below. Expect the same from any write
-    through Xcode or `xcrun xcodeproj`. Read the diff after such a write and put the
-    exclusions back.
+  - Keep comments out of it. A write through Xcode or `xcrun xcodeproj` rewrites the file
+    and deletes every comment, so the rationale lives here.
   - The `Driverr` and `DriverrWatch` folders exclude their `Info.plist`. It is read through
     `INFOPLIST_FILE` and `GENERATE_INFOPLIST_FILE`, and a copy as a bundle resource
     collides with the generated `Info.plist` at the same output path.
-  - The same two folders exclude their `.entitlements` file. Its consumer is
-    `CODE_SIGN_ENTITLEMENTS`, and a copy in the product would be wrong and invisible,
-    because it collides with nothing and the build stays green. A build without the
-    exclusions copied neither file when measured, so the exclusions are a guard, not a fix.
+  - The `.entitlements` files need no exclusion. Their consumer is `CODE_SIGN_ENTITLEMENTS`,
+    and a measured build copies neither file into the product without one.
   - `DriverrTests` has no package product dependency, deliberately. It is app-hosted
     (`TEST_HOST`, `BUNDLE_LOADER`), so it reaches `DriverrCore` through the app process,
     which already links it. With its own dependency on `DriverrCore`, the framework is
@@ -405,8 +401,9 @@ The release procedure lives outside this repo. These are only the facts about th
   (`.github/workflows/testflight.yml`). A manual run of that workflow validates only,
   unless it is told to upload. `scripts/testflight.mjs` holds its App Store Connect calls.
 - **`MARKETING_VERSION` is one project-level entry** in `project.xcproj`, for both
-  configurations. Bump it with a hand edit of that line. `xcrun xcodeproj setting set`
-  also changes it, but it deletes the `.entitlements` exclusions (see "Ground rules").
+  configurations. Bump it with
+  `xcrun xcodeproj setting set --project Driverr.xcodeproj MARKETING_VERSION <version>`,
+  or by hand.
 - **Never commit a `CURRENT_PROJECT_VERSION` bump.** The build number is supplied on the
   archive command line.
 - **The whole App Store listing is `docs/appstore/copy.json`.** There is no prose mirror.

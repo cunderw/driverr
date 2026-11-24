@@ -28,7 +28,6 @@
           "target": "Driverr",
           "exclusions": [
             "Info.plist",
-            "Driverr.entitlements",
           ],
         },
       ],
@@ -46,7 +45,6 @@
           "target": "DriverrWatch",
           "exclusions": [
             "Info.plist",
-            "DriverrWatch.entitlements",
           ],
         },
       ],
