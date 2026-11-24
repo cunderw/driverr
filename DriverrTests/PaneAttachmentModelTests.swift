@@ -52,7 +52,7 @@ import UIKit
   /// A real PNG, small, so the downscale succeeds and leaves the pixel size alone.
   ///
   /// Rendered rather than committed, because a file in the bundle is a change to
-  /// `project.pbxproj`, which parallel branches collide on.
+  /// `project.xcproj`, which parallel branches collide on.
   private func pngBytes() throws -> Data {
     let size = CGSize(width: 40, height: 30)
     let image = UIGraphicsImageRenderer(size: size).image { context in

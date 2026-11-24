@@ -63,7 +63,7 @@ the `area:` label from your answer.
 - **Everything merges to `main` via a squash pull request whose body contains
   `Closes #<n>`.** That is what keeps issues honest.
 - **Don't touch files outside the issue's scope.** Two files collide between branches more
-  than any others — `Driverr.xcodeproj/project.pbxproj` and `DriverrKit/Package.swift`. If
+  than any others — `Driverr.xcodeproj/project.xcproj` and `DriverrKit/Package.swift`. If
   one genuinely has to change, say so on the issue.
 - **Reproduce before you fix.** Write the failing test first and watch it fail as an
   assertion, not as a compile error. A test that has never been red proves nothing about
