@@ -1,6 +1,50 @@
 import DriverrCore
 import Foundation
 import Observation
+import StoreKit
+import SwiftUI
+
+/// Asks the system for an App Store rating, attached once at `ContentView`'s root.
+///
+/// At the root, not on the pane screen: the reset alert's Continue can succeed with no pane
+/// screen up. It asks only while the app is in front, so a request that came due while the
+/// app was away waits for the return. The system decides whether a sheet shows.
+///
+/// A `ViewModifier` because the same modifiers inline made `ContentView.body` too slow to
+/// type-check, as with `ComposerPhotosPicker`. `scenePhase` and `requestReview` come from the
+/// scene, so reading them above the attachment point is correct here. A UI-test launch never
+/// asks, because `ReviewPromptModel` never marks a request pending under `-uiTesting*`.
+struct ReviewRequestDelivery: ViewModifier {
+  /// Every host's connection. Its replies count toward the one rule.
+  let connections: ConnectionRegistry
+
+  @Environment(\.scenePhase) private var scenePhase
+  @Environment(\.requestReview) private var requestReview
+
+  @State private var reviewPrompt = ReviewPromptModel(
+    suiteName: nil,
+    arguments: ProcessInfo.processInfo.arguments,
+    appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+  )
+
+  func body(content: Content) -> some View {
+    content
+      .task {
+        // The instance, not `self`: a closure that captures this struct to reach its `@State`
+        // would act on a stale copy.
+        let reviewPrompt = reviewPrompt
+        connections.onReplyReachedBlockedAgent = { reviewPrompt.replyReachedBlockedAgent() }
+      }
+      .onChange(of: reviewPrompt.isRequestPending) { _, _ in deliver(in: scenePhase) }
+      .onChange(of: scenePhase) { _, phase in deliver(in: phase) }
+  }
+
+  private func deliver(in phase: ScenePhase) {
+    guard reviewPrompt.isRequestPending, phase == .active else { return }
+    requestReview()
+    reviewPrompt.requestDelivered()
+  }
+}
 
 /// Keeps the App Store rating rule's ledger in `UserDefaults`, and says when a request waits.
 ///

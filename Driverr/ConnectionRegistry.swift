@@ -149,7 +149,7 @@ final class ConnectionRegistry {
     (@MainActor ([HostActivityObservation], Bool) -> Void)?
 
   /// Told after a reply on any host reached a blocked agent, for the App Store rating rule.
-  /// Set by `ContentView`'s root, which owns the rule's model and the `requestReview` action.
+  /// Set by `ReviewRequestDelivery`, which owns the rule's model and the `requestReview` action.
   @ObservationIgnored var onReplyReachedBlockedAgent: (@MainActor () -> Void)?
 
   /// Every host this registry holds a model for, as the card's input.
