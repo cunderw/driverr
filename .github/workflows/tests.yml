@@ -46,3 +46,72 @@ jobs:
       - name: Report warnings
         if: always()
         run: scripts/ci-warnings.sh "$RUNNER_TEMP/kit.log"
+
+  # TEMPORARY (#176): proves the JSON project format under the Xcodes the hosted image
+  # carries. Removed before merge.
+  project-format-proof:
+    name: Project format proof (temporary)
+    runs-on: xcode-27
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Xcode versions
+        run: |
+          ls -d /Applications/Xcode*.app
+          xcodebuild -version
+          for x in /Applications/Xcode_27.app /Applications/Xcode_27.1.app; do
+            DEVELOPER_DIR="$x/Contents/Developer" xcodebuild -version
+          done
+
+      - name: Parse under Xcode 27.0
+        env:
+          DEVELOPER_DIR: /Applications/Xcode_27.app/Contents/Developer
+        run: |
+          xcodebuild -version
+          xcodebuild -list -project Driverr.xcodeproj
+          xcodebuild -project Driverr.xcodeproj -target Driverr -configuration Release \
+            -showBuildSettings > "$RUNNER_TEMP/settings-27.0.txt"
+          grep -E '^ *(MARKETING_VERSION|DEVELOPMENT_TEAM|PRODUCT_BUNDLE_IDENTIFIER|CODE_SIGN_ENTITLEMENTS) = ' "$RUNNER_TEMP/settings-27.0.txt"
+
+      - name: Metal toolchain (27.1)
+        env:
+          DEVELOPER_DIR: /Applications/Xcode_27.1.app/Contents/Developer
+        run: xcodebuild -downloadComponent MetalToolchain
+
+      - name: Release build under Xcode 27.1
+        env:
+          DEVELOPER_DIR: /Applications/Xcode_27.1.app/Contents/Developer
+        run: |
+          xcodebuild -version
+          xcodebuild -project Driverr.xcodeproj -scheme Driverr -configuration Release \
+            -destination 'generic/platform=iOS Simulator' -derivedDataPath "$RUNNER_TEMP/dd" \
+            build 2>&1 | tee "$RUNNER_TEMP/build.log" | grep -E '^(\*\*|error:)' || true
+          grep -q '\*\* BUILD SUCCEEDED \*\*' "$RUNNER_TEMP/build.log"
+
+      - name: Check the product
+        run: |
+          APP="$RUNNER_TEMP/dd/Build/Products/Release-iphonesimulator/Driverr.app"
+          test -d "$APP"
+          test -d "$APP/PlugIns/DriverrWatch.appex"
+          test -f "$APP/THIRD-PARTY-NOTICES.md"
+          found="$(find "$APP" -name '*.entitlements')"
+          if [ -n "$found" ]; then echo "entitlements in product: $found"; exit 1; fi
+          echo "product OK: $(find "$APP" | wc -l) entries, no .entitlements"
+
+      - name: Release build under Xcode 27.1 without the exclusions
+        env:
+          DEVELOPER_DIR: /Applications/Xcode_27.1.app/Contents/Developer
+        run: |
+          sed -i '' '/"Driverr.entitlements",/d; /"DriverrWatch.entitlements",/d' Driverr.xcodeproj/project.xcproj
+          git diff --stat
+          rm -rf "$RUNNER_TEMP/dd/Build/Products/Release-iphonesimulator/Driverr.app"
+          xcodebuild -project Driverr.xcodeproj -scheme Driverr -configuration Release \
+            -destination 'generic/platform=iOS Simulator' -derivedDataPath "$RUNNER_TEMP/dd" \
+            build 2>&1 | tee "$RUNNER_TEMP/build2.log" | grep -E '^(\*\*|error:)' || true
+          grep -q '\*\* BUILD SUCCEEDED \*\*' "$RUNNER_TEMP/build2.log"
+          APP="$RUNNER_TEMP/dd/Build/Products/Release-iphonesimulator/Driverr.app"
+          test -d "$APP"
+          found="$(find "$APP" -name '*.entitlements')"
+          if [ -n "$found" ]; then echo "entitlements in product without exclusions: $found"; exit 1; fi
+          echo "no exclusions: product has no .entitlements"
