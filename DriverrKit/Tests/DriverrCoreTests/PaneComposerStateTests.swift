@@ -396,6 +396,53 @@ struct PaneComposerStateTests {
 
     #expect(state.phase == .failed(.herdrCommandFailed(reason: "no such pane")))
   }
+
+  // MARK: - A reply that reached a blocked agent, for the rating rule
+
+  @Test("a reply herdr took while the pane was blocked answered a blocked agent")
+  func aReplyToABlockedPaneCounts() {
+    #expect(sent(at: .now, pane: blocked()).answeredBlockedAgent)
+
+    var key = PaneComposerState()
+    _ = key.beginSending(.enter)
+    key.succeeded(pane: blocked())
+    #expect(key.answeredBlockedAgent)
+  }
+
+  @Test(
+    "a reply to a pane that was not blocked answered no blocked agent",
+    arguments: AgentStatus.allCases.filter { $0 != .blocked }
+  )
+  func aReplyToAnotherStatusDoesNotCount(status: AgentStatus) {
+    #expect(!sent(at: .now, pane: blocked(status)).answeredBlockedAgent)
+  }
+
+  @Test("a send with no pane, a failure or a refusal answered no blocked agent")
+  func nothingElseCounts() {
+    #expect(!sent(at: .now, pane: nil).answeredBlockedAgent)
+
+    var failed = PaneComposerState()
+    failed.text = "y"
+    _ = failed.beginSending()
+    failed.failed(.herdrCommandFailed(reason: "no such pane"))
+    #expect(!failed.answeredBlockedAgent)
+
+    var refused = PaneComposerState()
+    _ = refused.beginSending(.enter)
+    refused.refused(.screenQuestionChanged)
+    #expect(!refused.answeredBlockedAgent)
+
+    #expect(!PaneComposerState().answeredBlockedAgent)
+  }
+
+  @Test("a Shift-Tab is a mode change, not a reply, even to a blocked pane")
+  func shiftTabDoesNotCount() {
+    var state = PaneComposerState()
+    _ = state.beginSending(.backTab)
+    state.succeeded(pane: blocked())
+
+    #expect(!state.answeredBlockedAgent)
+  }
 }
 
 /// What the composer says about its pane. The composer stays for a pane that is not

@@ -82,6 +82,17 @@ public struct PaneComposerState: Equatable, Sendable {
 
   public var isSending: Bool { phase == .sending }
 
+  /// Whether the last attempt herdr took went to a pane that herdr reported `blocked`: a
+  /// reply to an agent that was waiting. The App Store rating rule counts these; see
+  /// `ReviewPrompt`.
+  ///
+  /// Read it right after `succeeded(at:pane:)`, because the `Sent` notice it reads retires
+  /// on the next evidence. A Shift-Tab is a mode change, never a reply. The mode button is
+  /// off while the pane is blocked, so only a race could send one to a blocked pane.
+  public var answeredBlockedAgent: Bool {
+    false
+  }
+
   /// Whether a picked image or file may be staged. An attachment's hand-off types its path
   /// into the pane, which is typed text by another route, so a hold turns attaching off: into
   /// Codex's picker the path is no keys, and into the trust prompt it is noise (#109).
