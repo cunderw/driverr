@@ -4436,6 +4436,34 @@ extension TerminalSceneModelTests {
     await scene.settle()
   }
 
+  /// The shell opens through a pty, and a pty open that fails writes `.failed` whatever the
+  /// scene asks. Selecting it during the hold must not reach the held connection.
+  @Test("selecting the shell during a held sign-in leaves the stop able to end it")
+  func selectingTheShellDuringTheHoldLeavesTheStopWorking() async {
+    let (scene, model, supply) = await makeReconnectingScene(wait: { _ in })
+    scene.start()
+    await scene.settle()
+    supply.holdsNewTransportsForSignIn = true
+    await dropLink(scene, supply)
+    await waitUntil("the reconnect never showed the sign-in URL") { model.signInURL != nil }
+    let pane = TerminalTarget.pane(id: "w1:p1")
+
+    scene.select(.shell)
+    // Back to the pane, whose failed open always leaves a notice. The steps run in order, so
+    // the notice says the shell's step has run too.
+    scene.select(pane)
+    await waitUntil("the pane's open never finished") { scene.notices[pane] != nil }
+    #expect(model.phase == .connecting, "the shell's open was recorded as \(model.phase)")
+
+    await scene.stopReconnecting()
+
+    #expect(model.phase == .idle, "the stop left the connection at \(model.phase)")
+    #expect(model.signInURL == nil, "the stop left the held attempt running")
+    // Ends a hold the stop could not reach, so `settle()` returns either way.
+    await model.disconnect()
+    await scene.settle()
+  }
+
   /// The host ends the sign-in by closing the connection. The URL goes with it, and the
   /// schedule carries on as for any failed attempt.
   @Test("a close during the sign-in clears the URL and the schedule continues")
@@ -4454,13 +4482,11 @@ extension TerminalSceneModelTests {
     scene.start()
     await scene.settle()
     supply.holdsNewTransportsForSignIn = true
-    // Long enough for the wait below to see the URL, and ended by a close because the host
-    // is refusing.
-    supply.signInHold = .seconds(2)
-    supply.isAccepting = false
 
     await dropLink(scene, supply)
     await waitUntil("the reconnect never showed the sign-in URL") { model.signInURL != nil }
+    // The host closes the connection, which ends the hold.
+    supply.endSignInHolds()
     await scene.settle()
 
     #expect(watch.urlsAtEachWait == [nil], "the waits saw \(watch.urlsAtEachWait)")

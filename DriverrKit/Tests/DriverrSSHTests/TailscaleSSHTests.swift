@@ -311,7 +311,13 @@ extension TailscaleSSHTests {
 
       attempt.cancel()
       await coordinator.disconnect()
-      let outcome = await attempt.result
+      // A connect that does not settle is the regression. The `.timeLimit` cancels this wait,
+      // and ending the server's hold then fails the request, so the tier does not hang.
+      let outcome = await withTaskCancellationHandler {
+        await attempt.result
+      } onCancel: {
+        Task { await server.endCheck() }
+      }
       let phase = await coordinator.phase
       await server.endCheck()
 
