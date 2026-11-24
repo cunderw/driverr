@@ -439,7 +439,7 @@ struct CoreSnapshotMapperTests {
       #"{"type":"block","content":{"terminal":"t1"},"title":""}"#,
       #"{"type":"block","content":{"terminal":"t1"},"title":" \n "}"#,
       #"{"type":"block","content":{"terminal":"t1"}}"#,
-      #"{"type":"split","title":"outer","children":[{"content":{"terminal":"t1"}}]}"#,
+      #"{"type":"row","title":"outer","children":[{"content":{"terminal":"t1"}}]}"#,
     ])
   func unnamedPanes(root: String) throws {
     let doc = try document(#"{"spaces":[{"id":"a","tabs":[{"id":"b","root":\#(root)}]}]}"#)
@@ -471,7 +471,7 @@ struct CoreSnapshotMapperTests {
     let doc = try document(
       #"""
       {"spaces":[{"id":"spA","name":"Main","tabs":[{"id":"tbA","name":"Vault","root":
-      {"type":"split","children":[\#(leaf("t6")),\#(leaf("t1"))]}}]}]}
+      {"type":"row","children":[\#(leaf("t6")),\#(leaf("t1"))]}}]}]}
       """#)
     let tree = CoreSnapshotMapper.tree(from: list, document: doc)
     #expect(tree.workspaces.map(\.label) == ["Main", "herdr-core", "box · root"])
