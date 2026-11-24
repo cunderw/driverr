@@ -99,7 +99,8 @@ public protocol SSHTransport: Sendable {
 /// `authenticationFailed`, whatever banner came before, because an sshd's notice banner is not
 /// the reason a password was wrong. A close with no failure message is how Tailscale SSH denies
 /// a user, and its last banner without a sign-in URL is the reason. A close after only the
-/// sign-in banner is the sign-in ending, and the URL is not a reason to quote.
+/// sign-in banner is the sign-in ending, and the URL is not a reason to quote. A pipeline
+/// error during authentication, such as a TCP reset, reads the same way as a close.
 enum AuthenticationClose {
   static func failure(host: String, banners: [String]) -> AppError {
     let reasons = banners.filter { AuthBanner.signInURL(in: $0) == nil }

@@ -37,7 +37,7 @@ struct AppErrorTests {
     let error = AppError.authenticationRefused(host: "tailnet", message: "policy says no")
     #expect(
       error.errorDescription
-        == "Authentication was refused by tailnet. The host said:\npolicy says no")
+        == "Authentication was refused by tailnet. The host said:\n“policy says no”")
     #expect(!error.isRetryable)
     #expect(error != AppError.authenticationFailed(host: "tailnet"))
   }

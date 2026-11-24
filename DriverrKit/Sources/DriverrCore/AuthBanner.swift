@@ -10,7 +10,7 @@ import Foundation
 public enum AuthBanner {
   /// The most characters of a banner Driverr shows. The server writes the text, and an
   /// error message must stay readable.
-  public static let displayLimit = 1000
+  public static let displayLimit = 300
 
   /// The first `https` link in `text`, or `nil` when there is none.
   ///

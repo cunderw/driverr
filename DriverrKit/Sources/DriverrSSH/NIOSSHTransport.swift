@@ -518,8 +518,8 @@ final class HandshakeCoordinator: NIOSSHClientServerAuthenticationDelegate,
     }
   }
 
-  /// A refusal the server sent as SSH_MSG_USERAUTH_FAILURE, or a pipeline error. Never
-  /// quotes a banner. See `AuthenticationClose`.
+  /// A refusal the server sent as SSH_MSG_USERAUTH_FAILURE. Never quotes a banner. See
+  /// `AuthenticationClose`.
   var authenticationFailure: AppError {
     AppError.authenticationFailed(host: host.hostname)
   }
@@ -532,6 +532,14 @@ final class HandshakeCoordinator: NIOSSHClientServerAuthenticationDelegate,
   /// prompt is up is left to the prompt, as before.
   func connectionClosed() {
     guard hostKeySettled else { return }
+    settleAuthentication(
+      with: AuthenticationClose.failure(host: host.hostname, banners: receivedBanners))
+  }
+
+  /// Called when the pipeline fails, such as on a TCP reset. Settles the same way as a close,
+  /// because a reset can end a denial before the close does. With no banner it is
+  /// `authenticationFailed`, as before.
+  func pipelineFailed() {
     settleAuthentication(
       with: AuthenticationClose.failure(host: host.hostname, banners: receivedBanners))
   }
@@ -568,7 +576,7 @@ private final class AuthenticationOutcomeHandler: ChannelInboundHandler {
   }
 
   func errorCaught(context: ChannelHandlerContext, error: any Error) {
-    coordinator.settleAuthentication(with: coordinator.authenticationFailure)
+    coordinator.pipelineFailed()
     context.fireErrorCaught(error)
   }
 }

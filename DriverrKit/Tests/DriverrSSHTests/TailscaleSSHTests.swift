@@ -257,6 +257,48 @@ extension TailscaleSSHTests {
       #expect(log.events == ["signIn: https://login.tailscale.com/a/1a2b3c4d5e6f"])
     }
   }
+
+  /// A real tailscaled may end a denial with SSH_MSG_DISCONNECT or a dropped socket, not a
+  /// plain close. A reset reaches the pipeline as an error before the close, and the banner
+  /// is still the only reason the user gets.
+  @Test(
+    "a denial that ends in a disconnect or a reset still quotes the banner",
+    .timeLimit(.minutes(1)),
+    arguments: TailscaleLikeSSHServer.DenialEnding.allCases)
+  func denialEndingInADisconnectOrResetQuotesTheBanner(
+    ending: TailscaleLikeSSHServer.DenialEnding
+  ) async throws {
+    let denial = "\nTailscale SSH: tailnet policy does not permit you to SSH to this node.\n"
+    try await withServer(.denyLater(banner: denial)) { server, host in
+      let transport = NIOSSHTransport()
+      try await transport.connect(to: host, hostKeyValidator: TrustingValidator())
+      let banners = await transport.authenticationBanners
+      async let outcome = Self.failure(of: transport)
+      var received = banners.makeAsyncIterator()
+      let banner = await received.next()
+      #expect(banner == denial)
+      try await server.endDenial(ending)
+      let error = await outcome
+      await transport.disconnect()
+      #expect(
+        error
+          == .authenticationRefused(
+            host: "127.0.0.1",
+            message: "Tailscale SSH: tailnet policy does not permit you to SSH to this node."))
+    }
+  }
+
+  /// The error `authenticate(.none)` fails with, or `nil` when it succeeds.
+  private static func failure(of transport: NIOSSHTransport) async -> AppError? {
+    do {
+      try await transport.authenticate(.none)
+      return nil
+    } catch let error as AppError {
+      return error
+    } catch {
+      return .channelFailed(reason: "not an AppError: \(error)")
+    }
+  }
 }
 
 /// Records events from the `@Sendable` sign-in callback, in order.

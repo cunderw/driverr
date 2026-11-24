@@ -27,6 +27,8 @@ final class TailscaleLikeSSHServer: @unchecked Sendable {
     case check(banner: String, hold: TimeAmount)
     /// The tailnet policy denies the user: the banner, then the connection closes.
     case deny(banner: String)
+    /// A denial whose end the test picks: the banner, then a hold until `endDenial(_:)`.
+    case denyLater(banner: String)
     /// Not Tailscale: an ordinary sshd that sends a notice banner and then refuses the
     /// credential with SSH_MSG_USERAUTH_FAILURE.
     case refuse(banner: String)
@@ -38,11 +40,20 @@ final class TailscaleLikeSSHServer: @unchecked Sendable {
   let hostPublicKey: NIOSSHPublicKey
   /// The auth methods clients offered, in order.
   let offers: OfferLog
+  private let heldDenial = HeldDenial()
+
+  /// How a held denial ends. A real tailscaled may end one with SSH_MSG_DISCONNECT or a
+  /// dropped socket instead of a plain close.
+  enum DenialEnding: Sendable, CaseIterable {
+    case disconnect
+    case reset
+  }
 
   init(policy: Policy) async throws {
     group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
     let offers = OfferLog()
     self.offers = offers
+    let heldDenial = heldDenial
     let hostKey = NIOSSHPrivateKey(ed25519Key: .init())
     hostPublicKey = hostKey.publicKey
 
@@ -50,7 +61,8 @@ final class TailscaleLikeSSHServer: @unchecked Sendable {
       .serverChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
       .childChannelInitializer { channel in
         channel.eventLoop.makeCompletedFuture {
-          let delegate = TailscaleAuthDelegate(policy: policy, offers: offers)
+          let delegate = TailscaleAuthDelegate(
+            policy: policy, offers: offers, heldDenial: heldDenial)
           let handler = NIOSSHHandler(
             role: .server(SSHServerConfiguration(hostKeys: [hostKey], userAuthDelegate: delegate)),
             allocator: channel.allocator,
@@ -78,10 +90,58 @@ final class TailscaleLikeSSHServer: @unchecked Sendable {
     port = boundPort
   }
 
+  /// Ends the request a `.denyLater` policy holds. Call it after the client has the banner.
+  func endDenial(_ ending: DenialEnding) async throws {
+    guard let held = heldDenial.take() else { throw NoHeldDenial() }
+    try await held.channel.eventLoop.flatSubmit { () -> EventLoopFuture<Void> in
+      switch ending {
+      case .disconnect:
+        do {
+          try held.handler._disconnect()
+        } catch {
+          return held.channel.eventLoop.makeFailedFuture(error)
+        }
+        return held.channel.close()
+      case .reset:
+        // SO_LINGER 0 makes the close a TCP reset, so the client's read fails.
+        guard let socket = held.channel as? SocketOptionProvider else {
+          return held.channel.eventLoop.makeFailedFuture(NoHeldDenial())
+        }
+        return socket.setSoLinger(linger(l_onoff: 1, l_linger: 0)).flatMap {
+          held.channel.close()
+        }
+      }
+    }.always { _ in held.promise.fail(Denied()) }.get()
+  }
+
   /// Awaited, never blocking. See `EmbeddedSSHServer.stop()`.
   func stop() async {
     try? await channel.close().get()
     try? await group.shutdownGracefully()
+  }
+}
+
+/// The request a `.denyLater` policy holds, until the test ends it.
+private final class HeldDenial: @unchecked Sendable {
+  /// Unchecked for `NIOSSHHandler`, which `endDenial(_:)` touches only on the channel's loop.
+  struct Held: @unchecked Sendable {
+    let channel: Channel
+    let handler: NIOSSHHandler
+    let promise: EventLoopPromise<NIOSSHUserAuthenticationOutcome>
+  }
+
+  private let lock = NSLock()
+  private var held: Held?
+
+  func hold(_ value: Held) {
+    lock.withLock { held = value }
+  }
+
+  func take() -> Held? {
+    lock.withLock {
+      defer { held = nil }
+      return held
+    }
   }
 }
 
@@ -102,12 +162,14 @@ private final class TailscaleAuthDelegate: NIOSSHServerUserAuthenticationDelegat
 {
   private let policy: TailscaleLikeSSHServer.Policy
   private let offers: OfferLog
+  private let heldDenial: HeldDenial
   weak var handler: NIOSSHHandler?
   weak var channel: Channel?
 
-  init(policy: TailscaleLikeSSHServer.Policy, offers: OfferLog) {
+  init(policy: TailscaleLikeSSHServer.Policy, offers: OfferLog, heldDenial: HeldDenial) {
     self.policy = policy
     self.offers = offers
+    self.heldDenial = heldDenial
   }
 
   var supportedAuthenticationMethods: NIOSSHAvailableUserAuthenticationMethods {
@@ -158,6 +220,16 @@ private final class TailscaleAuthDelegate: NIOSSHServerUserAuthenticationDelegat
         channel?.close(promise: nil)
         responsePromise.fail(Denied())
       }
+    case .denyLater(let banner):
+      let loop = responsePromise.futureResult.eventLoop
+      // Not inline, for the reason above. Held before the banner goes out, so a client that
+      // has the banner can end the denial.
+      loop.execute { [self] in
+        if let channel, let handler {
+          heldDenial.hold(.init(channel: channel, handler: handler, promise: responsePromise))
+        }
+        sendBanner(banner)
+      }
     }
   }
 
@@ -171,3 +243,6 @@ private final class TailscaleAuthDelegate: NIOSSHServerUserAuthenticationDelegat
 /// released unfulfilled, and a `.failure` outcome would send the failure message that
 /// Tailscale does not send.
 private struct Denied: Error {}
+
+/// `endDenial(_:)` found no held request, or no socket to reset.
+private struct NoHeldDenial: Error {}

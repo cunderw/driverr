@@ -87,7 +87,7 @@ public enum AppError: Error, Hashable, Sendable, LocalizedError {
     case let .authenticationFailed(host):
       "Authentication was refused by \(host). Check the username and credentials."
     case let .authenticationRefused(host, message):
-      "Authentication was refused by \(host). The host said:\n\(message)"
+      "Authentication was refused by \(host). The host said:\n“\(message)”"
     case let .passwordRequired(host):
       "Enter the password for \(host) to connect."
     case let .hostKeyMismatch(host):
