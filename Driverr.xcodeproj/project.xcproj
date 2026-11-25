@@ -225,7 +225,7 @@
     "ENABLE_TESTABILITY[config=Debug]": "YES",
     "GCC_C_LANGUAGE_STANDARD": "gnu17",
     "IPHONEOS_DEPLOYMENT_TARGET": "26.0",
-    "MARKETING_VERSION": "1.2.2",
+    "MARKETING_VERSION": "1.2.3",
     "ONLY_ACTIVE_ARCH[config=Debug]": "YES",
     "SDKROOT": "iphoneos",
     "SWIFT_ACTIVE_COMPILATION_CONDITIONS[config=Debug]": "DEBUG $(inherited)",
